@@ -17,6 +17,14 @@ const orderSchema = new mongoose.Schema(
       enum: ["pending", "paid", "review", "completed", "rejected"],
       default: "pending",
     },
+    documents: {
+      paymentProof: { type: String },
+      senderKyc: { type: String },
+    },
+    contact: {
+      email: { type: String },
+      phone: { type: String },
+    },
   },
   { timestamps: true }
 );
