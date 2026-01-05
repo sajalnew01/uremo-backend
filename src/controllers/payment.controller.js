@@ -1,4 +1,3 @@
-const stripe = require("../config/stripe");
 const Order = require("../models/Order");
 const Service = require("../models/Service");
 
@@ -12,6 +11,16 @@ exports.checkout = async (req, res) => {
       serviceId: service._id,
       status: "pending",
     });
+    // Lazy-load Stripe to avoid importing it on server startup
+    if (
+      !process.env.STRIPE_SECRET_KEY ||
+      process.env.STRIPE_SECRET_KEY.trim() === ""
+    ) {
+      return res
+        .status(503)
+        .json({ message: "Payments are temporarily disabled" });
+    }
+    const stripe = require("../config/stripe");
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
