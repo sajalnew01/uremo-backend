@@ -19,6 +19,10 @@ app.get("/", (req, res) => {
   res.json({ message: "UREMO API running" });
 });
 
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", message: "Backend is live" });
+});
+
 // API Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/services", serviceRoutes);
