@@ -7,10 +7,10 @@ const connectDB = async () => {
       process.exit(1);
     }
     const uri = process.env.MONGO_URI;
-    await mongoose.connect(uri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    // Mongoose v6+ enables the new URL parser and unified topology by default.
+    // Passing the old options causes an error on some environments (e.g. Render):
+    // "options usenewurlparser, useunifiedtopology are not supported".
+    await mongoose.connect(uri);
     console.log(
       "MongoDB connected successfully to:",
       mongoose.connection.name || uri
