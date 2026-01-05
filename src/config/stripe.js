@@ -1,3 +1,8 @@
-const Stripe = require("stripe");
+let stripe = null;
 
-module.exports = new Stripe(process.env.STRIPE_SECRET_KEY);
+if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.trim() !== "") {
+  const Stripe = require("stripe");
+  stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+}
+
+module.exports = stripe;
