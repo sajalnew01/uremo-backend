@@ -1,0 +1,46 @@
+const ApplyWork = require("../models/ApplyWork");
+const cloudinary = require("../config/cloudinary");
+
+exports.apply = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "Resume required" });
+    }
+
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      folder: "resumes",
+    });
+
+    const application = await ApplyWork.create({
+      user: req.user.id,
+      resumeUrl: result.secure_url,
+      message: req.body.message,
+    });
+
+    res.status(201).json(application);
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.getAll = async (req, res, next) => {
+  try {
+    const apps = await ApplyWork.find()
+      .populate("user", "email")
+      .sort({ createdAt: -1 });
+
+    res.json(apps);
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.updateStatus = async (req, res, next) => {
+  try {
+    const { status } = req.body;
+    await ApplyWork.findByIdAndUpdate(req.params.id, { status });
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+};

@@ -12,6 +12,7 @@ const uploadRoutes = require("./routes/upload.routes");
 const adminRoutes = require("./routes/admin.routes");
 const paymentRoutes = require("./routes/payment.routes");
 const workerRoutes = require("./routes/worker.routes");
+const applyWorkRoutes = require("./routes/applyWork.routes");
 
 app.use(cors());
 app.use(express.json());
@@ -32,6 +33,7 @@ app.use("/api/upload", uploadRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/workers", workerRoutes);
+app.use("/api/apply-work", applyWorkRoutes);
 
 // 404 handler
 app.use((req, res) => {
