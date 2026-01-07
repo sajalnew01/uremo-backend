@@ -44,3 +44,12 @@ exports.updateStatus = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.getMyApplication = async (req, res, next) => {
+  try {
+    const app = await ApplyWork.findOne({ user: req.user.id });
+    res.json(app);
+  } catch (err) {
+    next(err);
+  }
+};
