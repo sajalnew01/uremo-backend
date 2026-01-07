@@ -1,4 +1,45 @@
 const Order = require("../models/Order");
+const cloudinary = require("../config/cloudinary");
+
+exports.uploadPayment = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    const order = await Order.findById(orderId);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    // Ownership check
+    if (order.userId.toString() !== req.user.id) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: "File required" });
+    }
+
+    // Upload to Cloudinary
+    const uploadStream = cloudinary.uploader.upload_stream(
+      { folder: "payments" },
+      async (error, uploadResult) => {
+        if (error) {
+          console.error(error);
+          return res.status(500).json({ message: "Upload failed" });
+        }
+
+        order.paymentProof = uploadResult.secure_url;
+        order.status = "payment_submitted";
+        await order.save();
+
+        res.json({ message: "Payment proof uploaded" });
+      }
+    );
+
+    uploadStream.end(req.file.buffer);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
 
 exports.uploadProofs = async (req, res) => {
   try {

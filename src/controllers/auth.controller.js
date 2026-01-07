@@ -22,7 +22,7 @@ exports.signup = async (req, res, next) => {
     });
 
     res.status(201).json({
-      message: "User registered successfully",
+      message: "User registered successfully [LOCAL_V2]",
     });
   } catch (error) {
     next(error);

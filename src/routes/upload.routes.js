@@ -1,9 +1,22 @@
 const express = require("express");
+const multer = require("multer");
 const auth = require("../middlewares/auth.middleware");
 const upload = require("../utils/upload");
-const { uploadProofs } = require("../controllers/upload.controller");
+const {
+  uploadProofs,
+  uploadPayment,
+} = require("../controllers/upload.controller");
 
 const router = express.Router();
+
+const memoryUpload = multer({ storage: multer.memoryStorage() });
+
+router.post(
+  "/payment-proof/:orderId",
+  auth,
+  memoryUpload.single("file"),
+  uploadPayment
+);
 
 router.post(
   "/",

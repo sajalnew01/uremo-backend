@@ -14,8 +14,22 @@ const orderSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "paid", "review", "completed", "rejected"],
+      enum: [
+        "pending",
+        "payment_submitted",
+        "approved",
+        "rejected",
+        "paid",
+        "review",
+        "completed",
+      ],
       default: "pending",
+    },
+    paymentProof: {
+      type: String,
+    },
+    paymentRef: {
+      type: String,
     },
     documents: {
       paymentProof: { type: String },
