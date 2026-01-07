@@ -16,14 +16,19 @@ const orderSchema = new mongoose.Schema(
       type: String,
       enum: [
         "pending",
+        "payment_pending",
         "payment_submitted",
         "approved",
         "rejected",
-        "paid",
-        "review",
-        "completed",
       ],
       default: "pending",
+    },
+    paymentMethod: {
+      type: String,
+      enum: ["paypal", "binance", "usdt"],
+    },
+    transactionRef: {
+      type: String,
     },
     paymentProof: {
       type: String,

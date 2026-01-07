@@ -27,6 +27,12 @@ exports.uploadPayment = async (req, res) => {
         }
 
         order.paymentProof = uploadResult.secure_url;
+        if (req.body?.paymentMethod) {
+          order.paymentMethod = req.body.paymentMethod;
+        }
+        if (req.body?.transactionRef) {
+          order.transactionRef = req.body.transactionRef;
+        }
         order.status = "payment_submitted";
         await order.save();
 
