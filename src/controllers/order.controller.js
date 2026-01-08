@@ -1,11 +1,28 @@
 const Order = require("../models/Order");
+const Service = require("../models/Service");
 
 exports.createOrder = async (req, res) => {
   try {
+    const service = await Service.findById(req.body.serviceId);
+
+    if (!service) {
+      return res.status(404).json({ message: "Service not found" });
+    }
+
+    // Set initial status based on delivery type
+    let initialStatus = "payment_pending";
+    if (service.deliveryType === "instant") {
+      initialStatus = "processing";
+    } else if (service.deliveryType === "assisted") {
+      initialStatus = "assistance_required";
+    } else if (service.deliveryType === "manual") {
+      initialStatus = "pending_review";
+    }
+
     const order = await Order.create({
       userId: req.user.id,
       serviceId: req.body.serviceId,
-      status: "payment_pending",
+      status: initialStatus,
     });
 
     res.json(order);
