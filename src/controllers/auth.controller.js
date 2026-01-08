@@ -21,8 +21,15 @@ exports.signup = async (req, res, next) => {
       password,
     });
 
+    const token = jwt.sign(
+      { id: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET || "secret",
+      { expiresIn: "7d" }
+    );
+
     res.status(201).json({
-      message: "User registered successfully [LOCAL_V2]",
+      token,
+      user: { id: user._id, email: user.email, role: user.role },
     });
   } catch (error) {
     next(error);
