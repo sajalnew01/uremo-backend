@@ -1,6 +1,28 @@
 const Order = require("../models/Order");
 const cloudinary = require("../config/cloudinary");
 
+exports.uploadImages = async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: "No images uploaded" });
+    }
+
+    const uploads = await Promise.all(
+      req.files.map((file) =>
+        cloudinary.uploader.upload(file.path, {
+          folder: "uremo/services",
+        })
+      )
+    );
+
+    const urls = uploads.map((u) => u.secure_url);
+    res.json({ urls });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 exports.uploadPayment = async (req, res) => {
   try {
     const { orderId } = req.params;

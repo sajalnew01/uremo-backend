@@ -19,6 +19,18 @@ const serviceSchema = new mongoose.Schema(
       required: true,
     },
 
+    shortDescription: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    images: [
+      {
+        type: String,
+      },
+    ],
+
     serviceType: {
       type: String,
       enum: [

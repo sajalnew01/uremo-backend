@@ -20,20 +20,29 @@ exports.getAllServices = async (req, res) => {
 
 exports.createService = async (req, res) => {
   try {
-    const { name, platform, description, price, serviceType } = req.body;
+    const {
+      name,
+      platform,
+      description,
+      shortDescription,
+      price,
+      serviceType,
+      images,
+    } = req.body;
 
-    if (!serviceType) {
-      return res.status(400).json({
-        message: "serviceType is required",
-      });
+    if (!name || !platform || !price || !serviceType || !shortDescription) {
+      return res.status(400).json({ message: "Missing required fields" });
     }
 
     const service = await Service.create({
       name,
       platform,
       description,
+      shortDescription,
       price,
       serviceType,
+      images: images || [],
+      active: true,
     });
 
     res.status(201).json(service);
