@@ -14,6 +14,7 @@ const paymentRoutes = require("./routes/payment.routes");
 const paymentMethodRoutes = require("./routes/paymentMethod.routes");
 const workerRoutes = require("./routes/worker.routes");
 const applyWorkRoutes = require("./routes/applyWork.routes");
+const adminPaymentRoutes = require("./routes/admin.payment.routes");
 
 app.use(cors());
 app.use(express.json());
@@ -32,7 +33,9 @@ app.use("/api/services", serviceRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/admin/payments", adminPaymentRoutes);
 app.use("/api/payment", paymentRoutes);
+app.use("/api/payments", paymentRoutes);
 app.use("/api/payment-methods", paymentMethodRoutes);
 app.use("/api/workers", workerRoutes);
 app.use("/api/apply-work", applyWorkRoutes);

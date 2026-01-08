@@ -2,26 +2,21 @@ const mongoose = require("mongoose");
 
 const paymentMethodSchema = new mongoose.Schema(
   {
+    name: { type: String, required: true }, // PayPal, Binance, USDT
     type: {
       type: String,
-      enum: ["paypal", "binance", "usdt"],
+      enum: ["paypal", "crypto", "binance", "bank"],
       required: true,
     },
-    label: {
-      type: String,
+
+    details: {
+      type: String, // email / uid / address
       required: true,
     },
-    value: {
-      type: String,
-      required: true,
-    },
-    instructions: {
-      type: String,
-    },
-    active: {
-      type: Boolean,
-      default: true,
-    },
+
+    instructions: String,
+
+    active: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

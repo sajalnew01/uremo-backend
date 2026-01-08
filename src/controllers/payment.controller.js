@@ -1,5 +1,16 @@
 const Order = require("../models/Order");
 const Service = require("../models/Service");
+const PaymentMethod = require("../models/PaymentMethod");
+
+exports.getActivePaymentMethods = async (req, res) => {
+  try {
+    const methods = await PaymentMethod.find({ active: true });
+    res.json(methods);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
 
 exports.checkout = async (req, res) => {
   try {
