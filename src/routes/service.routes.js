@@ -10,7 +10,7 @@ const {
 
 const router = express.Router();
 
-router.get("/", auth, getActiveServices);
+router.get("/", getActiveServices);
 router.post("/", auth, admin, createService);
 router.get("/admin", auth, admin, getAllServices);
 router.put("/admin/:id", auth, admin, updateService);
