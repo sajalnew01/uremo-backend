@@ -26,7 +26,7 @@ exports.apply = async (req, res, next) => {
 exports.getAll = async (req, res, next) => {
   try {
     const apps = await ApplyWork.find()
-      .populate("user", "email")
+      .populate("user", "email name")
       .sort({ createdAt: -1 });
 
     res.json(apps);
