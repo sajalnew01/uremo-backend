@@ -16,9 +16,9 @@ exports.createOrder = async (req, res) => {
 
 exports.myOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ userId: req.user.id }).populate(
-      "serviceId"
-    );
+    const orders = await Order.find({ userId: req.user.id })
+      .populate("serviceId")
+      .populate("payment.methodId");
     res.json(orders);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -27,7 +27,9 @@ exports.myOrders = async (req, res) => {
 
 exports.getOrderById = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id).populate("serviceId");
+    const order = await Order.findById(req.params.id)
+      .populate("serviceId")
+      .populate("payment.methodId");
 
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
@@ -46,10 +48,10 @@ exports.getOrderById = async (req, res) => {
 
 exports.submitPayment = async (req, res) => {
   try {
-    const { paymentMethod, transactionRef, paymentProof } = req.body;
+    const { methodId, reference, proofUrl } = req.body;
     const { id } = req.params;
 
-    if (!paymentMethod || !paymentProof) {
+    if (!methodId || !proofUrl) {
       return res
         .status(400)
         .json({ message: "Payment method and proof are required" });
@@ -73,10 +75,12 @@ exports.submitPayment = async (req, res) => {
     }
 
     // Update order with payment info
-    order.paymentMethod = paymentMethod;
-    order.transactionRef = transactionRef || "";
-    order.paymentProof = paymentProof;
-    order.paymentSubmittedAt = new Date();
+    order.payment = {
+      methodId,
+      reference: reference || "",
+      proofUrl,
+      submittedAt: new Date(),
+    };
     order.status = "payment_submitted";
 
     await order.save();

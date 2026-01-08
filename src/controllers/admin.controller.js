@@ -4,7 +4,8 @@ exports.getAllOrders = async (req, res) => {
   try {
     const orders = await Order.find()
       .populate("userId", "email role")
-      .populate("serviceId", "name price");
+      .populate("serviceId", "name price")
+      .populate("payment.methodId", "type label value");
 
     res.json(orders);
   } catch (err) {

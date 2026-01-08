@@ -2,13 +2,21 @@ const mongoose = require("mongoose");
 
 const serviceSchema = new mongoose.Schema(
   {
-    name: {
+    title: {
       type: String,
       required: true,
       trim: true,
     },
 
-    platform: {
+    slug: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+
+    category: {
       type: String,
       required: true,
       trim: true,
@@ -19,10 +27,20 @@ const serviceSchema = new mongoose.Schema(
       required: true,
     },
 
-    shortDescription: {
-      type: String,
+    price: {
+      type: Number,
       required: true,
-      trim: true,
+    },
+
+    currency: {
+      type: String,
+      default: "USD",
+    },
+
+    deliveryType: {
+      type: String,
+      enum: ["instant", "manual", "assisted"],
+      default: "manual",
     },
 
     images: [
@@ -31,20 +49,8 @@ const serviceSchema = new mongoose.Schema(
       },
     ],
 
-    serviceType: {
+    requirements: {
       type: String,
-      enum: [
-        "onboarding_assistance",
-        "verification_support",
-        "readiness_check",
-        "custom_request",
-      ],
-      required: true,
-    },
-
-    price: {
-      type: Number,
-      required: true,
     },
 
     active: {
@@ -52,14 +58,9 @@ const serviceSchema = new mongoose.Schema(
       default: true,
     },
 
-    requiresDocuments: {
-      type: Boolean,
-      default: true,
-    },
-
-    manualOnly: {
-      type: Boolean,
-      default: true,
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
     },
   },
   { timestamps: true }

@@ -37,6 +37,16 @@ const orderSchema = new mongoose.Schema(
       type: Date,
     },
 
+    payment: {
+      methodId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "PaymentMethod",
+      },
+      reference: String,
+      proofUrl: String,
+      submittedAt: Date,
+    },
+
     assignedWorker: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
