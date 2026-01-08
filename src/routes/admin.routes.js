@@ -9,6 +9,6 @@ const {
 const router = express.Router();
 
 router.get("/orders", auth, admin, getAllOrders);
-router.patch("/orders/:id", auth, admin, updateOrderStatus);
+router.put("/orders/:id", auth, admin, updateOrderStatus);
 
 module.exports = router;
