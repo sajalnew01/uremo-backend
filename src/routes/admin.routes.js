@@ -4,6 +4,7 @@ const admin = require("../middlewares/admin.middleware");
 const {
   getAllOrders,
   updateOrderStatus,
+  addOrderNote,
 } = require("../controllers/admin.controller");
 const {
   getAllServices,
@@ -17,6 +18,7 @@ const router = express.Router();
 
 router.get("/orders", auth, admin, getAllOrders);
 router.put("/orders/:id", auth, admin, updateOrderStatus);
+router.post("/orders/:id/note", auth, admin, addOrderNote);
 
 // Service management
 router.get("/services", auth, admin, getAllServices);

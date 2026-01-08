@@ -23,6 +23,12 @@ exports.createOrder = async (req, res) => {
       userId: req.user.id,
       serviceId: req.body.serviceId,
       status: initialStatus,
+      timeline: [
+        {
+          message: "Order created",
+          by: "system",
+        },
+      ],
     });
 
     res.json(order);
@@ -99,6 +105,10 @@ exports.submitPayment = async (req, res) => {
       submittedAt: new Date(),
     };
     order.status = "payment_submitted";
+    order.timeline.push({
+      message: "Payment submitted for verification",
+      by: "system",
+    });
 
     await order.save();
 

@@ -18,25 +18,14 @@ const orderSchema = new mongoose.Schema(
         "pending",
         "payment_pending",
         "payment_submitted",
+        "processing",
+        "pending_review",
+        "assistance_required",
         "approved",
         "rejected",
       ],
       default: "pending",
     },
-    paymentMethod: {
-      type: String,
-      enum: ["paypal", "binance", "usdt"],
-    },
-    transactionRef: {
-      type: String,
-    },
-    paymentProof: {
-      type: String,
-    },
-    paymentSubmittedAt: {
-      type: Date,
-    },
-
     payment: {
       methodId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -46,6 +35,21 @@ const orderSchema = new mongoose.Schema(
       proofUrl: String,
       submittedAt: Date,
     },
+
+    timeline: [
+      {
+        message: String,
+        by: {
+          type: String,
+          enum: ["system", "admin"],
+          default: "system",
+        },
+        createdAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
 
     assignedWorker: {
       type: mongoose.Schema.Types.ObjectId,
