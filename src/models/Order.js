@@ -44,6 +44,16 @@ const orderSchema = new mongoose.Schema(
       email: { type: String },
       phone: { type: String },
     },
+
+    assignedWorker: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    notes: {
+      type: String,
+    },
   },
   { timestamps: true }
 );
