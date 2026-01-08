@@ -33,16 +33,8 @@ const orderSchema = new mongoose.Schema(
     paymentProof: {
       type: String,
     },
-    paymentRef: {
-      type: String,
-    },
-    documents: {
-      paymentProof: { type: String },
-      senderKyc: { type: String },
-    },
-    contact: {
-      email: { type: String },
-      phone: { type: String },
+    paymentSubmittedAt: {
+      type: Date,
     },
 
     assignedWorker: {

@@ -23,6 +23,24 @@ exports.uploadImages = async (req, res) => {
   }
 };
 
+exports.uploadPaymentProof = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "File required" });
+    }
+
+    // Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      folder: "uremo/payments",
+    });
+
+    res.json({ url: result.secure_url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 exports.uploadPayment = async (req, res) => {
   try {
     const { orderId } = req.params;

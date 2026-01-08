@@ -3,6 +3,7 @@ const multer = require("multer");
 const auth = require("../middlewares/auth.middleware");
 const upload = require("../utils/upload");
 const {
+  uploadPaymentProof,
   uploadProofs,
   uploadPayment,
 } = require("../controllers/upload.controller");
@@ -10,6 +11,13 @@ const {
 const router = express.Router();
 
 const memoryUpload = multer({ storage: multer.memoryStorage() });
+
+router.post(
+  "/payment-proof",
+  auth,
+  memoryUpload.single("file"),
+  uploadPaymentProof
+);
 
 router.post(
   "/payment-proof/:orderId",
