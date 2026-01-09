@@ -1,6 +1,6 @@
 (async () => {
   const base = "https://uremo-backend.onrender.com";
-  const email = "test+dev1@example.com";
+  const email = `test+dev1+${Date.now()}@example.com`;
   const password = "Password123!";
   let token = null;
 
@@ -33,7 +33,11 @@
   }
 
   try {
-    const signup = await post("/api/auth/signup", { email, password });
+    const signup = await post("/api/auth/signup", {
+      name: "Dev Test",
+      email,
+      password,
+    });
     console.log("--- SIGNUP ---");
     console.log("status:", signup.status);
     console.log("body:", JSON.stringify(signup.body, null, 2));
@@ -73,6 +77,44 @@
         console.log("--- CREATE ORDER ---");
         console.log("status:", order.status);
         console.log("body:", JSON.stringify(order.body, null, 2));
+
+        const methods = await get("/api/payments", token);
+        console.log("--- PAYMENT METHODS ---");
+        console.log("status:", methods.status);
+        console.log("body:", JSON.stringify(methods.body, null, 2));
+
+        const orderId = order.body?._id;
+        const methodId = Array.isArray(methods.body)
+          ? methods.body[0]?._id
+          : null;
+        if (orderId && methodId) {
+          const submit = await fetch(`${base}/api/orders/${orderId}/payment`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              methodId,
+              reference: "DEV-TEST",
+              proofUrl: "https://example.com/proof.png",
+            }),
+          });
+          const submitText = await submit.text();
+          let submitBody;
+          try {
+            submitBody = JSON.parse(submitText);
+          } catch {
+            submitBody = submitText;
+          }
+          console.log("--- SUBMIT PAYMENT ---");
+          console.log("status:", submit.status);
+          console.log("body:", JSON.stringify(submitBody, null, 2));
+        } else {
+          console.log(
+            "Skipping payment submission (missing orderId or payment methods)."
+          );
+        }
       } else {
         console.log("No service id found in first service.");
       }
