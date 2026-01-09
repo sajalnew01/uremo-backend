@@ -29,12 +29,19 @@ exports.uploadPaymentProof = async (req, res) => {
       return res.status(400).json({ message: "File required" });
     }
 
-    // Upload to Cloudinary
-    const result = await cloudinary.uploader.upload(req.file.path, {
-      folder: "uremo/payments",
-    });
+    const uploadStream = cloudinary.uploader.upload_stream(
+      { folder: "uremo/payments" },
+      (error, uploadResult) => {
+        if (error) {
+          console.error(error);
+          return res.status(500).json({ message: "Upload failed" });
+        }
 
-    res.json({ url: result.secure_url });
+        res.json({ url: uploadResult.secure_url });
+      }
+    );
+
+    uploadStream.end(req.file.buffer);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
