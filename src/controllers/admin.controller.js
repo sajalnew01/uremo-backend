@@ -4,8 +4,8 @@ exports.getAllOrders = async (req, res) => {
   try {
     const orders = await Order.find()
       .populate("userId", "email role")
-      .populate("serviceId", "name price")
-      .populate("payment.methodId", "type label value");
+      .populate("serviceId", "title price")
+      .populate("payment.methodId", "name type details instructions");
 
     res.json(orders);
   } catch (err) {
@@ -18,7 +18,7 @@ exports.updateOrderStatus = async (req, res) => {
   try {
     const { status } = req.body;
 
-    if (!["review", "completed", "rejected"].includes(status)) {
+    if (!["review", "processing", "completed", "rejected"].includes(status)) {
       return res.status(400).json({ message: "Invalid status" });
     }
 
