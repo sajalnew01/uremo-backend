@@ -7,8 +7,16 @@ exports.apply = async (req, res, next) => {
       return res.status(400).json({ message: "Resume required" });
     }
 
-    const result = await cloudinary.uploader.upload(req.file.path, {
-      folder: "resumes",
+    const result = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        { folder: "uremo/resumes" },
+        (error, uploadResult) => {
+          if (error) return reject(error);
+          resolve(uploadResult);
+        }
+      );
+
+      uploadStream.end(req.file.buffer);
     });
 
     const application = await ApplyWork.create({
