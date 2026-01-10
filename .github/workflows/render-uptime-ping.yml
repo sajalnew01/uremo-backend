@@ -1,0 +1,18 @@
+name: Render Uptime Ping
+
+on:
+  schedule:
+    # Keep Render free instance warm (adjust as needed).
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backend
+        run: |
+          set -e
+          URL="https://uremo-backend.onrender.com/"
+          echo "Pinging $URL"
+          curl -fsS --retry 3 --retry-delay 5 --max-time 20 "$URL" > /dev/null
