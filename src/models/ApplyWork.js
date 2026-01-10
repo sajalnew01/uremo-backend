@@ -11,6 +11,12 @@ const applyWorkSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    resumeOriginalName: {
+      type: String,
+    },
+    resumeMimeType: {
+      type: String,
+    },
     message: {
       type: String,
     },

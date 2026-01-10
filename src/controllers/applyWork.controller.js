@@ -9,7 +9,12 @@ exports.apply = async (req, res, next) => {
 
     const result = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
-        { folder: "uremo/resumes" },
+        {
+          resource_type: "raw",
+          folder: "uremo/resumes",
+          use_filename: true,
+          unique_filename: false,
+        },
         (error, uploadResult) => {
           if (error) return reject(error);
           resolve(uploadResult);
@@ -22,6 +27,8 @@ exports.apply = async (req, res, next) => {
     const application = await ApplyWork.create({
       user: req.user.id,
       resumeUrl: result.secure_url,
+      resumeOriginalName: req.file.originalname,
+      resumeMimeType: req.file.mimetype,
       message: req.body.message,
     });
 
