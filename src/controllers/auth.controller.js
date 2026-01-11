@@ -75,8 +75,20 @@ exports.login = async (req, res) => {
         hasBody: Boolean(req.body),
         hasEmail: Boolean(email),
         hasPassword: Boolean(password),
+        bodyType: typeof req.body,
+        bodyKeys:
+          req.body && typeof req.body === "object"
+            ? Object.keys(req.body)
+            : null,
+        bodyKeyCount:
+          req.body && typeof req.body === "object"
+            ? Object.keys(req.body).length
+            : null,
         contentType: req.headers["content-type"],
+        contentLength: req.headers["content-length"],
         origin: req.headers.origin,
+        host: req.headers.host,
+        referer: req.headers.referer,
       });
       return res.status(400).json({ message: "Email and password required" });
     }

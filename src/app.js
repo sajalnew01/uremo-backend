@@ -45,6 +45,8 @@ app.use(cors(corsOptions));
 // Express 5 does not support "*" here (path-to-regexp). Use a regex that matches all.
 app.options(/.*/, cors(corsOptions));
 app.use(express.json());
+// Accept legacy form submissions (or older frontend builds) where Content-Type is urlencoded.
+app.use(express.urlencoded({ extended: true }));
 
 app.get("/", (req, res) => {
   res.json({ message: "UREMO API running" });
