@@ -14,7 +14,7 @@ function getAdminEmails() {
   return list.length ? list : [DEFAULT_ADMIN_EMAIL];
 }
 
-async function sendEmail({ to, subject, html }) {
+async function sendEmail({ to, subject, html, text }) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     const err = new Error("RESEND_API_KEY is not set");
@@ -22,7 +22,7 @@ async function sendEmail({ to, subject, html }) {
     throw err;
   }
 
-  const from = process.env.EMAIL_FROM || "UREMO <no-reply@uremo.online>";
+  const from = process.env.EMAIL_FROM || "UREMO <onboarding@resend.dev>";
 
   if (!to) {
     const err = new Error("Email 'to' is required");
@@ -36,9 +36,9 @@ async function sendEmail({ to, subject, html }) {
     throw err;
   }
 
-  if (!html) {
-    const err = new Error("Email 'html' is required");
-    err.code = "EMAIL_INVALID_HTML";
+  if (!html && !text) {
+    const err = new Error("Email requires 'html' or 'text'");
+    err.code = "EMAIL_INVALID_CONTENT";
     throw err;
   }
 
@@ -49,7 +49,8 @@ async function sendEmail({ to, subject, html }) {
       from,
       to,
       subject,
-      html,
+      ...(html ? { html } : {}),
+      ...(text ? { text } : {}),
     });
 
     const id = result?.data?.id || result?.id;
