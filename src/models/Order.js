@@ -28,6 +28,17 @@ const orderSchema = new mongoose.Schema(
       ],
       default: "pending",
     },
+
+    // Draft orders (payment_pending) can expire automatically (cleanup job can remove them later)
+    expiresAt: {
+      type: Date,
+      default: null,
+    },
+
+    paidAt: {
+      type: Date,
+      default: null,
+    },
     payment: {
       methodId: {
         type: mongoose.Schema.Types.ObjectId,

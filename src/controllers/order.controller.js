@@ -9,29 +9,22 @@ exports.createOrder = async (req, res) => {
       return res.status(404).json({ message: "Service not found" });
     }
 
-    // Set initial status based on delivery type
-    let initialStatus = "payment_pending";
-    if (service.deliveryType === "instant") {
-      initialStatus = "processing";
-    } else if (service.deliveryType === "assisted") {
-      initialStatus = "assistance_required";
-    } else if (service.deliveryType === "manual") {
-      initialStatus = "pending_review";
-    }
-
     const order = await Order.create({
       userId: req.user.id,
       serviceId: req.body.serviceId,
-      status: initialStatus,
+      status: "payment_pending",
+      payment: null,
+      paidAt: null,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       timeline: [
         {
-          message: "Order created",
+          message: "Order reserved (pending payment)",
           by: "system",
         },
       ],
     });
 
-    res.json(order);
+    res.json({ orderId: order._id });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -90,11 +83,27 @@ exports.submitPayment = async (req, res) => {
       return res.status(403).json({ message: "Access denied" });
     }
 
-    // Prevent resubmission
+    // Prevent resubmission unless rejected
     if (order.status === "payment_submitted") {
       return res
         .status(400)
         .json({ message: "Payment already submitted for this order" });
+    }
+
+    if (!["payment_pending", "rejected"].includes(order.status)) {
+      return res.status(400).json({
+        message: `Cannot submit payment for an order in status: ${order.status}`,
+      });
+    }
+
+    if (
+      order.status === "payment_pending" &&
+      order.expiresAt &&
+      Date.now() > new Date(order.expiresAt).getTime()
+    ) {
+      return res.status(410).json({
+        message: "Order reservation expired. Please buy the service again.",
+      });
     }
 
     // Update order with payment info
@@ -105,6 +114,7 @@ exports.submitPayment = async (req, res) => {
       submittedAt: new Date(),
     };
     order.status = "payment_submitted";
+    order.expiresAt = null;
     order.timeline.push({
       message: "Payment submitted for verification",
       by: "system",

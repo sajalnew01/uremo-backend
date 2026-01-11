@@ -50,15 +50,8 @@ exports.uploadPaymentProof = async (req, res) => {
 
 exports.uploadPayment = async (req, res) => {
   try {
-    const { orderId } = req.params;
-
-    const order = await Order.findById(orderId);
-    if (!order) return res.status(404).json({ message: "Order not found" });
-
-    // Ownership check
-    if (order.userId.toString() !== req.user.id) {
-      return res.status(403).json({ message: "Access denied" });
-    }
+    // Legacy endpoint: only uploads the file and returns a URL.
+    // Order status transitions must go through PUT /api/orders/:id/payment.
 
     if (!req.file) {
       return res.status(400).json({ message: "File required" });
@@ -66,24 +59,14 @@ exports.uploadPayment = async (req, res) => {
 
     // Upload to Cloudinary
     const uploadStream = cloudinary.uploader.upload_stream(
-      { folder: "payments" },
+      { folder: "uremo/payments" },
       async (error, uploadResult) => {
         if (error) {
           console.error(error);
           return res.status(500).json({ message: "Upload failed" });
         }
 
-        order.paymentProof = uploadResult.secure_url;
-        if (req.body?.paymentMethod) {
-          order.paymentMethod = req.body.paymentMethod;
-        }
-        if (req.body?.transactionRef) {
-          order.transactionRef = req.body.transactionRef;
-        }
-        order.status = "payment_submitted";
-        await order.save();
-
-        res.json({ message: "Payment proof uploaded" });
+        res.json({ url: uploadResult.secure_url });
       }
     );
 
