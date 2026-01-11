@@ -84,12 +84,37 @@ exports.login = async (req, res) => {
     const emailNormalized = String(email).trim();
     const user = await findUserByEmailInsensitive(emailNormalized);
     if (!user) {
-      return res.status(400).json({ message: "Invalid email or password" });
+      console.warn("[auth] login user not found", {
+        email: emailNormalized,
+        origin: req.headers.origin,
+        contentType: req.headers["content-type"],
+      });
+      return res.status(401).json({ message: "Invalid email or password" });
     }
 
     const isMatch = await bcryptjs.compare(password, user.password);
     if (!isMatch) {
-      return res.status(400).json({ message: "Invalid email or password" });
+      // Legacy compatibility: if a user was seeded with plaintext password,
+      // allow one successful login and upgrade to bcrypt.
+      if (
+        typeof user.password === "string" &&
+        user.password === String(password)
+      ) {
+        user.password = String(password);
+        await user.save();
+        console.warn("[auth] upgraded legacy plaintext password", {
+          userId: String(user._id),
+          email: user.email,
+        });
+      } else {
+        console.warn("[auth] login password mismatch", {
+          userId: String(user._id),
+          email: user.email,
+          origin: req.headers.origin,
+          contentType: req.headers["content-type"],
+        });
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
     }
 
     const token = jwt.sign(
