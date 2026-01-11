@@ -1,4 +1,5 @@
 const Order = require("../models/Order");
+const OrderMessage = require("../models/OrderMessage");
 
 exports.getAllOrders = async (req, res) => {
   try {
@@ -18,14 +19,48 @@ exports.updateOrderStatus = async (req, res) => {
   try {
     const { status } = req.body;
 
-    if (!["review", "processing", "completed", "rejected"].includes(status)) {
+    const allowed = [
+      "payment_pending",
+      "payment_submitted",
+      "processing",
+      "completed",
+      "rejected",
+    ];
+
+    if (!allowed.includes(status)) {
       return res.status(400).json({ message: "Invalid status" });
     }
 
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
+    const prevStatus = order.status;
+
     order.status = status;
+
+    order.statusLog = order.statusLog || [];
+    if (
+      prevStatus === "payment_submitted" &&
+      ["processing", "completed"].includes(status)
+    ) {
+      order.statusLog.push({
+        text: "Payment verified by admin",
+        at: new Date(),
+      });
+    }
+
+    if (status === "rejected") {
+      order.statusLog.push({
+        text: "Payment rejected — user must resubmit proof",
+        at: new Date(),
+      });
+    } else {
+      order.statusLog.push({
+        text: `Status changed to: ${status}`,
+        at: new Date(),
+      });
+    }
+
     order.timeline.push({
       message: `Status updated to ${status}`,
       by: "admin",
@@ -36,6 +71,81 @@ exports.updateOrderStatus = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+exports.adminReplyToOrder = async (req, res) => {
+  try {
+    const message = String(req.body?.message || "").trim();
+    if (!message) {
+      return res.status(400).json({ message: "Message is required" });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const created = await OrderMessage.create({
+      orderId: order._id,
+      userId: req.user.id,
+      senderRole: "admin",
+      message,
+      createdAt: new Date(),
+    });
+
+    res.status(201).json(created);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message || "Server error" });
+  }
+};
+
+exports.getAdminInbox = async (req, res) => {
+  try {
+    const recent = await OrderMessage.find()
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean();
+
+    const byOrder = new Map();
+    for (const msg of recent) {
+      const key = String(msg.orderId);
+      if (!byOrder.has(key)) {
+        byOrder.set(key, msg);
+      }
+    }
+
+    const orderIds = Array.from(byOrder.keys());
+    const orders = await Order.find({ _id: { $in: orderIds } })
+      .populate("userId", "email")
+      .populate("serviceId", "title")
+      .lean();
+
+    const orderMap = new Map(orders.map((o) => [String(o._id), o]));
+
+    const items = orderIds
+      .map((orderId) => {
+        const last = byOrder.get(orderId);
+        const order = orderMap.get(orderId);
+        if (!order) return null;
+
+        return {
+          orderId,
+          lastMessage: last.message,
+          lastAt: last.createdAt,
+          status: order.status,
+          userEmail: order.userId?.email || "",
+          serviceTitle: order.serviceId?.title || "",
+        };
+      })
+      .filter(Boolean)
+      .sort(
+        (a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime()
+      );
+
+    res.json(items);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message || "Server error" });
   }
 };
 

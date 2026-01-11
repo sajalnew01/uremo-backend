@@ -16,6 +16,12 @@ exports.createOrder = async (req, res) => {
       payment: null,
       paidAt: null,
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      statusLog: [
+        {
+          text: "Order reserved (pending payment)",
+          at: new Date(),
+        },
+      ],
       timeline: [
         {
           message: "Order reserved (pending payment)",
@@ -51,8 +57,9 @@ exports.getOrderById = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    // User can only view their own orders
-    if (order.userId.toString() !== req.user.id) {
+    // User can only view their own orders (admins can view any)
+    const isAdmin = req.user?.role === "admin";
+    if (!isAdmin && order.userId.toString() !== req.user.id) {
       return res.status(403).json({ message: "Access denied" });
     }
 
@@ -101,6 +108,12 @@ exports.submitPayment = async (req, res) => {
       order.expiresAt &&
       Date.now() > new Date(order.expiresAt).getTime()
     ) {
+      order.statusLog = order.statusLog || [];
+      order.statusLog.push({
+        text: "Order expired (payment not submitted in time)",
+        at: new Date(),
+      });
+      await order.save();
       return res.status(410).json({
         message: "Order reservation expired. Please buy the service again.",
       });
@@ -115,6 +128,11 @@ exports.submitPayment = async (req, res) => {
     };
     order.status = "payment_submitted";
     order.expiresAt = null;
+    order.statusLog = order.statusLog || [];
+    order.statusLog.push({
+      text: "Payment proof submitted (awaiting verification)",
+      at: new Date(),
+    });
     order.timeline.push({
       message: "Payment submitted for verification",
       by: "system",

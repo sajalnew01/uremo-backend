@@ -49,6 +49,13 @@ const orderSchema = new mongoose.Schema(
       submittedAt: Date,
     },
 
+    statusLog: [
+      {
+        text: { type: String, required: true },
+        at: { type: Date, default: Date.now },
+      },
+    ],
+
     timeline: [
       {
         message: String,
