@@ -4,13 +4,17 @@ const cors = require("cors");
 
 const app = express();
 
-const allowedOrigins = [
-  "https://uremo-frontend.vercel.app",
-  "https://uremo.online",
-  "https://www.uremo.online",
-  "http://localhost:3000",
-  "http://localhost:3001",
-];
+const isAllowedOrigin = (origin) => {
+  // Allow non-browser clients (no Origin header)
+  if (!origin) return true;
+
+  return (
+    origin === "https://uremo.online" ||
+    origin === "https://www.uremo.online" ||
+    origin === "http://localhost:3000" ||
+    /^https:\/\/.*\.vercel\.app$/.test(origin)
+  );
+};
 
 // Routes
 const authRoutes = require("./routes/auth.routes");
@@ -26,21 +30,20 @@ const adminPaymentRoutes = require("./routes/admin.payment.routes");
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow non-browser clients (no Origin header)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    const err = new Error(`Not allowed by CORS: ${origin}`);
+    if (isAllowedOrigin(origin)) return callback(null, true);
+    const err = new Error(`CORS blocked: ${origin}`);
     err.status = 403;
-    return callback(err);
+    return callback(err, false);
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-admin-setup-secret"],
 };
 
 app.use(cors(corsOptions));
-// Ensure preflight requests succeed for allowed origins.
-app.options(/.*/, cors(corsOptions), (req, res) => res.sendStatus(200));
+// Preflight MUST return correctly.
+// Express 5 does not support "*" here (path-to-regexp). Use a regex that matches all.
+app.options(/.*/, cors(corsOptions));
 app.use(express.json());
 
 app.get("/", (req, res) => {
