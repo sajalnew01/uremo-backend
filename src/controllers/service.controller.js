@@ -85,7 +85,51 @@ exports.getAllServices = async (req, res) => {
 exports.updateService = async (req, res) => {
   try {
     const { id } = req.params;
-    const payload = req.body;
+
+    const {
+      title,
+      category,
+      description,
+      requirements,
+      price,
+      currency,
+      images,
+      deliveryType,
+      type,
+      active,
+      isActive,
+    } = req.body || {};
+
+    const payload = {};
+
+    if (typeof title === "string" && title.trim()) {
+      payload.title = title.trim();
+      payload.slug = slugify(payload.title);
+    }
+    if (typeof category === "string") payload.category = category;
+    if (typeof description === "string") payload.description = description;
+    if (typeof requirements === "string") payload.requirements = requirements;
+    if (price !== undefined) payload.price = Number(price);
+    if (typeof currency === "string" && currency.trim()) {
+      payload.currency = currency.trim();
+    }
+    if (Array.isArray(images)) payload.images = images;
+
+    const resolvedDeliveryType =
+      typeof deliveryType === "string"
+        ? deliveryType
+        : typeof type === "string"
+        ? type
+        : undefined;
+    if (resolvedDeliveryType) payload.deliveryType = resolvedDeliveryType;
+
+    const resolvedActive =
+      typeof active === "boolean"
+        ? active
+        : typeof isActive === "boolean"
+        ? isActive
+        : undefined;
+    if (resolvedActive !== undefined) payload.active = resolvedActive;
 
     const service = await Service.findByIdAndUpdate(id, payload, {
       new: true,

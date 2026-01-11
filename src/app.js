@@ -4,6 +4,14 @@ const cors = require("cors");
 
 const app = express();
 
+const allowedOrigins = [
+  "https://uremo-frontend.vercel.app",
+  "https://uremo.online",
+  "https://www.uremo.online",
+  "http://localhost:3000",
+  "http://localhost:3001",
+];
+
 // Routes
 const authRoutes = require("./routes/auth.routes");
 const serviceRoutes = require("./routes/service.routes");
@@ -16,7 +24,19 @@ const workerRoutes = require("./routes/worker.routes");
 const applyWorkRoutes = require("./routes/applyWork.routes");
 const adminPaymentRoutes = require("./routes/admin.payment.routes");
 
-app.use(cors());
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow non-browser clients (no Origin header)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.use(express.json());
 
 app.get("/", (req, res) => {

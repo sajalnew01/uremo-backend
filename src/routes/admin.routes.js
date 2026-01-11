@@ -12,6 +12,7 @@ const {
   getAllServices,
   createService,
   updateService,
+  deleteService,
 } = require("../controllers/service.controller");
 const upload = require("../middlewares/upload.middleware");
 const { uploadImages } = require("../controllers/upload.controller");
@@ -28,6 +29,7 @@ router.post("/orders/:id/reply", auth, admin, adminReplyToOrder);
 router.get("/services", auth, admin, getAllServices);
 router.post("/services", auth, admin, createService);
 router.put("/services/:id", auth, admin, updateService);
+router.delete("/services/:id", auth, admin, deleteService);
 
 router.post(
   "/upload-images",
