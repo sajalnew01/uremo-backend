@@ -5,6 +5,17 @@ const bcryptjs = require("bcryptjs");
 const { sendEmail } = require("../services/email.service");
 const { welcomeEmail } = require("../emails/templates");
 
+const escapeRegExp = (value) =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const findUserByEmailInsensitive = async (email) => {
+  const normalized = String(email || "").trim();
+  if (!normalized) return null;
+  // Case-insensitive exact match (supports legacy mixed-case stored emails).
+  const re = new RegExp(`^${escapeRegExp(normalized)}$`, "i");
+  return User.findOne({ email: re });
+};
+
 exports.signup = async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
@@ -13,14 +24,16 @@ exports.signup = async (req, res, next) => {
       return res.status(400).json({ message: "All fields required" });
     }
 
-    const existingUser = await User.findOne({ email });
+    const emailNormalized = String(email).trim().toLowerCase();
+
+    const existingUser = await findUserByEmailInsensitive(emailNormalized);
     if (existingUser) {
       return res.status(400).json({ message: "Email already exists" });
     }
 
     const user = await User.create({
       name,
-      email,
+      email: emailNormalized,
       password,
     });
 
@@ -68,7 +81,8 @@ exports.login = async (req, res) => {
       return res.status(400).json({ message: "Email and password required" });
     }
 
-    const user = await User.findOne({ email });
+    const emailNormalized = String(email).trim();
+    const user = await findUserByEmailInsensitive(emailNormalized);
     if (!user) {
       return res.status(400).json({ message: "Invalid email or password" });
     }
@@ -114,7 +128,7 @@ exports.makeAdmin = async (req, res) => {
       return res.status(400).json({ message: "Email is required" });
     }
 
-    const user = await User.findOne({ email: String(email).toLowerCase() });
+    const user = await findUserByEmailInsensitive(String(email).trim());
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
