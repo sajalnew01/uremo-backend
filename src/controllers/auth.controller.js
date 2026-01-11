@@ -2,6 +2,9 @@ const User = require("../models/User");
 const jwt = require("jsonwebtoken");
 const bcryptjs = require("bcryptjs");
 
+const { sendEmail } = require("../services/email.service");
+const { welcomeEmail } = require("../emails/templates");
+
 exports.signup = async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
@@ -26,6 +29,20 @@ exports.signup = async (req, res, next) => {
       process.env.JWT_SECRET || "secret",
       { expiresIn: "7d" }
     );
+
+    // Email is best-effort; never block signup on email failure.
+    try {
+      await sendEmail({
+        to: user.email,
+        subject: "Welcome to UREMO",
+        html: welcomeEmail({ name: user.name }),
+      });
+    } catch (err) {
+      console.error("[email] welcome failed", {
+        userEmail: user.email,
+        message: err?.message || String(err),
+      });
+    }
 
     res.status(201).json({
       token,

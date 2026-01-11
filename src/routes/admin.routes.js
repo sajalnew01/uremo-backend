@@ -7,6 +7,7 @@ const {
   addOrderNote,
   adminReplyToOrder,
   getAdminInbox,
+  testEmail,
 } = require("../controllers/admin.controller");
 const {
   getAllServices,
@@ -24,6 +25,9 @@ router.get("/messages", auth, admin, getAdminInbox);
 router.put("/orders/:id", auth, admin, updateOrderStatus);
 router.post("/orders/:id/note", auth, admin, addOrderNote);
 router.post("/orders/:id/reply", auth, admin, adminReplyToOrder);
+
+// Debug/test email route (admin-only)
+router.post("/test-email", auth, admin, testEmail);
 
 // Service management
 router.get("/services", auth, admin, getAllServices);

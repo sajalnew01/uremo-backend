@@ -1,6 +1,9 @@
 const Order = require("../models/Order");
 const OrderMessage = require("../models/OrderMessage");
 
+const { sendEmail } = require("../services/email.service");
+const { orderStatusEmail, welcomeEmail } = require("../emails/templates");
+
 exports.getAllOrders = async (req, res) => {
   try {
     const orders = await Order.find()
@@ -67,10 +70,62 @@ exports.updateOrderStatus = async (req, res) => {
     });
     await order.save();
 
+    // Email notification (best-effort)
+    if (prevStatus !== status) {
+      try {
+        await order.populate([
+          { path: "userId", select: "email name" },
+          { path: "serviceId", select: "title" },
+        ]);
+
+        const userEmail = order.userId?.email;
+        if (userEmail) {
+          await sendEmail({
+            to: userEmail,
+            subject: "Order status updated — UREMO",
+            html: orderStatusEmail({
+              name: order.userId?.name,
+              orderId: String(order._id),
+              serviceTitle: order.serviceId?.title || "Service",
+              newStatus: status,
+            }),
+          });
+        }
+      } catch (err) {
+        console.error("[email] order status hook failed", {
+          orderId: String(order?._id || req.params.id),
+          message: err?.message || String(err),
+        });
+      }
+    }
+
     res.json({ message: "Order status updated" });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+exports.testEmail = async (req, res) => {
+  try {
+    const toEmail = String(req.body?.toEmail || "").trim();
+    if (!toEmail) {
+      return res.status(400).json({ message: "toEmail is required" });
+    }
+
+    const nameGuess = toEmail.split("@")[0] || "there";
+
+    await sendEmail({
+      to: toEmail,
+      subject: "Welcome to UREMO",
+      html: welcomeEmail({ name: nameGuess }),
+    });
+
+    res.json({ success: true, message: "Test email sent" });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ success: false, message: err?.message || "Email failed" });
   }
 };
 

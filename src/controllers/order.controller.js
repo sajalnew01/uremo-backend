@@ -1,6 +1,12 @@
 const Order = require("../models/Order");
 const Service = require("../models/Service");
 
+const { sendEmail, getAdminEmails } = require("../services/email.service");
+const {
+  paymentSubmittedEmail,
+  adminPaymentAlertEmail,
+} = require("../emails/templates");
+
 exports.createOrder = async (req, res) => {
   try {
     const service = await Service.findById(req.body.serviceId);
@@ -139,6 +145,48 @@ exports.submitPayment = async (req, res) => {
     });
 
     await order.save();
+
+    // Email notifications (best-effort)
+    try {
+      await order.populate([
+        { path: "userId", select: "email name" },
+        { path: "serviceId", select: "title" },
+      ]);
+
+      const userEmail = order.userId?.email;
+      const userName = order.userId?.name;
+      const serviceTitle = order.serviceId?.title || "Service";
+
+      if (userEmail) {
+        await sendEmail({
+          to: userEmail,
+          subject: "Payment proof received — UREMO",
+          html: paymentSubmittedEmail({
+            name: userName,
+            orderId: String(order._id),
+            serviceTitle,
+          }),
+        });
+      }
+
+      const admins = getAdminEmails();
+      if (admins.length) {
+        await sendEmail({
+          to: admins,
+          subject: "Admin alert: payment proof submitted",
+          html: adminPaymentAlertEmail({
+            userEmail: userEmail || "",
+            orderId: String(order._id),
+            serviceTitle,
+          }),
+        });
+      }
+    } catch (err) {
+      console.error("[email] payment submitted hooks failed", {
+        orderId: String(order?._id || id),
+        message: err?.message || String(err),
+      });
+    }
 
     res.json({
       message: "Payment submitted for verification",
