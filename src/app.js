@@ -24,19 +24,23 @@ const workerRoutes = require("./routes/worker.routes");
 const applyWorkRoutes = require("./routes/applyWork.routes");
 const adminPaymentRoutes = require("./routes/admin.payment.routes");
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow non-browser clients (no Origin header)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow non-browser clients (no Origin header)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    const err = new Error(`Not allowed by CORS: ${origin}`);
+    err.status = 403;
+    return callback(err);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
+app.use(cors(corsOptions));
+// Ensure preflight requests succeed for allowed origins.
+app.options(/.*/, cors(corsOptions), (req, res) => res.sendStatus(200));
 app.use(express.json());
 
 app.get("/", (req, res) => {

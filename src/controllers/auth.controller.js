@@ -58,6 +58,13 @@ exports.login = async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
+      console.warn("[auth] login missing fields", {
+        hasBody: Boolean(req.body),
+        hasEmail: Boolean(email),
+        hasPassword: Boolean(password),
+        contentType: req.headers["content-type"],
+        origin: req.headers.origin,
+      });
       return res.status(400).json({ message: "Email and password required" });
     }
 
