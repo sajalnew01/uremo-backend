@@ -1,5 +1,7 @@
 const { Resend } = require("resend");
 
+const DEFAULT_ADMIN_EMAIL = "sajalnew01@gmail.com";
+
 function parseEmailList(value) {
   return String(value || "")
     .split(",")
@@ -9,7 +11,7 @@ function parseEmailList(value) {
 
 function getAdminEmails() {
   const list = parseEmailList(process.env.ADMIN_EMAIL);
-  return list;
+  return list.length ? list : [DEFAULT_ADMIN_EMAIL];
 }
 
 async function sendEmail({ to, subject, html }) {
