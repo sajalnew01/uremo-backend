@@ -105,6 +105,12 @@ exports.login = async (req, res) => {
 
     const isMatch = await bcryptjs.compare(String(password), user.password);
     if (!isMatch) {
+      console.warn("[LOGIN_BAD_PASSWORD]", {
+        userId: String(user._id),
+        email: user.email,
+        passwordHashPrefix:
+          typeof user.password === "string" ? user.password.slice(0, 4) : null,
+      });
       // Legacy compatibility: if a user was seeded with plaintext password,
       // allow one successful login and upgrade to bcrypt.
       if (
@@ -171,6 +177,51 @@ exports.makeAdmin = async (req, res) => {
 
     return res.json({
       message: "User promoted to admin",
+      user: { id: user._id, email: user.email, role: user.role },
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || "Server error" });
+  }
+};
+
+// Secret-protected password reset endpoint.
+// Enable by setting ADMIN_SETUP_SECRET in the environment.
+// Call with header: x-admin-setup-secret: <secret>
+// Body: { "email": "user@example.com", "newPassword": "..." }
+exports.resetPasswordWithSecret = async (req, res) => {
+  try {
+    const secret = process.env.ADMIN_SETUP_SECRET;
+    if (!secret) {
+      return res.status(404).json({ message: "Route not found" });
+    }
+
+    const provided = req.headers["x-admin-setup-secret"];
+    if (!provided || provided !== secret) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const { email, password, newPassword } = req.body || {};
+    const nextPassword =
+      typeof newPassword === "string" && newPassword.length
+        ? newPassword
+        : password;
+
+    if (!email || !nextPassword) {
+      return res
+        .status(400)
+        .json({ message: "Email and newPassword are required" });
+    }
+
+    const user = await findUserByEmailInsensitive(String(email).trim());
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    user.password = String(nextPassword);
+    await user.save();
+
+    return res.json({
+      message: "Password updated",
       user: { id: user._id, email: user.email, role: user.role },
     });
   } catch (error) {

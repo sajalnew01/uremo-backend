@@ -71,6 +71,86 @@ app.use("/api/workers", workerRoutes);
 app.use("/api/apply-work", applyWorkRoutes);
 app.use("/api/cron", cronRoutes);
 
+// TEMP: Debug endpoint to list mounted routes
+app.get("/api/__routes", (req, res) => {
+  const routes = new Set();
+
+  const stack =
+    (app._router && app._router.stack) ||
+    (app.router && app.router.stack) ||
+    [];
+
+  const cleanPrefix = (prefix) => {
+    if (!prefix) return "";
+    if (prefix === "/") return "";
+    return prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+  };
+
+  const joinPaths = (a, b) => {
+    const left = cleanPrefix(a);
+    if (!b || b === "/") return left || "/";
+    const right = b.startsWith("/") ? b : `/${b}`;
+    const out = `${left}${right}`;
+    return out || "/";
+  };
+
+  const getLayerMountPath = (layer) => {
+    if (!layer || !layer.regexp) return "";
+    if (layer.regexp.fast_slash) return "";
+
+    let src = layer.regexp.source || "";
+    if (!src || src === "^\\/?$" || src === "^$") return "";
+
+    // Best-effort conversion of express layer regex to a human-readable mount path.
+    // Common router mounts look like: ^\/api\/auth\/?(?=\/|$)
+    if (src.startsWith("^")) src = src.slice(1);
+    if (src.endsWith("$")) src = src.slice(0, -1);
+    src = src.replaceAll("\\/?(?=\\/|$)", "");
+    src = src.replaceAll("\\/", "/");
+    src = src.replaceAll("(?:", "(");
+
+    // Replace common param-ish groups with a token.
+    src = src
+      .replace(/\(\[\^\/\]\+\?\)/g, ":param")
+      .replace(/\(\[\^\/\]\+\)/g, ":param");
+
+    // Cleanup.
+    src = src.replace(/\$/g, "");
+    src = src.replace(/\^/g, "");
+    if (src.endsWith("/")) src = src.slice(0, -1);
+    return src;
+  };
+
+  const recordRoute = (methods, path) => {
+    const methodStr = (methods || []).join(",").toUpperCase();
+    routes.add(`${methodStr} ${path}`);
+  };
+
+  const walk = (layers, prefix = "") => {
+    if (!Array.isArray(layers)) return;
+    layers.forEach((layer) => {
+      if (layer.route && layer.route.path) {
+        const methods = Object.keys(layer.route.methods || {});
+        const routePath = joinPaths(prefix, layer.route.path);
+        recordRoute(methods, routePath);
+        return;
+      }
+
+      // Mounted router
+      if (layer.name === "router" && layer.handle && layer.handle.stack) {
+        const mount = getLayerMountPath(layer);
+        const nextPrefix = joinPaths(prefix, mount);
+        walk(layer.handle.stack, nextPrefix);
+      }
+    });
+  };
+
+  walk(stack, "");
+
+  const list = Array.from(routes).sort();
+  res.json({ count: list.length, routes: list });
+});
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ message: "Route not found" });
