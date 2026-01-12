@@ -3,10 +3,13 @@ const auth = require("../middlewares/auth.middleware");
 const admin = require("../middlewares/admin.middleware");
 const {
   getAllOrders,
+  getRejectedArchivedOrders,
   updateOrderStatus,
   addOrderNote,
   adminReplyToOrder,
   getAdminInbox,
+  archiveRejectedOrder,
+  unarchiveRejectedOrder,
   testEmail,
 } = require("../controllers/admin.controller");
 const {
@@ -21,8 +24,16 @@ const { uploadImages } = require("../controllers/upload.controller");
 const router = express.Router();
 
 router.get("/orders", auth, admin, getAllOrders);
+router.get("/orders/rejected", auth, admin, getRejectedArchivedOrders);
 router.get("/messages", auth, admin, getAdminInbox);
 router.put("/orders/:id", auth, admin, updateOrderStatus);
+router.put("/orders/:id/archive-rejected", auth, admin, archiveRejectedOrder);
+router.put(
+  "/orders/:id/unarchive-rejected",
+  auth,
+  admin,
+  unarchiveRejectedOrder
+);
 router.post("/orders/:id/note", auth, admin, addOrderNote);
 router.post("/orders/:id/reply", auth, admin, adminReplyToOrder);
 

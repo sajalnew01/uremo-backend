@@ -6,12 +6,92 @@ const { orderStatusEmail, welcomeEmail } = require("../emails/templates");
 
 exports.getAllOrders = async (req, res) => {
   try {
-    const orders = await Order.find()
+    // Exclude archived rejected orders by default.
+    const orders = await Order.find({ isRejectedArchive: { $ne: true } })
       .populate("userId", "email role")
       .populate("serviceId", "title price")
       .populate("payment.methodId", "name type details instructions");
 
     res.json(orders);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+exports.getRejectedArchivedOrders = async (req, res) => {
+  try {
+    const orders = await Order.find({ isRejectedArchive: true })
+      .populate("userId", "email role")
+      .populate("serviceId", "title price")
+      .populate("payment.methodId", "name type details instructions")
+      .sort({ rejectedAt: -1, updatedAt: -1 });
+
+    res.json(orders);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+exports.archiveRejectedOrder = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    if (order.status !== "rejected") {
+      return res
+        .status(400)
+        .json({ message: "Only rejected orders can be archived" });
+    }
+
+    if (!order.isRejectedArchive) {
+      order.isRejectedArchive = true;
+      order.rejectedAt = new Date();
+      order.statusLog = order.statusLog || [];
+      order.statusLog.push({
+        text: "Order archived to rejected list",
+        at: new Date(),
+      });
+      order.timeline = order.timeline || [];
+      order.timeline.push({
+        message: "Order moved to rejected list",
+        by: "admin",
+      });
+      await order.save();
+    }
+
+    res.json(order);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+exports.unarchiveRejectedOrder = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    if (!order.isRejectedArchive) {
+      return res.status(400).json({ message: "Order is not archived" });
+    }
+
+    order.isRejectedArchive = false;
+    order.rejectedAt = null;
+    order.statusLog = order.statusLog || [];
+    order.statusLog.push({
+      text: "Order unarchived from rejected list",
+      at: new Date(),
+    });
+    order.timeline = order.timeline || [];
+    order.timeline.push({
+      message: "Order removed from rejected list",
+      by: "admin",
+    });
+
+    await order.save();
+    res.json(order);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });

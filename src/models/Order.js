@@ -80,6 +80,19 @@ const orderSchema = new mongoose.Schema(
     notes: {
       type: String,
     },
+
+    // FIX_PACK_02_REJECTED_CHAT_ORDERS_GREEN
+    // When true, a rejected order is moved to the admin's "Rejected Orders" list.
+    // This does not delete the order; it just hides it from the default admin list.
+    isRejectedArchive: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    rejectedAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );

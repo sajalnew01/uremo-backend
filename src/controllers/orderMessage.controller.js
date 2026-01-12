@@ -2,6 +2,11 @@ const Order = require("../models/Order");
 const OrderMessage = require("../models/OrderMessage");
 
 async function assertOrderAccess(req, res) {
+  if (!req.user || !req.user.id) {
+    res.status(401).json({ message: "Authentication required" });
+    return null;
+  }
+
   const order = await Order.findById(req.params.id);
   if (!order) {
     res.status(404).json({ message: "Order not found" });
@@ -9,7 +14,7 @@ async function assertOrderAccess(req, res) {
   }
 
   const isAdmin = req.user?.role === "admin";
-  const isOwner = order.userId.toString() === req.user.id;
+  const isOwner = String(order.userId) === String(req.user.id);
   if (!isAdmin && !isOwner) {
     res.status(403).json({ message: "Access denied" });
     return null;
