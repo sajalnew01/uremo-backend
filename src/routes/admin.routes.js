@@ -5,6 +5,7 @@ const {
   getAllOrders,
   getRejectedArchivedOrders,
   updateOrderStatus,
+  verifyPayment,
   addOrderNote,
   adminReplyToOrder,
   getAdminInbox,
@@ -31,6 +32,7 @@ router.get("/orders", auth, admin, getAllOrders);
 router.get("/orders/rejected", auth, admin, getRejectedArchivedOrders);
 router.get("/messages", auth, admin, getAdminInbox);
 router.put("/orders/:id", auth, admin, updateOrderStatus);
+router.put("/orders/:id/verify-payment", auth, admin, verifyPayment);
 router.put("/orders/:id/archive-rejected", auth, admin, archiveRejectedOrder);
 router.put(
   "/orders/:id/unarchive-rejected",

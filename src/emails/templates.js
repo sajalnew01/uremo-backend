@@ -255,6 +255,36 @@ function paymentSubmitted(order) {
   });
 }
 
+function paymentVerified(order) {
+  const o = order || {};
+  const orderId = String(o._id || o.id || "");
+  const serviceTitle =
+    o?.serviceId?.title || o?.serviceTitle || o?.service?.title || "Service";
+  const ordersUrl = `${getFrontendUrl()}/orders/${encodeURIComponent(orderId)}`;
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px 0;font-size:22px;line-height:28px;color:#FFFFFF;">Payment verified</h1>
+    <p style="margin:0 0 14px 0;color:#B6C2D6;font-size:14px;line-height:22px;">
+      Good news — your payment has been verified. Your order is now processing.
+    </p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:8px;">
+      ${kvRow("Order ID", orderId)}
+      ${kvRow("Service", String(serviceTitle))}
+      ${kvRow("Status", "Processing")}
+    </table>
+    <div style="margin-top:18px;">${primaryButton({
+      href: ordersUrl,
+      label: "View Order",
+    })}</div>
+  `;
+
+  return baseLayout({
+    title: "Payment verified",
+    preheader: "Payment verified — your order is processing.",
+    bodyHtml,
+  });
+}
+
 function orderStatusUpdated(order) {
   const o = order || {};
   const orderId = String(o._id || o.id || "");
@@ -491,6 +521,7 @@ module.exports = {
   welcomeEmail: welcomeEmailWrapper,
   paymentPendingReminder,
   paymentSubmitted,
+  paymentVerified,
   orderStatusUpdated,
   adminNewOrderAlert,
   adminPaymentProofAlert,

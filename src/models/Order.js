@@ -47,6 +47,7 @@ const orderSchema = new mongoose.Schema(
       reference: String,
       proofUrl: String,
       submittedAt: Date,
+      verifiedAt: Date,
     },
 
     statusLog: [

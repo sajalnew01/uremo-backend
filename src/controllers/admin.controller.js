@@ -2,7 +2,11 @@ const Order = require("../models/Order");
 const OrderMessage = require("../models/OrderMessage");
 
 const { sendEmail } = require("../services/email.service");
-const { orderStatusUpdated, welcomeEmail } = require("../emails/templates");
+const {
+  orderStatusUpdated,
+  paymentVerified,
+  welcomeEmail,
+} = require("../emails/templates");
 
 exports.getAllOrders = async (req, res) => {
   try {
@@ -178,6 +182,77 @@ exports.updateOrderStatus = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+exports.verifyPayment = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id).populate([
+      { path: "userId", select: "email name role" },
+      { path: "serviceId", select: "title price" },
+      { path: "payment.methodId", select: "name type details instructions" },
+    ]);
+
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    if (order.status !== "payment_submitted") {
+      return res.status(400).json({
+        message:
+          "Payment can only be verified when status is payment_submitted",
+      });
+    }
+
+    const now = new Date();
+
+    order.status = "processing";
+    order.payment = order.payment || {};
+    order.payment.verifiedAt = now;
+
+    order.statusLog = order.statusLog || [];
+    order.statusLog.push({
+      text: "Payment verified by admin",
+      at: now,
+    });
+
+    order.timeline = order.timeline || [];
+    order.timeline.push({
+      message: "Payment verified by admin",
+      by: "admin",
+      createdAt: now,
+    });
+
+    await order.save();
+
+    // Email notification (best-effort, non-blocking)
+    const userEmail = order.userId?.email;
+    if (userEmail) {
+      setImmediate(async () => {
+        try {
+          await sendEmail({
+            to: userEmail,
+            subject: "Payment Verified — Order is Processing",
+            html: paymentVerified(order),
+          });
+        } catch (err) {
+          console.error("[email] payment verified hook failed", {
+            orderId: String(order?._id || req.params.id),
+            message: err?.message || String(err),
+          });
+        }
+      });
+    }
+
+    // Return updated order (re-hydrated)
+    const updated = await Order.findById(order._id).populate([
+      { path: "userId", select: "email name role" },
+      { path: "serviceId", select: "title price" },
+      { path: "payment.methodId", select: "name type details instructions" },
+    ]);
+
+    return res.json(updated);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
   }
 };
 
