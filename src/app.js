@@ -87,13 +87,17 @@ app.get("/api/__routes", (req, res) => {
   };
 
   const joinPaths = (a, b) => {
-    const left = cleanPrefix(a);
-    if (!b || b === "/") return left || "/";
-    const right = b.startsWith("/") ? b : `/${b}`;
-    const out = `${left}${right}`;
-    return out || "/";
-  };
+  const left = cleanPrefix(a);
 
+  // normalize b into a string always
+  const raw = b == null ? "" : Array.isArray(b) ? b[0] : String(b);
+
+  if (!raw || raw === "/") return left || "/";
+
+  const right = raw.startsWith("/") ? raw : `/${raw}`;
+  const out = `${left}${right}`;
+  return out || "/";
+};
   const getLayerMountPath = (layer) => {
     if (!layer || !layer.regexp) return "";
     if (layer.regexp.fast_slash) return "";
