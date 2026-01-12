@@ -13,6 +13,10 @@ const {
   testEmail,
 } = require("../controllers/admin.controller");
 const {
+  createEmailCampaign,
+  listEmailCampaigns,
+} = require("../controllers/admin.emailCampaign.controller");
+const {
   getAllServices,
   createService,
   updateService,
@@ -39,6 +43,10 @@ router.post("/orders/:id/reply", auth, admin, adminReplyToOrder);
 
 // Debug/test email route (admin-only)
 router.post("/test-email", auth, admin, testEmail);
+
+// Promo email campaigns (admin-only)
+router.post("/email-campaigns", auth, admin, createEmailCampaign);
+router.get("/email-campaigns", auth, admin, listEmailCampaigns);
 
 // Service management
 router.get("/services", auth, admin, getAllServices);

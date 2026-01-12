@@ -45,24 +45,26 @@ exports.signup = async (req, res, next) => {
     );
 
     // Email is best-effort; never block signup on email failure.
-    try {
-      const topServices = await Service.find({ active: { $ne: false } })
-        .select("title category price")
-        .sort({ createdAt: -1 })
-        .limit(3)
-        .lean();
+    setImmediate(async () => {
+      try {
+        const topServices = await Service.find({ active: { $ne: false } })
+          .select("title category price")
+          .sort({ createdAt: -1 })
+          .limit(3)
+          .lean();
 
-      await sendEmail({
-        to: user.email,
-        subject: "Welcome to UREMO",
-        html: welcomeEmail(user.email, topServices),
-      });
-    } catch (err) {
-      console.error("[email] welcome failed", {
-        userEmail: user.email,
-        message: err?.message || String(err),
-      });
-    }
+        await sendEmail({
+          to: user.email,
+          subject: "Welcome to UREMO",
+          html: welcomeEmail(user.email, topServices),
+        });
+      } catch (err) {
+        console.error("[email] welcome failed", {
+          userEmail: user.email,
+          message: err?.message || String(err),
+        });
+      }
+    });
 
     res.status(201).json({
       token,
