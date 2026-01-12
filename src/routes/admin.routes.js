@@ -17,6 +17,7 @@ const {
   createEmailCampaign,
   listEmailCampaigns,
 } = require("../controllers/admin.emailCampaign.controller");
+const { userExists } = require("../controllers/admin.debug.controller");
 const {
   getAllServices,
   createService,
@@ -45,6 +46,9 @@ router.post("/orders/:id/reply", auth, admin, adminReplyToOrder);
 
 // Debug/test email route (admin-only)
 router.post("/test-email", auth, admin, testEmail);
+
+// Debug helpers (admin-only)
+router.get("/debug/user-exists", auth, admin, userExists);
 
 // Promo email campaigns (admin-only)
 router.post("/email-campaigns", auth, admin, createEmailCampaign);

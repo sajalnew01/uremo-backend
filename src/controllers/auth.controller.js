@@ -77,43 +77,33 @@ exports.signup = async (req, res, next) => {
 
 exports.login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body || {};
+
+    console.log("[LOGIN]", {
+      origin: req.headers.origin,
+      referer: req.headers.referer,
+      email: typeof email === "string" ? email.trim().toLowerCase() : undefined,
+      hasPassword: Boolean(password),
+    });
 
     if (!email || !password) {
-      console.warn("[auth] login missing fields", {
-        hasBody: Boolean(req.body),
-        hasEmail: Boolean(email),
-        hasPassword: Boolean(password),
-        bodyType: typeof req.body,
-        bodyKeys:
-          req.body && typeof req.body === "object"
-            ? Object.keys(req.body)
-            : null,
-        bodyKeyCount:
-          req.body && typeof req.body === "object"
-            ? Object.keys(req.body).length
-            : null,
-        contentType: req.headers["content-type"],
-        contentLength: req.headers["content-length"],
-        origin: req.headers.origin,
-        host: req.headers.host,
-        referer: req.headers.referer,
+      return res.status(400).json({
+        code: "MISSING_FIELDS",
+        message: "Email and password required",
+        received: { hasEmail: Boolean(email), hasPassword: Boolean(password) },
       });
-      return res.status(400).json({ message: "Email and password required" });
     }
 
-    const emailNormalized = String(email).trim();
+    const emailNormalized = String(email).trim().toLowerCase();
     const user = await findUserByEmailInsensitive(emailNormalized);
     if (!user) {
-      console.warn("[auth] login user not found", {
-        email: emailNormalized,
-        origin: req.headers.origin,
-        contentType: req.headers["content-type"],
+      return res.status(401).json({
+        code: "USER_NOT_FOUND",
+        message: "Invalid email or password",
       });
-      return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    const isMatch = await bcryptjs.compare(password, user.password);
+    const isMatch = await bcryptjs.compare(String(password), user.password);
     if (!isMatch) {
       // Legacy compatibility: if a user was seeded with plaintext password,
       // allow one successful login and upgrade to bcrypt.
@@ -128,13 +118,10 @@ exports.login = async (req, res) => {
           email: user.email,
         });
       } else {
-        console.warn("[auth] login password mismatch", {
-          userId: String(user._id),
-          email: user.email,
-          origin: req.headers.origin,
-          contentType: req.headers["content-type"],
+        return res.status(401).json({
+          code: "BAD_PASSWORD",
+          message: "Invalid email or password",
         });
-        return res.status(401).json({ message: "Invalid email or password" });
       }
     }
 
