@@ -9,6 +9,19 @@ const {
   adminNewOrderAlert,
 } = require("../emails/templates");
 
+function fireAndForget(task, meta) {
+  setImmediate(() => {
+    Promise.resolve()
+      .then(task)
+      .catch((err) => {
+        console.error("[email] async hook failed", {
+          ...(meta || {}),
+          message: err?.message || String(err),
+        });
+      });
+  });
+}
+
 exports.createOrder = async (req, res) => {
   try {
     const service = await Service.findById(req.body.serviceId);
@@ -39,29 +52,29 @@ exports.createOrder = async (req, res) => {
       ],
     });
 
-    // Email notifications (best-effort)
-    try {
-      const admins = getAdminEmails();
-      if (admins.length) {
-        const user = await User.findById(req.user.id).select("email").lean();
+    // Email notifications (best-effort, non-blocking)
+    const orderId = String(order._id);
+    const userId = String(req.user.id);
+    const serviceTitle = service?.title || "Service";
+    fireAndForget(
+      async () => {
+        const admins = getAdminEmails();
+        if (!admins.length) return;
 
+        const user = await User.findById(userId).select("email").lean();
         await sendEmail({
           to: admins,
           subject: "Admin alert: new order created",
           html: adminNewOrderAlert({
-            _id: order._id,
-            status: order.status,
+            _id: orderId,
+            status: "payment_pending",
             userEmail: user?.email || "",
-            serviceTitle: service?.title || "Service",
+            serviceTitle,
           }),
         });
-      }
-    } catch (err) {
-      console.error("[email] new order admin alert failed", {
-        orderId: String(order?._id),
-        message: err?.message || String(err),
-      });
-    }
+      },
+      { hook: "adminNewOrderAlert", orderId }
+    );
 
     res.json({ orderId: order._id });
   } catch (err) {
@@ -173,43 +186,43 @@ exports.submitPayment = async (req, res) => {
 
     await order.save();
 
-    // Email notifications (best-effort)
-    try {
-      await order.populate([
-        { path: "userId", select: "email name" },
-        { path: "serviceId", select: "title" },
-      ]);
+    // Email notifications (best-effort, non-blocking)
+    const orderId = String(order._id);
+    fireAndForget(
+      async () => {
+        const hydratedOrder = await Order.findById(orderId).populate([
+          { path: "userId", select: "email name" },
+          { path: "serviceId", select: "title" },
+        ]);
+        if (!hydratedOrder) return;
 
-      const userEmail = order.userId?.email;
-      const serviceTitle = order.serviceId?.title || "Service";
+        const userEmail = hydratedOrder.userId?.email;
+        const serviceTitle = hydratedOrder.serviceId?.title || "Service";
 
-      if (userEmail) {
-        await sendEmail({
-          to: userEmail,
-          subject: "Payment proof received — UREMO",
-          html: paymentSubmitted(order),
-        });
-      }
+        if (userEmail) {
+          await sendEmail({
+            to: userEmail,
+            subject: "Payment proof received — UREMO",
+            html: paymentSubmitted(hydratedOrder),
+          });
+        }
 
-      const admins = getAdminEmails();
-      if (admins.length) {
-        await sendEmail({
-          to: admins,
-          subject: "Admin alert: payment proof submitted",
-          html: adminPaymentProofAlert({
-            _id: order._id,
-            status: order.status,
-            userEmail: userEmail || "",
-            serviceTitle,
-          }),
-        });
-      }
-    } catch (err) {
-      console.error("[email] payment submitted hooks failed", {
-        orderId: String(order?._id || id),
-        message: err?.message || String(err),
-      });
-    }
+        const admins = getAdminEmails();
+        if (admins.length) {
+          await sendEmail({
+            to: admins,
+            subject: "Admin alert: payment proof submitted",
+            html: adminPaymentProofAlert({
+              _id: orderId,
+              status: hydratedOrder.status,
+              userEmail: userEmail || "",
+              serviceTitle,
+            }),
+          });
+        }
+      },
+      { hook: "paymentSubmitted", orderId }
+    );
 
     res.json({
       message: "Payment submitted for verification",
