@@ -5,7 +5,7 @@ const User = require("../models/User");
 const { sendEmail, getAdminEmails } = require("../services/email.service");
 const {
   applicationSubmittedEmail,
-  adminApplicationAlertEmail,
+  adminNewApplicationAlert,
 } = require("../emails/templates");
 
 exports.apply = async (req, res, next) => {
@@ -64,7 +64,7 @@ exports.apply = async (req, res, next) => {
         await sendEmail({
           to: admins,
           subject: "Admin alert: new application",
-          html: adminApplicationAlertEmail({
+          html: adminNewApplicationAlert({
             userEmail: userEmail || "",
             category,
           }),

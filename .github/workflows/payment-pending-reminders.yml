@@ -1,0 +1,29 @@
+name: Payment Pending Reminders
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call reminder endpoint
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$BACKEND_URL" ]; then
+            echo "Missing BACKEND_URL secret";
+            exit 1;
+          fi
+          if [ -z "$CRON_SECRET" ]; then
+            echo "Missing CRON_SECRET secret";
+            exit 1;
+          fi
+
+          URL="$BACKEND_URL/api/cron/payment-pending-reminders?secret=$CRON_SECRET"
+          echo "Calling: $URL"
+          curl -sS -f "$URL"
+          echo ""

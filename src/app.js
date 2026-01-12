@@ -27,6 +27,7 @@ const paymentMethodRoutes = require("./routes/paymentMethod.routes");
 const workerRoutes = require("./routes/worker.routes");
 const applyWorkRoutes = require("./routes/applyWork.routes");
 const adminPaymentRoutes = require("./routes/admin.payment.routes");
+const cronRoutes = require("./routes/cron.routes");
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -68,6 +69,7 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/payment-methods", paymentMethodRoutes);
 app.use("/api/workers", workerRoutes);
 app.use("/api/apply-work", applyWorkRoutes);
+app.use("/api/cron", cronRoutes);
 
 // 404 handler
 app.use((req, res) => {

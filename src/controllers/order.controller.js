@@ -1,10 +1,12 @@
 const Order = require("../models/Order");
 const Service = require("../models/Service");
+const User = require("../models/User");
 
 const { sendEmail, getAdminEmails } = require("../services/email.service");
 const {
-  paymentSubmittedEmail,
-  adminPaymentAlertEmail,
+  paymentSubmitted,
+  adminPaymentProofAlert,
+  adminNewOrderAlert,
 } = require("../emails/templates");
 
 exports.createOrder = async (req, res) => {
@@ -19,6 +21,7 @@ exports.createOrder = async (req, res) => {
       userId: req.user.id,
       serviceId: req.body.serviceId,
       status: "payment_pending",
+      reminderSent: false,
       payment: null,
       paidAt: null,
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
@@ -35,6 +38,30 @@ exports.createOrder = async (req, res) => {
         },
       ],
     });
+
+    // Email notifications (best-effort)
+    try {
+      const admins = getAdminEmails();
+      if (admins.length) {
+        const user = await User.findById(req.user.id).select("email").lean();
+
+        await sendEmail({
+          to: admins,
+          subject: "Admin alert: new order created",
+          html: adminNewOrderAlert({
+            _id: order._id,
+            status: order.status,
+            userEmail: user?.email || "",
+            serviceTitle: service?.title || "Service",
+          }),
+        });
+      }
+    } catch (err) {
+      console.error("[email] new order admin alert failed", {
+        orderId: String(order?._id),
+        message: err?.message || String(err),
+      });
+    }
 
     res.json({ orderId: order._id });
   } catch (err) {
@@ -154,18 +181,13 @@ exports.submitPayment = async (req, res) => {
       ]);
 
       const userEmail = order.userId?.email;
-      const userName = order.userId?.name;
       const serviceTitle = order.serviceId?.title || "Service";
 
       if (userEmail) {
         await sendEmail({
           to: userEmail,
           subject: "Payment proof received — UREMO",
-          html: paymentSubmittedEmail({
-            name: userName,
-            orderId: String(order._id),
-            serviceTitle,
-          }),
+          html: paymentSubmitted(order),
         });
       }
 
@@ -174,9 +196,10 @@ exports.submitPayment = async (req, res) => {
         await sendEmail({
           to: admins,
           subject: "Admin alert: payment proof submitted",
-          html: adminPaymentAlertEmail({
+          html: adminPaymentProofAlert({
+            _id: order._id,
+            status: order.status,
             userEmail: userEmail || "",
-            orderId: String(order._id),
             serviceTitle,
           }),
         });

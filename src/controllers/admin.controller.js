@@ -2,7 +2,7 @@ const Order = require("../models/Order");
 const OrderMessage = require("../models/OrderMessage");
 
 const { sendEmail } = require("../services/email.service");
-const { orderStatusEmail, welcomeEmail } = require("../emails/templates");
+const { orderStatusUpdated, welcomeEmail } = require("../emails/templates");
 
 exports.getAllOrders = async (req, res) => {
   try {
@@ -163,12 +163,7 @@ exports.updateOrderStatus = async (req, res) => {
           await sendEmail({
             to: userEmail,
             subject: "Order status updated — UREMO",
-            html: orderStatusEmail({
-              name: order.userId?.name,
-              orderId: String(order._id),
-              serviceTitle: order.serviceId?.title || "Service",
-              newStatus: status,
-            }),
+            html: orderStatusUpdated(order),
           });
         }
       } catch (err) {

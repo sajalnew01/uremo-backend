@@ -93,6 +93,14 @@ const orderSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+
+    // EMAIL_AUTOMATION_PACK_01
+    // Used by the cron reminder endpoint to avoid spamming users.
+    reminderSent: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   { timestamps: true }
 );

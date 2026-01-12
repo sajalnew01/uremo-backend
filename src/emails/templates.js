@@ -13,6 +13,13 @@ function humanizeCategory(category) {
   return c.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
+function getFrontendUrl() {
+  return String(process.env.FRONTEND_URL || "https://uremo.online").replace(
+    /\/$/,
+    ""
+  );
+}
+
 function baseLayout({ title, preheader, bodyHtml }) {
   const safeTitle = escapeHtml(title);
   const safePreheader = escapeHtml(preheader || "");
@@ -84,7 +91,7 @@ function kvRow(label, value) {
 }
 
 function welcomeEmail({ name }) {
-  const browseUrl = "https://uremo.online/buy-service";
+  const browseUrl = `${getFrontendUrl()}/buy-service`;
 
   const bodyHtml = `
     <h1 style="margin:0 0 8px 0;font-size:24px;line-height:30px;color:#FFFFFF;">Welcome to UREMO</h1>
@@ -114,6 +121,265 @@ function welcomeEmail({ name }) {
   return baseLayout({
     title: "Welcome to UREMO",
     preheader: "Welcome to UREMO — browse verified services.",
+    bodyHtml,
+  });
+}
+
+// ============================
+// EMAIL_AUTOMATION_PACK_01
+// New template API (do not break existing callers)
+// ============================
+
+function formatMoney(value) {
+  const n = Number(value);
+  if (Number.isFinite(n)) return `$${n}`;
+  return String(value || "");
+}
+
+function welcomeEmailNew(userEmail, topServices) {
+  const browseUrl = `${getFrontendUrl()}/buy-service`;
+  const email = String(userEmail || "").trim();
+  const nameGuess = email ? email.split("@")[0] : "there";
+  const services = Array.isArray(topServices) ? topServices : [];
+
+  const listHtml = services.length
+    ? `
+      <div style="margin:14px 0 0 0;">
+        <div style="font-weight:700;margin:0 0 8px 0;">Top services to start with</div>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:6px;">
+          ${services
+            .slice(0, 3)
+            .map((s) => {
+              const title = s?.title ? String(s.title) : "Service";
+              const category = s?.category ? humanizeCategory(s.category) : "";
+              const price = formatMoney(s?.price);
+              return kvRow(
+                title,
+                `${category ? category + " • " : ""}${price}`
+              );
+            })
+            .join("")}
+        </table>
+      </div>
+    `
+    : "";
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px 0;font-size:24px;line-height:30px;color:#FFFFFF;">Welcome to UREMO</h1>
+    <p style="margin:0 0 12px 0;color:#B6C2D6;font-size:14px;line-height:22px;">
+      Hi ${escapeHtml(
+        nameGuess
+      )}, thanks for joining UREMO. Browse trusted onboarding/KYC assistance services and track your order progress.
+    </p>
+    ${listHtml}
+    <div style="margin-top:18px;">${primaryButton({
+      href: browseUrl,
+      label: "Browse Services",
+    })}</div>
+  `;
+
+  return baseLayout({
+    title: "Welcome to UREMO",
+    preheader: "Welcome to UREMO — browse verified services.",
+    bodyHtml,
+  });
+}
+
+// Backward compatible wrapper:
+// - welcomeEmail({ name })   (legacy)
+// - welcomeEmail(userEmail, topServices) (new)
+function welcomeEmailWrapper(arg1, arg2) {
+  if (arg1 && typeof arg1 === "object" && !Array.isArray(arg1)) {
+    return welcomeEmail(arg1);
+  }
+  return welcomeEmailNew(arg1, arg2);
+}
+
+function paymentPendingReminder(order) {
+  const o = order || {};
+  const orderId = String(o._id || o.id || "");
+  const serviceTitle =
+    o?.serviceId?.title || o?.serviceTitle || o?.service?.title || "Service";
+  const payUrl = `${getFrontendUrl()}/payment/${encodeURIComponent(orderId)}`;
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px 0;font-size:22px;line-height:28px;color:#FFFFFF;">Complete your payment to continue</h1>
+    <p style="margin:0 0 14px 0;color:#B6C2D6;font-size:14px;line-height:22px;">
+      Your order is reserved and awaiting payment. Upload proof to start verification.
+    </p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:8px;">
+      ${kvRow("Order ID", orderId)}
+      ${kvRow("Service", String(serviceTitle))}
+      ${kvRow("Status", "Payment Pending")}
+    </table>
+    <div style="margin-top:18px;">${primaryButton({
+      href: payUrl,
+      label: "Go to Payment",
+    })}</div>
+  `;
+
+  return baseLayout({
+    title: "Payment pending reminder",
+    preheader: "Complete your payment to start verification.",
+    bodyHtml,
+  });
+}
+
+function paymentSubmitted(order) {
+  const o = order || {};
+  const orderId = String(o._id || o.id || "");
+  const serviceTitle =
+    o?.serviceId?.title || o?.serviceTitle || o?.service?.title || "Service";
+  const ordersUrl = `${getFrontendUrl()}/orders/${encodeURIComponent(orderId)}`;
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px 0;font-size:22px;line-height:28px;color:#FFFFFF;">Payment submitted</h1>
+    <p style="margin:0 0 14px 0;color:#B6C2D6;font-size:14px;line-height:22px;">
+      We received your payment proof. Our team will verify it and update your order.
+    </p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:8px;">
+      ${kvRow("Order ID", orderId)}
+      ${kvRow("Service", String(serviceTitle))}
+      ${kvRow("Status", "Awaiting Verification")}
+    </table>
+    <div style="margin-top:18px;">${primaryButton({
+      href: ordersUrl,
+      label: "View Order",
+    })}</div>
+  `;
+
+  return baseLayout({
+    title: "Payment submitted",
+    preheader: "Payment proof received — verification in progress.",
+    bodyHtml,
+  });
+}
+
+function orderStatusUpdated(order) {
+  const o = order || {};
+  const orderId = String(o._id || o.id || "");
+  const serviceTitle =
+    o?.serviceId?.title || o?.serviceTitle || o?.service?.title || "Service";
+  const status = String(o.status || o.newStatus || "updated");
+  const ordersUrl = `${getFrontendUrl()}/orders/${encodeURIComponent(orderId)}`;
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px 0;font-size:22px;line-height:28px;color:#FFFFFF;">Order status updated</h1>
+    <p style="margin:0 0 14px 0;color:#B6C2D6;font-size:14px;line-height:22px;">
+      Your order status changed. You can view the latest update in your order details.
+    </p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:8px;">
+      ${kvRow("Order ID", orderId)}
+      ${kvRow("Service", String(serviceTitle))}
+      ${kvRow("New Status", status)}
+    </table>
+    <div style="margin-top:18px;">${primaryButton({
+      href: ordersUrl,
+      label: "View Order",
+    })}</div>
+  `;
+
+  return baseLayout({
+    title: "Order status updated",
+    preheader: `Your order is now ${escapeHtml(status)}`,
+    bodyHtml,
+  });
+}
+
+function adminNewOrderAlert(order) {
+  const o = order || {};
+  const orderId = String(o._id || o.id || "");
+  const userEmail =
+    o?.userId?.email || o?.userEmail || o?.user?.email || "(unknown)";
+  const serviceTitle =
+    o?.serviceId?.title || o?.serviceTitle || o?.service?.title || "Service";
+  const adminUrl = `${getFrontendUrl()}/admin/orders/${encodeURIComponent(
+    orderId
+  )}`;
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px 0;font-size:22px;line-height:28px;color:#FFFFFF;">Admin alert: new order</h1>
+    <p style="margin:0 0 14px 0;color:#B6C2D6;font-size:14px;line-height:22px;">
+      A new order was created and is awaiting payment.
+    </p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:8px;">
+      ${kvRow("Order ID", orderId)}
+      ${kvRow("User", String(userEmail))}
+      ${kvRow("Service", String(serviceTitle))}
+      ${kvRow("Status", String(o.status || "payment_pending"))}
+    </table>
+    <div style="margin-top:18px;">${primaryButton({
+      href: adminUrl,
+      label: "Open in Admin",
+    })}</div>
+  `;
+
+  return baseLayout({
+    title: "Admin: new order",
+    preheader: "New order created — payment pending.",
+    bodyHtml,
+  });
+}
+
+function adminPaymentProofAlert(order) {
+  const o = order || {};
+  const orderId = String(o._id || o.id || "");
+  const userEmail =
+    o?.userId?.email || o?.userEmail || o?.user?.email || "(unknown)";
+  const serviceTitle =
+    o?.serviceId?.title || o?.serviceTitle || o?.service?.title || "Service";
+  const adminUrl = `${getFrontendUrl()}/admin/orders/${encodeURIComponent(
+    orderId
+  )}`;
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px 0;font-size:22px;line-height:28px;color:#FFFFFF;">Admin alert: payment proof submitted</h1>
+    <p style="margin:0 0 14px 0;color:#B6C2D6;font-size:14px;line-height:22px;">
+      A user submitted payment proof. Please review and verify.
+    </p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:8px;">
+      ${kvRow("Order ID", orderId)}
+      ${kvRow("User", String(userEmail))}
+      ${kvRow("Service", String(serviceTitle))}
+      ${kvRow("Status", String(o.status || "payment_submitted"))}
+    </table>
+    <div style="margin-top:18px;">${primaryButton({
+      href: adminUrl,
+      label: "Review Payment",
+    })}</div>
+  `;
+
+  return baseLayout({
+    title: "Admin: payment proof submitted",
+    preheader: "Payment proof submitted — review required.",
+    bodyHtml,
+  });
+}
+
+function adminNewApplicationAlert(app) {
+  const a = app || {};
+  const userEmail = a?.user?.email || a?.userEmail || "(unknown)";
+  const category = humanizeCategory(a?.category);
+  const adminUrl = `${getFrontendUrl()}/admin/apply-work`;
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px 0;font-size:22px;line-height:28px;color:#FFFFFF;">Admin alert: new application</h1>
+    <p style="margin:0 0 14px 0;color:#B6C2D6;font-size:14px;line-height:22px;">
+      A new apply-to-work submission was received.
+    </p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:8px;">
+      ${kvRow("User", String(userEmail))}
+      ${kvRow("Category", String(category))}
+    </table>
+    <div style="margin-top:18px;">${primaryButton({
+      href: adminUrl,
+      label: "Open Applications",
+    })}</div>
+  `;
+
+  return baseLayout({
+    title: "Admin: new application",
+    preheader: "New apply-to-work submission received.",
     bodyHtml,
   });
 }
@@ -221,7 +487,17 @@ function adminApplicationAlertEmail({ userEmail, category }) {
 }
 
 module.exports = {
-  welcomeEmail,
+  // New pack API
+  welcomeEmail: welcomeEmailWrapper,
+  paymentPendingReminder,
+  paymentSubmitted,
+  orderStatusUpdated,
+  adminNewOrderAlert,
+  adminPaymentProofAlert,
+  adminNewApplicationAlert,
+
+  // Backwards-compatible exports (existing controllers/pages)
+  welcomeEmailLegacy: welcomeEmail,
   paymentSubmittedEmail,
   orderStatusEmail,
   applicationSubmittedEmail,
