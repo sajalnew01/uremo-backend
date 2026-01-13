@@ -19,6 +19,7 @@ exports.createService = async (req, res) => {
       currency,
       deliveryType,
       images,
+      imageUrl,
       requirements,
     } = req.body;
 
@@ -37,6 +38,7 @@ exports.createService = async (req, res) => {
       currency: currency || "USD",
       deliveryType: deliveryType || "manual",
       images: images || [],
+      imageUrl: imageUrl || "",
       requirements: requirements || "",
       createdBy: req.user.id,
       active: true,
@@ -94,6 +96,7 @@ exports.updateService = async (req, res) => {
       price,
       currency,
       images,
+      imageUrl,
       deliveryType,
       type,
       active,
@@ -114,6 +117,7 @@ exports.updateService = async (req, res) => {
       payload.currency = currency.trim();
     }
     if (Array.isArray(images)) payload.images = images;
+    if (typeof imageUrl === "string") payload.imageUrl = imageUrl;
 
     const resolvedDeliveryType =
       typeof deliveryType === "string"

@@ -49,6 +49,11 @@ const serviceSchema = new mongoose.Schema(
       },
     ],
 
+    imageUrl: {
+      type: String,
+      default: "",
+    },
+
     requirements: {
       type: String,
     },
