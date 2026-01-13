@@ -15,6 +15,16 @@ const applyWorkSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    resumePublicId: {
+      type: String,
+    },
+    resumeResourceType: {
+      type: String,
+      enum: ["image", "raw"],
+    },
+    resumeFormat: {
+      type: String,
+    },
     resumeOriginalName: {
       type: String,
     },

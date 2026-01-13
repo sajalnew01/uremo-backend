@@ -1,5 +1,9 @@
 const ApplyWork = require("../models/ApplyWork");
 const cloudinary = require("../config/cloudinary");
+const {
+  inferResourceType,
+  normalizeCloudinaryUrl,
+} = require("../utils/cloudinaryUrl");
 
 const User = require("../models/User");
 const { sendEmail, getAdminEmails } = require("../services/email.service");
@@ -20,9 +24,10 @@ exports.apply = async (req, res, next) => {
     }
 
     const result = await new Promise((resolve, reject) => {
+      const resourceType = inferResourceType({ mimeType: req.file.mimetype });
       const uploadStream = cloudinary.uploader.upload_stream(
         {
-          resource_type: "raw",
+          resource_type: resourceType,
           folder: "uremo/resumes",
           use_filename: true,
           unique_filename: false,
@@ -40,6 +45,9 @@ exports.apply = async (req, res, next) => {
       user: req.user.id,
       category,
       resumeUrl: result.secure_url,
+      resumePublicId: result.public_id,
+      resumeResourceType: result.resource_type,
+      resumeFormat: result.format,
       resumeOriginalName: req.file.originalname,
       resumeMimeType: req.file.mimetype,
       message: req.body.message,
@@ -87,9 +95,18 @@ exports.getAll = async (req, res, next) => {
   try {
     const apps = await ApplyWork.find()
       .populate("user", "email name")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
-    res.json(apps);
+    const normalized = apps.map((app) => ({
+      ...app,
+      resumeUrl: normalizeCloudinaryUrl(app.resumeUrl, {
+        mimeType: app.resumeMimeType,
+        resourceType: app.resumeResourceType,
+      }),
+    }));
+
+    res.json(normalized);
   } catch (err) {
     next(err);
   }
@@ -107,8 +124,15 @@ exports.updateStatus = async (req, res, next) => {
 
 exports.getMyApplication = async (req, res, next) => {
   try {
-    const app = await ApplyWork.findOne({ user: req.user.id });
-    res.json(app);
+    const app = await ApplyWork.findOne({ user: req.user.id }).lean();
+    if (!app) return res.json(null);
+    res.json({
+      ...app,
+      resumeUrl: normalizeCloudinaryUrl(app.resumeUrl, {
+        mimeType: app.resumeMimeType,
+        resourceType: app.resumeResourceType,
+      }),
+    });
   } catch (err) {
     next(err);
   }

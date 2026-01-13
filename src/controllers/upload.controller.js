@@ -1,5 +1,19 @@
 const Order = require("../models/Order");
 const cloudinary = require("../config/cloudinary");
+const {
+  inferResourceType,
+  normalizeCloudinaryUrl,
+} = require("../utils/cloudinaryUrl");
+
+function serializeUpload(uploadResult) {
+  if (!uploadResult) return null;
+  return {
+    url: uploadResult.secure_url,
+    publicId: uploadResult.public_id,
+    resourceType: uploadResult.resource_type,
+    format: uploadResult.format,
+  };
+}
 
 exports.uploadImages = async (req, res) => {
   try {
@@ -15,8 +29,9 @@ exports.uploadImages = async (req, res) => {
       )
     );
 
-    const urls = uploads.map((u) => u.secure_url);
-    res.json({ urls });
+    const files = uploads.map(serializeUpload).filter(Boolean);
+    const urls = files.map((f) => f.url);
+    res.json({ urls, files });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -29,15 +44,20 @@ exports.uploadPaymentProof = async (req, res) => {
       return res.status(400).json({ message: "File required" });
     }
 
+    const resourceType = inferResourceType({ mimeType: req.file.mimetype });
     const uploadStream = cloudinary.uploader.upload_stream(
-      { folder: "uremo/payments" },
+      {
+        folder: "uremo/payments",
+        resource_type: resourceType,
+      },
       (error, uploadResult) => {
         if (error) {
           console.error(error);
           return res.status(500).json({ message: "Upload failed" });
         }
 
-        res.json({ url: uploadResult.secure_url });
+        const payload = serializeUpload(uploadResult);
+        res.json(payload);
       }
     );
 
@@ -58,15 +78,20 @@ exports.uploadPayment = async (req, res) => {
     }
 
     // Upload to Cloudinary
+    const resourceType = inferResourceType({ mimeType: req.file.mimetype });
     const uploadStream = cloudinary.uploader.upload_stream(
-      { folder: "uremo/payments" },
+      {
+        folder: "uremo/payments",
+        resource_type: resourceType,
+      },
       async (error, uploadResult) => {
         if (error) {
           console.error(error);
           return res.status(500).json({ message: "Upload failed" });
         }
 
-        res.json({ url: uploadResult.secure_url });
+        const payload = serializeUpload(uploadResult);
+        res.json(payload);
       }
     );
 
@@ -98,9 +123,16 @@ exports.uploadProofs = async (req, res) => {
       return res.status(400).json({ message: "Both files required" });
     }
 
+    // NOTE: this legacy endpoint previously stored non-schema fields.
+    // Keep behavior for status/contact, but always store viewable URLs.
+    const paymentProofUrl = normalizeCloudinaryUrl(
+      req.files.paymentProof[0].path
+    );
+    const senderKycUrl = normalizeCloudinaryUrl(req.files.senderKyc[0].path);
+
     order.documents = {
-      paymentProof: req.files.paymentProof[0].path,
-      senderKyc: req.files.senderKyc[0].path,
+      paymentProof: paymentProofUrl,
+      senderKyc: senderKycUrl,
     };
 
     order.contact = { email, phone };

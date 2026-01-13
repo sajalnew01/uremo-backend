@@ -9,6 +9,7 @@ const {
   adminPaymentProofAlert,
   adminNewOrderAlert,
 } = require("../emails/templates");
+const { normalizeCloudinaryUrl } = require("../utils/cloudinaryUrl");
 
 function fireAndForget(task, meta) {
   setImmediate(() => {
@@ -88,6 +89,26 @@ exports.myOrders = async (req, res) => {
     const orders = await Order.find({ userId: req.user.id })
       .populate("serviceId")
       .populate("payment.methodId");
+
+    for (const order of orders) {
+      if (order?.payment?.proofUrl) {
+        const proofFormat = order.payment.proofFormat;
+        const proofResourceType = order.payment.proofResourceType;
+        const mimeType = proofFormat
+          ? proofResourceType === "raw"
+            ? `application/${proofFormat}`
+            : `image/${proofFormat}`
+          : undefined;
+        order.payment.proofUrl = normalizeCloudinaryUrl(
+          order.payment.proofUrl,
+          {
+            resourceType: proofResourceType,
+            mimeType,
+          }
+        );
+      }
+    }
+
     res.json(orders);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -117,6 +138,20 @@ exports.getOrderById = async (req, res) => {
       return res.status(403).json({ message: "Access denied" });
     }
 
+    if (order?.payment?.proofUrl) {
+      const proofFormat = order.payment.proofFormat;
+      const proofResourceType = order.payment.proofResourceType;
+      const mimeType = proofFormat
+        ? proofResourceType === "raw"
+          ? `application/${proofFormat}`
+          : `image/${proofFormat}`
+        : undefined;
+      order.payment.proofUrl = normalizeCloudinaryUrl(order.payment.proofUrl, {
+        resourceType: proofResourceType,
+        mimeType,
+      });
+    }
+
     res.json(order);
   } catch (err) {
     if (err?.name === "CastError") {
@@ -128,7 +163,17 @@ exports.getOrderById = async (req, res) => {
 
 exports.submitPayment = async (req, res) => {
   try {
-    const { methodId, reference, proofUrl } = req.body;
+    const {
+      methodId,
+      reference,
+      proofUrl,
+      proofPublicId,
+      proofResourceType,
+      proofFormat,
+      publicId,
+      resourceType,
+      format,
+    } = req.body;
     const { id } = req.params;
 
     if (!methodId || !proofUrl) {
@@ -176,11 +221,21 @@ exports.submitPayment = async (req, res) => {
       });
     }
 
+    const resolvedPublicId = proofPublicId || publicId || "";
+    const resolvedResourceType = proofResourceType || resourceType || "";
+    const resolvedFormat = proofFormat || format || "";
+    const resolvedProofUrl = normalizeCloudinaryUrl(proofUrl, {
+      resourceType: resolvedResourceType,
+    });
+
     // Update order with payment info
     order.payment = {
       methodId,
       reference: reference || "",
-      proofUrl,
+      proofUrl: resolvedProofUrl,
+      proofPublicId: resolvedPublicId || undefined,
+      proofResourceType: resolvedResourceType || undefined,
+      proofFormat: resolvedFormat || undefined,
       submittedAt: new Date(),
     };
     order.status = "payment_submitted";

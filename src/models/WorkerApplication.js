@@ -12,6 +12,13 @@ const WorkerApplicationSchema = new mongoose.Schema(
     country: String,
     skills: String,
     resumeUrl: String,
+    resumePublicId: String,
+    resumeResourceType: {
+      type: String,
+      enum: ["image", "raw"],
+    },
+    resumeFormat: String,
+    resumeMimeType: String,
     status: {
       type: String,
       enum: ["submitted", "approved", "rejected"],

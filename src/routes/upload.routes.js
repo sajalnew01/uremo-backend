@@ -10,7 +10,22 @@ const {
 
 const router = express.Router();
 
-const memoryUpload = multer({ storage: multer.memoryStorage() });
+const memoryUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "application/pdf",
+    ];
+    if (!allowed.includes(file.mimetype)) {
+      return cb(new Error("Invalid file type"), false);
+    }
+    cb(null, true);
+  },
+});
 
 router.post(
   "/payment-proof",

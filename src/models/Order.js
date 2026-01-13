@@ -46,6 +46,12 @@ const orderSchema = new mongoose.Schema(
       },
       reference: String,
       proofUrl: String,
+      proofPublicId: String,
+      proofResourceType: {
+        type: String,
+        enum: ["image", "raw"],
+      },
+      proofFormat: String,
       submittedAt: Date,
       verifiedAt: Date,
     },
