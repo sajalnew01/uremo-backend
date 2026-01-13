@@ -28,6 +28,7 @@ const workerRoutes = require("./routes/worker.routes");
 const applyWorkRoutes = require("./routes/applyWork.routes");
 const adminPaymentRoutes = require("./routes/admin.payment.routes");
 const cronRoutes = require("./routes/cron.routes");
+const settingsRoutes = require("./routes/settings.routes");
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -70,6 +71,7 @@ app.use("/api/payment-methods", paymentMethodRoutes);
 app.use("/api/workers", workerRoutes);
 app.use("/api/apply-work", applyWorkRoutes);
 app.use("/api/cron", cronRoutes);
+app.use("/api/settings", settingsRoutes);
 
 // TEMP: Debug endpoint to list mounted routes
 app.get("/api/__routes", (req, res) => {
@@ -87,17 +89,17 @@ app.get("/api/__routes", (req, res) => {
   };
 
   const joinPaths = (a, b) => {
-  const left = cleanPrefix(a);
+    const left = cleanPrefix(a);
 
-  // normalize b into a string always
-  const raw = b == null ? "" : Array.isArray(b) ? b[0] : String(b);
+    // normalize b into a string always
+    const raw = b == null ? "" : Array.isArray(b) ? b[0] : String(b);
 
-  if (!raw || raw === "/") return left || "/";
+    if (!raw || raw === "/") return left || "/";
 
-  const right = raw.startsWith("/") ? raw : `/${raw}`;
-  const out = `${left}${right}`;
-  return out || "/";
-};
+    const right = raw.startsWith("/") ? raw : `/${raw}`;
+    const out = `${left}${right}`;
+    return out || "/";
+  };
   const getLayerMountPath = (layer) => {
     if (!layer || !layer.regexp) return "";
     if (layer.regexp.fast_slash) return "";

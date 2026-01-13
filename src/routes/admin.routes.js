@@ -26,6 +26,10 @@ const {
 } = require("../controllers/service.controller");
 const upload = require("../middlewares/upload.middleware");
 const { uploadImages } = require("../controllers/upload.controller");
+const {
+  getAdminSettings,
+  updateAdminSettings,
+} = require("../controllers/siteSettings.controller");
 
 const router = express.Router();
 
@@ -67,5 +71,9 @@ router.post(
   upload.array("images", 5),
   uploadImages
 );
+
+// CMS / Settings (admin-only)
+router.get("/settings", auth, admin, getAdminSettings);
+router.put("/settings", auth, admin, updateAdminSettings);
 
 module.exports = router;
