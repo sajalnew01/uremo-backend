@@ -1,5 +1,6 @@
 const Order = require("../models/Order");
 const OrderMessage = require("../models/OrderMessage");
+const mongoose = require("mongoose");
 
 async function assertOrderAccess(req, res) {
   if (!req.user || !req.user.id) {
@@ -7,7 +8,14 @@ async function assertOrderAccess(req, res) {
     return null;
   }
 
-  const order = await Order.findById(req.params.id);
+  const { id } = req.params;
+  // Avoid CastError -> 500. Treat invalid ids as not found.
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    res.status(404).json({ message: "Order not found" });
+    return null;
+  }
+
+  const order = await Order.findById(id);
   if (!order) {
     res.status(404).json({ message: "Order not found" });
     return null;
@@ -34,7 +42,10 @@ exports.getOrderMessages = async (req, res) => {
 
     res.json(messages);
   } catch (err) {
-    res.status(500).json({ message: err.message || "Server error" });
+    if (err?.name === "CastError") {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    res.status(500).json({ message: err?.message || "Server error" });
   }
 };
 
@@ -58,6 +69,9 @@ exports.postOrderMessage = async (req, res) => {
 
     res.status(201).json(created);
   } catch (err) {
-    res.status(500).json({ message: err.message || "Server error" });
+    if (err?.name === "CastError") {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    res.status(500).json({ message: err?.message || "Server error" });
   }
 };

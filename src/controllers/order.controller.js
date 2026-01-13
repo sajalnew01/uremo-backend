@@ -1,6 +1,7 @@
 const Order = require("../models/Order");
 const Service = require("../models/Service");
 const User = require("../models/User");
+const mongoose = require("mongoose");
 
 const { sendEmail, getAdminEmails } = require("../services/email.service");
 const {
@@ -95,8 +96,15 @@ exports.myOrders = async (req, res) => {
 
 exports.getOrderById = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id)
-      .populate("serviceId")
+    const { id } = req.params;
+
+    // Avoid CastError -> 500. Treat invalid ids as not found.
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    const order = await Order.findById(id)
+      .populate("serviceId", "title price")
       .populate("payment.methodId");
 
     if (!order) {
@@ -111,7 +119,10 @@ exports.getOrderById = async (req, res) => {
 
     res.json(order);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    if (err?.name === "CastError") {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    res.status(500).json({ message: err?.message || "Server error" });
   }
 };
 
