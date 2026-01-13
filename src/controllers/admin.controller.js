@@ -10,11 +10,31 @@ const {
 
 exports.getAllOrders = async (req, res) => {
   try {
+    const statusQuery = String(req.query?.status || "")
+      .trim()
+      .toLowerCase();
+
     // Exclude archived rejected orders by default.
-    const orders = await Order.find({ isRejectedArchive: { $ne: true } })
+    const query = { isRejectedArchive: { $ne: true } };
+
+    // Optional status filter from UI tabs.
+    // UI values: pending | submitted | processing | all
+    const statusMap = {
+      pending: "payment_pending",
+      submitted: "payment_submitted",
+      processing: "processing",
+    };
+
+    if (statusQuery && statusQuery !== "all") {
+      const mapped = statusMap[statusQuery];
+      if (mapped) query.status = mapped;
+    }
+
+    const orders = await Order.find(query)
       .populate("userId", "email role")
       .populate("serviceId", "title price")
-      .populate("payment.methodId", "name type details instructions");
+      .populate("payment.methodId", "name type details instructions")
+      .sort({ createdAt: -1, updatedAt: -1 });
 
     res.json(orders);
   } catch (err) {
