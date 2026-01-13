@@ -21,13 +21,14 @@ exports.getAllOrders = async (req, res) => {
     // UI values: pending | submitted | processing | all
     const statusMap = {
       pending: "payment_pending",
-      submitted: "payment_submitted",
+      submitted: ["payment_submitted", "pending_review"],
       processing: "processing",
     };
 
     if (statusQuery && statusQuery !== "all") {
       const mapped = statusMap[statusQuery];
-      if (mapped) query.status = mapped;
+      if (Array.isArray(mapped)) query.status = { $in: mapped };
+      else if (mapped) query.status = mapped;
     }
 
     const orders = await Order.find(query)
