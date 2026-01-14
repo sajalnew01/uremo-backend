@@ -40,7 +40,19 @@ exports.getOrderMessages = async (req, res) => {
       .sort({ createdAt: 1 })
       .lean();
 
-    res.json(messages);
+    const normalized = messages.map((m) => ({
+      ...m,
+      senderId: m.senderId || m.userId || null,
+    }));
+
+    console.log("[chat] getOrderMessages", {
+      orderId: String(order._id),
+      count: normalized.length,
+      requesterId: req.user?.id,
+      requesterRole: req.user?.role,
+    });
+
+    res.json(normalized);
   } catch (err) {
     if (err?.name === "CastError") {
       return res.status(404).json({ message: "Order not found" });
@@ -59,15 +71,26 @@ exports.postOrderMessage = async (req, res) => {
       return res.status(400).json({ message: "Message is required" });
     }
 
+    const senderRole = req.user?.role === "admin" ? "admin" : "user";
+    console.log("[chat] postOrderMessage", {
+      orderId: String(order._id),
+      senderRole,
+      senderId: req.user?.id,
+    });
+
     const created = await OrderMessage.create({
       orderId: order._id,
+      senderId: req.user.id,
       userId: req.user.id,
-      senderRole: req.user?.role === "admin" ? "admin" : "user",
+      senderRole,
       message,
       createdAt: new Date(),
     });
 
-    res.status(201).json(created);
+    res.status(201).json({
+      ...created.toObject(),
+      senderId: created.senderId || created.userId || null,
+    });
   } catch (err) {
     if (err?.name === "CastError") {
       return res.status(404).json({ message: "Order not found" });

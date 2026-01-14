@@ -26,6 +26,8 @@ const paymentRoutes = require("./routes/payment.routes");
 const paymentMethodRoutes = require("./routes/paymentMethod.routes");
 const workerRoutes = require("./routes/worker.routes");
 const applyWorkRoutes = require("./routes/applyWork.routes");
+const workPositionRoutes = require("./routes/workPosition.routes");
+const adminWorkPositionRoutes = require("./routes/admin.workPosition.routes");
 const adminPaymentRoutes = require("./routes/admin.payment.routes");
 const cronRoutes = require("./routes/cron.routes");
 const settingsRoutes = require("./routes/settings.routes");
@@ -70,6 +72,8 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/payment-methods", paymentMethodRoutes);
 app.use("/api/workers", workerRoutes);
 app.use("/api/apply-work", applyWorkRoutes);
+app.use("/api/work-positions", workPositionRoutes);
+app.use("/api/admin/work-positions", adminWorkPositionRoutes);
 app.use("/api/cron", cronRoutes);
 app.use("/api/settings", settingsRoutes);
 

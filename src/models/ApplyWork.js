@@ -7,6 +7,15 @@ const applyWorkSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    position: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "WorkPosition",
+    },
+    positionTitle: {
+      type: String,
+      default: "",
+      trim: true,
+    },
     category: {
       type: String,
       default: "",

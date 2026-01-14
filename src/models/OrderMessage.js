@@ -8,10 +8,17 @@ const orderMessageSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    userId: {
+    // Canonical sender id.
+    senderId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
+      index: true,
+    },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
     },
     senderRole: {
       type: String,
@@ -32,5 +39,11 @@ const orderMessageSchema = new mongoose.Schema(
 );
 
 orderMessageSchema.index({ orderId: 1, createdAt: 1 });
+
+orderMessageSchema.pre("validate", function (next) {
+  if (!this.senderId && this.userId) this.senderId = this.userId;
+  if (!this.userId && this.senderId) this.userId = this.senderId;
+  next();
+});
 
 module.exports = mongoose.model("OrderMessage", orderMessageSchema);

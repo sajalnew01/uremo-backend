@@ -4,6 +4,8 @@ const {
   inferResourceType,
   normalizeCloudinaryUrl,
 } = require("../utils/cloudinaryUrl");
+const mongoose = require("mongoose");
+const WorkPosition = require("../models/WorkPosition");
 
 const User = require("../models/User");
 const { sendEmail, getAdminEmails } = require("../services/email.service");
@@ -14,42 +16,84 @@ const {
 
 exports.apply = async (req, res, next) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ message: "Resume required" });
+    const positionIdRaw = String(req.body?.positionId || "").trim();
+
+    let position = null;
+    if (positionIdRaw) {
+      if (!mongoose.Types.ObjectId.isValid(positionIdRaw)) {
+        return res.status(400).json({ message: "Invalid positionId" });
+      }
+      position = await WorkPosition.findById(positionIdRaw).lean();
+      if (!position) {
+        return res.status(400).json({ message: "Position not found" });
+      }
     }
 
-    const category = String(req.body?.category || "").trim();
+    const category = position
+      ? String(position.category || "").trim()
+      : String(req.body?.category || "").trim();
     if (!category) {
       return res.status(400).json({ message: "Category is required" });
     }
 
-    const result = await new Promise((resolve, reject) => {
-      const resourceType = inferResourceType({ mimeType: req.file.mimetype });
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          resource_type: resourceType,
-          folder: "uremo/resumes",
-          use_filename: true,
-          unique_filename: false,
-        },
-        (error, uploadResult) => {
-          if (error) return reject(error);
-          resolve(uploadResult);
-        }
-      );
+    const resumeUrlRaw = String(req.body?.resumeUrl || "").trim();
+    if (!req.file && !resumeUrlRaw) {
+      return res
+        .status(400)
+        .json({ message: "Resume required (file upload or resumeUrl)" });
+    }
 
-      uploadStream.end(req.file.buffer);
-    });
+    let resumeDoc = {};
+
+    if (req.file) {
+      const result = await new Promise((resolve, reject) => {
+        const resourceType = inferResourceType({ mimeType: req.file.mimetype });
+        const uploadStream = cloudinary.uploader.upload_stream(
+          {
+            resource_type: resourceType,
+            folder: "uremo/resumes",
+            use_filename: true,
+            unique_filename: false,
+          },
+          (error, uploadResult) => {
+            if (error) return reject(error);
+            resolve(uploadResult);
+          }
+        );
+
+        uploadStream.end(req.file.buffer);
+      });
+
+      resumeDoc = {
+        resumeUrl: result.secure_url,
+        resumePublicId: result.public_id,
+        resumeResourceType: result.resource_type,
+        resumeFormat: result.format,
+        resumeOriginalName: req.file.originalname,
+        resumeMimeType: req.file.mimetype,
+      };
+    } else {
+      // Accept an already-uploaded resume URL.
+      try {
+        // eslint-disable-next-line no-new
+        new URL(resumeUrlRaw);
+      } catch {
+        return res.status(400).json({ message: "Invalid resumeUrl" });
+      }
+
+      resumeDoc = {
+        resumeUrl: resumeUrlRaw,
+        resumeOriginalName: String(req.body?.resumeOriginalName || "").trim(),
+        resumeMimeType: String(req.body?.resumeMimeType || "").trim(),
+      };
+    }
 
     const application = await ApplyWork.create({
       user: req.user.id,
+      position: position ? position._id : undefined,
+      positionTitle: position ? String(position.title || "").trim() : "",
       category,
-      resumeUrl: result.secure_url,
-      resumePublicId: result.public_id,
-      resumeResourceType: result.resource_type,
-      resumeFormat: result.format,
-      resumeOriginalName: req.file.originalname,
-      resumeMimeType: req.file.mimetype,
+      ...resumeDoc,
       message: req.body.message,
     });
 
@@ -59,11 +103,15 @@ exports.apply = async (req, res, next) => {
       const userEmail = user?.email;
       const userName = user?.name;
 
+      const label = position
+        ? String(position.title || "").trim() || category
+        : category;
+
       if (userEmail) {
         await sendEmail({
           to: userEmail,
           subject: "Application submitted — UREMO",
-          html: applicationSubmittedEmail({ name: userName, category }),
+          html: applicationSubmittedEmail({ name: userName, category: label }),
         });
       }
 
@@ -74,7 +122,7 @@ exports.apply = async (req, res, next) => {
           subject: "Admin alert: new application",
           html: adminNewApplicationAlert({
             userEmail: userEmail || "",
-            category,
+            category: label,
           }),
         });
       }
@@ -95,6 +143,7 @@ exports.getAll = async (req, res, next) => {
   try {
     const apps = await ApplyWork.find()
       .populate("user", "email name")
+      .populate("position", "_id title category active")
       .sort({ createdAt: -1 })
       .lean();
 
@@ -124,7 +173,9 @@ exports.updateStatus = async (req, res, next) => {
 
 exports.getMyApplication = async (req, res, next) => {
   try {
-    const app = await ApplyWork.findOne({ user: req.user.id }).lean();
+    const app = await ApplyWork.findOne({ user: req.user.id })
+      .populate("position", "_id title category active")
+      .lean();
     if (!app) return res.json(null);
     res.json({
       ...app,

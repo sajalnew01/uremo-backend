@@ -301,28 +301,10 @@ exports.testEmail = async (req, res) => {
 };
 
 exports.adminReplyToOrder = async (req, res) => {
-  try {
-    const message = String(req.body?.message || "").trim();
-    if (!message) {
-      return res.status(400).json({ message: "Message is required" });
-    }
-
-    const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ message: "Order not found" });
-
-    const created = await OrderMessage.create({
-      orderId: order._id,
-      userId: req.user.id,
-      senderRole: "admin",
-      message,
-      createdAt: new Date(),
-    });
-
-    res.status(201).json(created);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: err.message || "Server error" });
-  }
+  // Backward-compatible admin endpoint.
+  // Keep it, but route through the unified chat logic used by users.
+  const { postOrderMessage } = require("./orderMessage.controller");
+  return postOrderMessage(req, res);
 };
 
 exports.getAdminInbox = async (req, res) => {
