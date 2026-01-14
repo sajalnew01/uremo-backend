@@ -48,9 +48,27 @@ app.use(cors(corsOptions));
 // Preflight MUST return correctly.
 // Express 5 does not support "*" here (path-to-regexp). Use a regex that matches all.
 app.options(/.*/, cors(corsOptions));
-app.use(express.json());
+// Allow up to ~250KB JSON bodies so CMS raw JSON import can work, while
+// still enforcing a stricter per-endpoint max size in controllers.
+app.use(express.json({ limit: "250kb" }));
 // Accept legacy form submissions (or older frontend builds) where Content-Type is urlencoded.
 app.use(express.urlencoded({ extended: true }));
+
+// Handle invalid JSON bodies gracefully (body-parser SyntaxError)
+app.use((err, req, res, next) => {
+  if (
+    err &&
+    err instanceof SyntaxError &&
+    err.status === 400 &&
+    "body" in err
+  ) {
+    return res.status(400).json({
+      message: "Invalid JSON",
+      details: err.message,
+    });
+  }
+  return next(err);
+});
 
 app.get("/", (req, res) => {
   res.json({ message: "UREMO API running" });

@@ -29,6 +29,8 @@ const { uploadImages } = require("../controllers/upload.controller");
 const {
   getAdminSettings,
   updateAdminSettings,
+  getAdminSettingsRaw,
+  putAdminSettingsRaw,
 } = require("../controllers/siteSettings.controller");
 
 const router = express.Router();
@@ -75,5 +77,9 @@ router.post(
 // CMS / Settings (admin-only)
 router.get("/settings", auth, admin, getAdminSettings);
 router.put("/settings", auth, admin, updateAdminSettings);
+
+// CMS / Settings raw JSON (admin-only)
+router.get("/settings/raw", auth, admin, getAdminSettingsRaw);
+router.put("/settings/raw", auth, admin, putAdminSettingsRaw);
 
 module.exports = router;

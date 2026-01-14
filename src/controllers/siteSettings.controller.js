@@ -190,7 +190,7 @@ const sanitizeStringArray = (input, opts) => {
 const hasOwn = (obj, key) =>
   !!obj && Object.prototype.hasOwnProperty.call(obj, key);
 
-const isPlainObject = (value) => {
+const isPlainSettingsObject = (value) => {
   if (!value || typeof value !== "object") return false;
   if (Array.isArray(value)) return false;
   if (value instanceof Date) return false;
@@ -198,13 +198,13 @@ const isPlainObject = (value) => {
 };
 
 const flattenForSet = (value, prefix = "") => {
-  if (!isPlainObject(value)) return {};
+  if (!isPlainSettingsObject(value)) return {};
   const out = {};
 
   for (const [key, val] of Object.entries(value)) {
     if (val === undefined) continue;
     const path = prefix ? `${prefix}.${key}` : key;
-    if (isPlainObject(val)) {
+    if (isPlainSettingsObject(val)) {
       Object.assign(out, flattenForSet(val, path));
       continue;
     }
@@ -454,6 +454,7 @@ const publicProjection = (doc) => {
 exports.getPublicSettings = async (req, res) => {
   try {
     const doc = await ensureMainSettings();
+    res.set("Cache-Control", "no-store");
     return res.json(publicProjection(doc));
   } catch (err) {
     return res.status(500).json({ message: err?.message || "Server error" });
@@ -636,7 +637,7 @@ exports.updateAdminSettings = async (req, res) => {
 
     if (hasOwn(body, "orders")) {
       const chat = body?.orders?.details?.chat;
-      if (isPlainObject(chat)) {
+      if (isPlainSettingsObject(chat)) {
         patch.orders = { details: { chat: {} } };
         if (hasOwn(chat, "inputPlaceholder"))
           patch.orders.details.chat.inputPlaceholder = clampString(
@@ -767,5 +768,132 @@ exports.updateAdminSettings = async (req, res) => {
     return res.json(updated);
   } catch (err) {
     return res.status(500).json({ message: err?.message || "Server error" });
+  }
+};
+
+const deepMerge = (target, source) => {
+  if (!isPlainSettingsObject(target) || !isPlainSettingsObject(source))
+    return target;
+  for (const [key, val] of Object.entries(source)) {
+    if (val === undefined) continue;
+    if (isPlainSettingsObject(val)) {
+      if (!isPlainSettingsObject(target[key])) target[key] = {};
+      deepMerge(target[key], val);
+      continue;
+    }
+    target[key] = val;
+  }
+  return target;
+};
+
+const stripSystemFieldsForMerge = (settings) => {
+  if (!isPlainSettingsObject(settings)) return {};
+  const out = JSON.parse(JSON.stringify(settings));
+  delete out._id;
+  delete out.__v;
+  delete out.singletonKey;
+  delete out.updatedAt;
+  delete out.updatedBy;
+  return out;
+};
+
+const clampSettingsJsonSize = (settings, maxBytes) => {
+  try {
+    const json = JSON.stringify(settings);
+    const bytes = Buffer.byteLength(json, "utf8");
+    return { ok: bytes <= maxBytes, bytes };
+  } catch (e) {
+    return { ok: false, bytes: 0, error: e };
+  }
+};
+
+exports.getAdminSettingsRaw = async (req, res) => {
+  try {
+    await ensureMainSettings();
+    const doc = await SiteSettings.findOne({ singletonKey: "main" }).lean();
+    return res.json({ settings: doc || null });
+  } catch (err) {
+    return res.status(500).json({ message: err?.message || "Server error" });
+  }
+};
+
+exports.putAdminSettingsRaw = async (req, res) => {
+  try {
+    const body = req.body || {};
+    const mode = body?.mode;
+    const incoming = body?.settings;
+
+    if (mode !== "merge" && mode !== "replace") {
+      return res.status(400).json({
+        message: "Invalid settings JSON",
+        details: "mode must be 'merge' or 'replace'",
+      });
+    }
+
+    if (!isPlainSettingsObject(incoming)) {
+      return res.status(400).json({
+        message: "Invalid settings JSON",
+        details: "settings must be an object",
+      });
+    }
+
+    const sizeCheck = clampSettingsJsonSize(incoming, 200 * 1024);
+    if (!sizeCheck.ok) {
+      return res.status(413).json({
+        message: "Invalid settings JSON",
+        details: `settings JSON too large (max 200KB)`,
+      });
+    }
+
+    await ensureMainSettings();
+
+    if (mode === "replace") {
+      const nextDoc = { ...incoming };
+      delete nextDoc._id;
+      delete nextDoc.__v;
+      nextDoc.singletonKey = "main";
+      nextDoc.updatedAt = new Date();
+      nextDoc.updatedBy = req.user?.id;
+
+      await SiteSettings.findOneAndReplace({ singletonKey: "main" }, nextDoc, {
+        upsert: true,
+        runValidators: true,
+      });
+
+      return res.json({
+        message: "Settings updated",
+        mode,
+        updated: true,
+      });
+    }
+
+    // merge mode
+    const sanitizedIncoming = stripSystemFieldsForMerge(incoming);
+    const update = deepMerge(
+      {
+        updatedAt: new Date(),
+        updatedBy: req.user?.id,
+      },
+      sanitizedIncoming
+    );
+
+    const flattened = flattenForSet(update);
+
+    await SiteSettings.findOneAndUpdate(
+      { singletonKey: "main" },
+      { $set: flattened },
+      { new: false, runValidators: true }
+    );
+
+    return res.json({
+      message: "Settings updated",
+      mode,
+      updated: true,
+    });
+  } catch (err) {
+    return res.status(400).json({
+      message: "Invalid settings JSON",
+      details: err?.message || "Unknown error",
+    });
   }
 };
