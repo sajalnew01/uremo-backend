@@ -2,6 +2,46 @@ const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const OrderMessage = require("../models/OrderMessage");
 
+// In-memory SSE subscribers: orderId -> Set(res)
+const subscribersByOrderId = new Map();
+
+function addSubscriber(orderId, res) {
+  const key = String(orderId);
+  if (!subscribersByOrderId.has(key)) {
+    subscribersByOrderId.set(key, new Set());
+  }
+  subscribersByOrderId.get(key).add(res);
+}
+
+function removeSubscriber(orderId, res) {
+  const key = String(orderId);
+  const set = subscribersByOrderId.get(key);
+  if (!set) return;
+  set.delete(res);
+  if (set.size === 0) subscribersByOrderId.delete(key);
+}
+
+function broadcastMessage(orderId, payload) {
+  const key = String(orderId);
+  const set = subscribersByOrderId.get(key);
+  if (!set || set.size === 0) return;
+
+  const data = `event: message\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const res of Array.from(set)) {
+    try {
+      res.write(data);
+    } catch (e) {
+      // Best-effort cleanup
+      try {
+        res.end();
+      } catch {}
+      set.delete(res);
+    }
+  }
+
+  if (set.size === 0) subscribersByOrderId.delete(key);
+}
+
 async function assertOrderAccess(req, res) {
   if (!req.user || !req.user.id) {
     res.status(401).json({ message: "Authentication required" });
@@ -10,7 +50,7 @@ async function assertOrderAccess(req, res) {
 
   const { id } = req.params;
   if (!mongoose.Types.ObjectId.isValid(id)) {
-    res.status(404).json({ message: "Order not found" });
+    res.status(400).json({ message: "Invalid order id" });
     return null;
   }
 
@@ -29,6 +69,59 @@ async function assertOrderAccess(req, res) {
 
   return order;
 }
+
+exports.streamOrderMessages = async (req, res) => {
+  const orderId = req.params.id;
+  const userId = req.user?.id || "anon";
+  const role = req.user?.role || "unknown";
+
+  try {
+    // Validate access up-front
+    const order = await assertOrderAccess(req, res);
+    if (!order) return;
+
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+
+    // Let proxies know we're streaming
+    res.flushHeaders?.();
+
+    // Initial heartbeat
+    res.write(`: connected\n\n`);
+
+    addSubscriber(order._id, res);
+
+    const pingMs = 25_000;
+    const pingTimer = setInterval(() => {
+      try {
+        res.write(`: ping ${Date.now()}\n\n`);
+      } catch {
+        // will be handled by close
+      }
+    }, pingMs);
+
+    req.on("close", () => {
+      clearInterval(pingTimer);
+      removeSubscriber(order._id, res);
+      try {
+        res.end();
+      } catch {}
+    });
+  } catch (err) {
+    console.error(
+      `[CHAT_STREAM_FAIL] orderId=${orderId} userId=${userId} role=${role} errMessage=${err?.message}`
+    );
+    // If headers not sent, return safe JSON.
+    if (!res.headersSent) {
+      return res.status(500).json({ message: "Unable to open message stream" });
+    }
+    try {
+      res.end();
+    } catch {}
+  }
+};
 
 exports.getOrderMessages = async (req, res) => {
   const orderId = req.params.id;
@@ -98,14 +191,18 @@ exports.postOrderMessage = async (req, res) => {
       `[CHAT_SEND_OK] orderId=${orderId} userId=${userId} role=${senderRole}`
     );
 
-    return res.status(201).json({
+    const payload = {
       _id: created._id,
       id: created._id,
-      orderId: created.orderId,
       senderRole: created.senderRole,
       message: created.message,
       createdAt: created.createdAt,
-    });
+    };
+
+    // Broadcast to all SSE subscribers for this order
+    broadcastMessage(order._id, payload);
+
+    return res.status(201).json(payload);
   } catch (err) {
     console.error(
       `[CHAT_SEND_FAIL] orderId=${orderId} userId=${userId} role=${role} errMessage=${err?.message}`

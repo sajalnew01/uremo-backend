@@ -9,6 +9,7 @@ const {
 const {
   getOrderMessages,
   postOrderMessage,
+  streamOrderMessages,
 } = require("../controllers/orderMessage.controller");
 
 const router = express.Router();
@@ -17,6 +18,7 @@ router.post("/", auth, createOrder);
 router.get("/my", auth, myOrders);
 router.get("/:id/messages", auth, getOrderMessages);
 router.post("/:id/messages", auth, postOrderMessage);
+router.get("/:id/messages/stream", auth, streamOrderMessages);
 router.get("/:id", auth, getOrderById);
 router.put("/:id/payment", auth, submitPayment);
 

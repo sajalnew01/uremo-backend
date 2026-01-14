@@ -1,7 +1,20 @@
 const jwt = require("jsonwebtoken");
 
 module.exports = (req, res, next) => {
-  const token = req.headers.authorization?.split(" ")[1];
+  const headerToken = req.headers.authorization?.split(" ")[1];
+
+  // EventSource cannot send custom headers, so allow query token ONLY for SSE stream.
+  const isSseStream =
+    req.method === "GET" &&
+    typeof req.path === "string" &&
+    /\/messages\/stream$/.test(req.path);
+
+  const queryToken =
+    isSseStream && typeof req.query?.token === "string"
+      ? req.query.token
+      : null;
+
+  const token = headerToken || queryToken;
 
   if (!token) {
     return res.status(401).json({ message: "No token provided" });
