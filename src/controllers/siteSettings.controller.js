@@ -58,6 +58,18 @@ const DEFAULTS = {
       "Accepted proof: Screenshot/PDF with transaction ID, amount, and receiver details.",
     successRedirectText:
       "Payment received. We’ll verify and update your order shortly.",
+    ui: {
+      loadingText: "Loading…",
+      validationTexts: {
+        copyFailedText: "Copy failed",
+        paymentDetailsCopiedText: "Payment details copied",
+        selectMethodRequiredText: "Please select a payment method",
+        proofRequiredText: "Please upload payment proof",
+        invalidFileTypeText: "Only PNG/JPG/WEBP/PDF allowed",
+        fileTooLargeText: "File too large (max 10MB)",
+        submitFailedText: "Failed to submit proof",
+      },
+    },
     faq: [
       {
         q: "How long does verification take?",
@@ -73,6 +85,19 @@ const DEFAULTS = {
       },
     ],
   },
+  orders: {
+    details: {
+      chat: {
+        inputPlaceholder: "Type a message…",
+        sendButtonText: "Send",
+        sendingButtonText: "Sending…",
+        hintText: "Support replies from admin will appear here.",
+        emptyStateText: "Use a quick reply to start the conversation.",
+        emptyTitle: "No messages yet. Support will reply here.",
+        emptySubtitle: "Use a quick reply to start the conversation.",
+      },
+    },
+  },
   services: {
     globalFaq: [],
     trustBlockText:
@@ -86,6 +111,8 @@ const DEFAULTS = {
     ],
     supportGuidelines:
       "Share your order issue and any relevant proof/reference. Support replies within working hours.",
+    guidelinesText:
+      "Share your order issue and any relevant proof/reference. Support replies within working hours.",
   },
   applyWork: {
     faq: [
@@ -95,6 +122,9 @@ const DEFAULTS = {
       },
       { q: "What resume format is accepted?", a: "PDF is preferred." },
     ],
+    ui: {
+      faqTitle: "Apply-to-work FAQ",
+    },
   },
 };
 
@@ -157,6 +187,33 @@ const sanitizeStringArray = (input, opts) => {
   return out;
 };
 
+const hasOwn = (obj, key) =>
+  !!obj && Object.prototype.hasOwnProperty.call(obj, key);
+
+const isPlainObject = (value) => {
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return false;
+  if (value instanceof Date) return false;
+  return true;
+};
+
+const flattenForSet = (value, prefix = "") => {
+  if (!isPlainObject(value)) return {};
+  const out = {};
+
+  for (const [key, val] of Object.entries(value)) {
+    if (val === undefined) continue;
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (isPlainObject(val)) {
+      Object.assign(out, flattenForSet(val, path));
+      continue;
+    }
+    out[path] = val;
+  }
+
+  return out;
+};
+
 const ensureMainSettings = async () => {
   const existing = await SiteSettings.findOne({ singletonKey: "main" });
   if (existing) return existing;
@@ -169,6 +226,7 @@ const ensureMainSettings = async () => {
     footer: DEFAULTS.footer,
     landing: DEFAULTS.landing,
     payment: DEFAULTS.payment,
+    orders: DEFAULTS.orders,
     services: DEFAULTS.services,
     orderSupport: DEFAULTS.orderSupport,
     applyWork: DEFAULTS.applyWork,
@@ -271,6 +329,71 @@ const publicProjection = (doc) => {
         : legacyPaymentFaq.length
         ? legacyPaymentFaq
         : DEFAULTS.payment.faq,
+    ui: {
+      loadingText:
+        String(doc?.payment?.ui?.loadingText || "").trim() ||
+        DEFAULTS.payment.ui.loadingText,
+      validationTexts: {
+        copyFailedText:
+          String(
+            doc?.payment?.ui?.validationTexts?.copyFailedText || ""
+          ).trim() || DEFAULTS.payment.ui.validationTexts.copyFailedText,
+        paymentDetailsCopiedText:
+          String(
+            doc?.payment?.ui?.validationTexts?.paymentDetailsCopiedText || ""
+          ).trim() ||
+          DEFAULTS.payment.ui.validationTexts.paymentDetailsCopiedText,
+        selectMethodRequiredText:
+          String(
+            doc?.payment?.ui?.validationTexts?.selectMethodRequiredText || ""
+          ).trim() ||
+          DEFAULTS.payment.ui.validationTexts.selectMethodRequiredText,
+        proofRequiredText:
+          String(
+            doc?.payment?.ui?.validationTexts?.proofRequiredText || ""
+          ).trim() || DEFAULTS.payment.ui.validationTexts.proofRequiredText,
+        invalidFileTypeText:
+          String(
+            doc?.payment?.ui?.validationTexts?.invalidFileTypeText || ""
+          ).trim() || DEFAULTS.payment.ui.validationTexts.invalidFileTypeText,
+        fileTooLargeText:
+          String(
+            doc?.payment?.ui?.validationTexts?.fileTooLargeText || ""
+          ).trim() || DEFAULTS.payment.ui.validationTexts.fileTooLargeText,
+        submitFailedText:
+          String(
+            doc?.payment?.ui?.validationTexts?.submitFailedText || ""
+          ).trim() || DEFAULTS.payment.ui.validationTexts.submitFailedText,
+      },
+    },
+  };
+
+  const orders = {
+    details: {
+      chat: {
+        inputPlaceholder:
+          String(doc?.orders?.details?.chat?.inputPlaceholder || "").trim() ||
+          DEFAULTS.orders.details.chat.inputPlaceholder,
+        sendButtonText:
+          String(doc?.orders?.details?.chat?.sendButtonText || "").trim() ||
+          DEFAULTS.orders.details.chat.sendButtonText,
+        sendingButtonText:
+          String(doc?.orders?.details?.chat?.sendingButtonText || "").trim() ||
+          DEFAULTS.orders.details.chat.sendingButtonText,
+        hintText:
+          String(doc?.orders?.details?.chat?.hintText || "").trim() ||
+          DEFAULTS.orders.details.chat.hintText,
+        emptyStateText:
+          String(doc?.orders?.details?.chat?.emptyStateText || "").trim() ||
+          DEFAULTS.orders.details.chat.emptyStateText,
+        emptyTitle:
+          String(doc?.orders?.details?.chat?.emptyTitle || "").trim() ||
+          DEFAULTS.orders.details.chat.emptyTitle,
+        emptySubtitle:
+          String(doc?.orders?.details?.chat?.emptySubtitle || "").trim() ||
+          DEFAULTS.orders.details.chat.emptySubtitle,
+      },
+    },
   };
 
   const services = {
@@ -294,6 +417,10 @@ const publicProjection = (doc) => {
     supportGuidelines:
       String(doc?.orderSupport?.supportGuidelines || "").trim() ||
       DEFAULTS.orderSupport.supportGuidelines,
+    guidelinesText:
+      String(doc?.orderSupport?.guidelinesText || "").trim() ||
+      String(doc?.orderSupport?.supportGuidelines || "").trim() ||
+      DEFAULTS.orderSupport.guidelinesText,
   };
 
   const applyWork = {
@@ -303,6 +430,11 @@ const publicProjection = (doc) => {
         : legacyApplyWorkFaq.length
         ? legacyApplyWorkFaq
         : DEFAULTS.applyWork.faq,
+    ui: {
+      faqTitle:
+        String(doc?.applyWork?.ui?.faqTitle || "").trim() ||
+        DEFAULTS.applyWork.ui.faqTitle,
+    },
   };
 
   return {
@@ -311,6 +443,7 @@ const publicProjection = (doc) => {
     footer,
     landing,
     payment,
+    orders,
     services,
     orderSupport,
     applyWork,
@@ -341,87 +474,293 @@ exports.updateAdminSettings = async (req, res) => {
   try {
     const body = req.body || {};
 
+    await ensureMainSettings();
+
     // Accept legacy payload fields too.
     const legacyBannerText = clampString(body.bannerText, 240);
-    const legacyFaq = {
-      global: sanitizeFaqArray(body?.faq?.global),
-      payment: sanitizeFaqArray(body?.faq?.payment),
-      applyWork: sanitizeFaqArray(body?.faq?.applyWork),
-      orderSupport: sanitizeFaqArray(body?.faq?.orderSupport),
-    };
 
-    const payload = {
-      site: {
-        brandName: clampString(body?.site?.brandName, 48),
-        bannerText:
-          clampString(body?.site?.bannerText, 240) || legacyBannerText,
-      },
-      support: {
-        whatsappNumber: clampString(body?.support?.whatsappNumber, 32),
-        supportEmail: clampString(body?.support?.supportEmail, 120),
-      },
-      footer: {
-        disclaimer: clampString(body?.footer?.disclaimer, 2000),
-        dataSafetyNote: clampString(body?.footer?.dataSafetyNote, 2000),
-      },
-      landing: {
-        heroTitle: clampString(body?.landing?.heroTitle, 120),
-        heroSubtitle: clampString(body?.landing?.heroSubtitle, 300),
-        ctaPrimaryText: clampString(body?.landing?.ctaPrimaryText, 32),
-        ctaSecondaryText: clampString(body?.landing?.ctaSecondaryText, 32),
-        features: sanitizeTitleDescArray(body?.landing?.features, {
+    const patch = {};
+
+    if (hasOwn(body, "site")) {
+      patch.site = {};
+      if (hasOwn(body.site, "brandName"))
+        patch.site.brandName = clampString(body.site.brandName, 48);
+      if (hasOwn(body.site, "bannerText") || hasOwn(body, "bannerText")) {
+        patch.site.bannerText =
+          clampString(body?.site?.bannerText, 240) || legacyBannerText;
+      }
+    }
+
+    if (hasOwn(body, "support")) {
+      patch.support = {};
+      if (hasOwn(body.support, "whatsappNumber"))
+        patch.support.whatsappNumber = clampString(
+          body.support.whatsappNumber,
+          32
+        );
+      if (hasOwn(body.support, "supportEmail"))
+        patch.support.supportEmail = clampString(
+          body.support.supportEmail,
+          120
+        );
+    }
+
+    if (hasOwn(body, "footer")) {
+      patch.footer = {};
+      if (hasOwn(body.footer, "disclaimer"))
+        patch.footer.disclaimer = clampString(body.footer.disclaimer, 2000);
+      if (hasOwn(body.footer, "dataSafetyNote"))
+        patch.footer.dataSafetyNote = clampString(
+          body.footer.dataSafetyNote,
+          2000
+        );
+    }
+
+    if (hasOwn(body, "landing")) {
+      patch.landing = {};
+      if (hasOwn(body.landing, "heroTitle"))
+        patch.landing.heroTitle = clampString(body.landing.heroTitle, 120);
+      if (hasOwn(body.landing, "heroSubtitle"))
+        patch.landing.heroSubtitle = clampString(
+          body.landing.heroSubtitle,
+          300
+        );
+      if (hasOwn(body.landing, "ctaPrimaryText"))
+        patch.landing.ctaPrimaryText = clampString(
+          body.landing.ctaPrimaryText,
+          32
+        );
+      if (hasOwn(body.landing, "ctaSecondaryText"))
+        patch.landing.ctaSecondaryText = clampString(
+          body.landing.ctaSecondaryText,
+          32
+        );
+      if (hasOwn(body.landing, "features"))
+        patch.landing.features = sanitizeTitleDescArray(body.landing.features, {
           maxItems: 8,
           maxTitle: 48,
           maxDesc: 140,
-        }),
-        popularTitle: clampString(body?.landing?.popularTitle, 64),
-        popularSubtitle: clampString(body?.landing?.popularSubtitle, 160),
-        finalCtaTitle: clampString(body?.landing?.finalCtaTitle, 64),
-        finalCtaSubtitle: clampString(body?.landing?.finalCtaSubtitle, 220),
-      },
-      payment: {
-        beginnerSteps: sanitizeTitleDescArray(body?.payment?.beginnerSteps, {
-          maxItems: 10,
-          maxTitle: 48,
-          maxDesc: 160,
-        }),
-        acceptedProofText: clampString(body?.payment?.acceptedProofText, 300),
-        successRedirectText: clampString(
-          body?.payment?.successRedirectText,
+        });
+      if (hasOwn(body.landing, "popularTitle"))
+        patch.landing.popularTitle = clampString(body.landing.popularTitle, 64);
+      if (hasOwn(body.landing, "popularSubtitle"))
+        patch.landing.popularSubtitle = clampString(
+          body.landing.popularSubtitle,
+          160
+        );
+      if (hasOwn(body.landing, "finalCtaTitle"))
+        patch.landing.finalCtaTitle = clampString(
+          body.landing.finalCtaTitle,
+          64
+        );
+      if (hasOwn(body.landing, "finalCtaSubtitle"))
+        patch.landing.finalCtaSubtitle = clampString(
+          body.landing.finalCtaSubtitle,
           220
-        ),
-        faq: sanitizeFaqArray(body?.payment?.faq),
-      },
-      services: {
-        globalFaq: sanitizeFaqArray(body?.services?.globalFaq),
-        trustBlockText: clampString(body?.services?.trustBlockText, 600),
-      },
-      orderSupport: {
-        quickReplies: sanitizeStringArray(body?.orderSupport?.quickReplies, {
-          maxItems: 10,
-          maxLen: 80,
-        }),
-        supportGuidelines: clampString(
-          body?.orderSupport?.supportGuidelines,
+        );
+    }
+
+    if (hasOwn(body, "payment")) {
+      patch.payment = {};
+      if (hasOwn(body.payment, "beginnerSteps"))
+        patch.payment.beginnerSteps = sanitizeTitleDescArray(
+          body.payment.beginnerSteps,
+          {
+            maxItems: 10,
+            maxTitle: 48,
+            maxDesc: 160,
+          }
+        );
+      if (hasOwn(body.payment, "acceptedProofText"))
+        patch.payment.acceptedProofText = clampString(
+          body.payment.acceptedProofText,
+          300
+        );
+      if (hasOwn(body.payment, "successRedirectText"))
+        patch.payment.successRedirectText = clampString(
+          body.payment.successRedirectText,
+          220
+        );
+      if (hasOwn(body.payment, "faq"))
+        patch.payment.faq = sanitizeFaqArray(body.payment.faq);
+
+      if (hasOwn(body.payment, "ui")) {
+        patch.payment.ui = {};
+        if (hasOwn(body.payment.ui, "loadingText"))
+          patch.payment.ui.loadingText = clampString(
+            body.payment.ui.loadingText,
+            80
+          );
+
+        const vt = body.payment?.ui?.validationTexts;
+        if (
+          hasOwn(body.payment.ui, "validationTexts") &&
+          vt &&
+          typeof vt === "object"
+        ) {
+          patch.payment.ui.validationTexts = {};
+          if (hasOwn(vt, "copyFailedText"))
+            patch.payment.ui.validationTexts.copyFailedText = clampString(
+              vt.copyFailedText,
+              120
+            );
+          if (hasOwn(vt, "paymentDetailsCopiedText"))
+            patch.payment.ui.validationTexts.paymentDetailsCopiedText =
+              clampString(vt.paymentDetailsCopiedText, 120);
+          if (hasOwn(vt, "selectMethodRequiredText"))
+            patch.payment.ui.validationTexts.selectMethodRequiredText =
+              clampString(vt.selectMethodRequiredText, 140);
+          if (hasOwn(vt, "proofRequiredText"))
+            patch.payment.ui.validationTexts.proofRequiredText = clampString(
+              vt.proofRequiredText,
+              140
+            );
+          if (hasOwn(vt, "invalidFileTypeText"))
+            patch.payment.ui.validationTexts.invalidFileTypeText = clampString(
+              vt.invalidFileTypeText,
+              140
+            );
+          if (hasOwn(vt, "fileTooLargeText"))
+            patch.payment.ui.validationTexts.fileTooLargeText = clampString(
+              vt.fileTooLargeText,
+              140
+            );
+          if (hasOwn(vt, "submitFailedText"))
+            patch.payment.ui.validationTexts.submitFailedText = clampString(
+              vt.submitFailedText,
+              140
+            );
+        }
+      }
+    }
+
+    if (hasOwn(body, "orders")) {
+      const chat = body?.orders?.details?.chat;
+      if (isPlainObject(chat)) {
+        patch.orders = { details: { chat: {} } };
+        if (hasOwn(chat, "inputPlaceholder"))
+          patch.orders.details.chat.inputPlaceholder = clampString(
+            chat.inputPlaceholder,
+            120
+          );
+        if (hasOwn(chat, "sendButtonText"))
+          patch.orders.details.chat.sendButtonText = clampString(
+            chat.sendButtonText,
+            40
+          );
+        if (hasOwn(chat, "sendingButtonText"))
+          patch.orders.details.chat.sendingButtonText = clampString(
+            chat.sendingButtonText,
+            40
+          );
+        if (hasOwn(chat, "hintText"))
+          patch.orders.details.chat.hintText = clampString(chat.hintText, 180);
+        if (hasOwn(chat, "emptyStateText"))
+          patch.orders.details.chat.emptyStateText = clampString(
+            chat.emptyStateText,
+            180
+          );
+        if (hasOwn(chat, "emptyTitle"))
+          patch.orders.details.chat.emptyTitle = clampString(
+            chat.emptyTitle,
+            180
+          );
+        if (hasOwn(chat, "emptySubtitle"))
+          patch.orders.details.chat.emptySubtitle = clampString(
+            chat.emptySubtitle,
+            180
+          );
+      }
+    }
+
+    if (hasOwn(body, "services")) {
+      patch.services = {};
+      if (hasOwn(body.services, "globalFaq"))
+        patch.services.globalFaq = sanitizeFaqArray(body.services.globalFaq);
+      if (hasOwn(body.services, "trustBlockText"))
+        patch.services.trustBlockText = clampString(
+          body.services.trustBlockText,
           600
-        ),
-      },
-      applyWork: {
-        faq: sanitizeFaqArray(body?.applyWork?.faq),
-      },
+        );
+    }
 
-      // Keep legacy fields so older frontends remain compatible if deployed.
-      bannerText: legacyBannerText,
-      faq: legacyFaq,
+    if (hasOwn(body, "orderSupport")) {
+      patch.orderSupport = {};
+      if (hasOwn(body.orderSupport, "quickReplies"))
+        patch.orderSupport.quickReplies = sanitizeStringArray(
+          body.orderSupport.quickReplies,
+          {
+            maxItems: 10,
+            maxLen: 80,
+          }
+        );
 
-      updatedAt: new Date(),
-      updatedBy: req.user?.id,
-    };
+      const guidelinesText = clampString(
+        body?.orderSupport?.guidelinesText,
+        600
+      );
+      const supportGuidelines = clampString(
+        body?.orderSupport?.supportGuidelines,
+        600
+      );
+
+      if (hasOwn(body.orderSupport, "guidelinesText"))
+        patch.orderSupport.guidelinesText = guidelinesText;
+      if (hasOwn(body.orderSupport, "supportGuidelines"))
+        patch.orderSupport.supportGuidelines = supportGuidelines;
+
+      // Keep both keys in sync when either is provided.
+      if (
+        hasOwn(body.orderSupport, "guidelinesText") &&
+        !hasOwn(body.orderSupport, "supportGuidelines")
+      ) {
+        patch.orderSupport.supportGuidelines = guidelinesText;
+      }
+      if (
+        hasOwn(body.orderSupport, "supportGuidelines") &&
+        !hasOwn(body.orderSupport, "guidelinesText")
+      ) {
+        patch.orderSupport.guidelinesText = supportGuidelines;
+      }
+    }
+
+    if (hasOwn(body, "applyWork")) {
+      patch.applyWork = {};
+      if (hasOwn(body.applyWork, "faq"))
+        patch.applyWork.faq = sanitizeFaqArray(body.applyWork.faq);
+      if (hasOwn(body.applyWork, "ui")) {
+        patch.applyWork.ui = {};
+        if (hasOwn(body.applyWork.ui, "faqTitle"))
+          patch.applyWork.ui.faqTitle = clampString(
+            body.applyWork.ui.faqTitle,
+            80
+          );
+      }
+    }
+
+    // Keep legacy fields so older frontends remain compatible if deployed.
+    if (hasOwn(body, "bannerText")) patch.bannerText = legacyBannerText;
+    if (hasOwn(body, "faq")) {
+      patch.faq = {};
+      if (hasOwn(body.faq, "global"))
+        patch.faq.global = sanitizeFaqArray(body.faq.global);
+      if (hasOwn(body.faq, "payment"))
+        patch.faq.payment = sanitizeFaqArray(body.faq.payment);
+      if (hasOwn(body.faq, "applyWork"))
+        patch.faq.applyWork = sanitizeFaqArray(body.faq.applyWork);
+      if (hasOwn(body.faq, "orderSupport"))
+        patch.faq.orderSupport = sanitizeFaqArray(body.faq.orderSupport);
+    }
+
+    patch.updatedAt = new Date();
+    patch.updatedBy = req.user?.id;
+
+    const updateSet = flattenForSet(patch);
 
     const updated = await SiteSettings.findOneAndUpdate(
       { singletonKey: "main" },
-      { $set: { singletonKey: "main", ...payload } },
-      { new: true, upsert: true, runValidators: true }
+      { $set: updateSet },
+      { new: true, runValidators: true }
     );
 
     await updated.populate("updatedBy", "_id name email role");

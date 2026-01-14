@@ -22,6 +22,70 @@ const titleDescSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const paymentUiValidationTextsSchema = new mongoose.Schema(
+  {
+    copyFailedText: simpleText,
+    paymentDetailsCopiedText: simpleText,
+    selectMethodRequiredText: simpleText,
+    proofRequiredText: simpleText,
+    invalidFileTypeText: simpleText,
+    fileTooLargeText: simpleText,
+    submitFailedText: simpleText,
+  },
+  { _id: false }
+);
+
+const paymentUiSchema = new mongoose.Schema(
+  {
+    loadingText: simpleText,
+    validationTexts: {
+      type: paymentUiValidationTextsSchema,
+      default: {},
+    },
+  },
+  { _id: false }
+);
+
+const ordersDetailsChatSchema = new mongoose.Schema(
+  {
+    inputPlaceholder: simpleText,
+    sendButtonText: simpleText,
+    sendingButtonText: simpleText,
+    hintText: simpleText,
+    emptyStateText: simpleText,
+    emptyTitle: simpleText,
+    emptySubtitle: simpleText,
+  },
+  { _id: false }
+);
+
+const ordersDetailsSchema = new mongoose.Schema(
+  {
+    chat: {
+      type: ordersDetailsChatSchema,
+      default: {},
+    },
+  },
+  { _id: false }
+);
+
+const ordersSchema = new mongoose.Schema(
+  {
+    details: {
+      type: ordersDetailsSchema,
+      default: {},
+    },
+  },
+  { _id: false }
+);
+
+const applyWorkUiSchema = new mongoose.Schema(
+  {
+    faqTitle: simpleText,
+  },
+  { _id: false }
+);
+
 const siteSettingsSchema = new mongoose.Schema(
   {
     singletonKey: {
@@ -65,8 +129,11 @@ const siteSettingsSchema = new mongoose.Schema(
       beginnerSteps: { type: [titleDescSchema], default: [] },
       acceptedProofText: simpleText,
       successRedirectText: simpleText,
+      ui: { type: paymentUiSchema, default: {} },
       faq: { type: [faqItemSchema], default: [] },
     },
+
+    orders: { type: ordersSchema, default: {} },
 
     services: {
       globalFaq: { type: [faqItemSchema], default: [] },
@@ -76,10 +143,12 @@ const siteSettingsSchema = new mongoose.Schema(
     orderSupport: {
       quickReplies: { type: [String], default: [] },
       supportGuidelines: simpleText,
+      guidelinesText: simpleText,
     },
 
     applyWork: {
       faq: { type: [faqItemSchema], default: [] },
+      ui: { type: applyWorkUiSchema, default: {} },
     },
 
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
