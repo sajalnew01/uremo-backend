@@ -184,9 +184,16 @@ exports.postOrderMessage = async (req, res) => {
 
     const senderRole = req.user?.role === "admin" ? "admin" : "user";
 
+    // Avoid throwing on invalid ids; let mongoose cast when possible.
+    const rawSenderId = req.user?.id ?? null;
+    if (typeof rawSenderId === "string" && !mongoose.Types.ObjectId.isValid(rawSenderId)) {
+      return res.status(401).json({ message: "Invalid token" });
+    }
+
     const created = await OrderMessage.create({
       orderId: order._id,
-      senderId: req.user?.id ? new mongoose.Types.ObjectId(req.user.id) : null,
+      senderId: rawSenderId,
+      userId: rawSenderId,
       senderRole,
       message,
       createdAt: new Date(),
@@ -209,9 +216,22 @@ exports.postOrderMessage = async (req, res) => {
 
     return res.status(201).json(payload);
   } catch (err) {
+    const errName = err?.name;
+    const errCode = err?.code;
     console.error(
-      `[CHAT_SEND_FAIL] orderId=${orderId} userId=${userId} role=${role} errMessage=${err?.message}`
+      `[CHAT_SEND_FAIL] orderId=${orderId} userId=${userId} role=${role} errName=${errName} errCode=${errCode} errMessage=${err?.message}`
     );
+
+    if (errName === "ValidationError") {
+      const firstKey = err?.errors ? Object.keys(err.errors)[0] : null;
+      const firstMsg = firstKey ? err.errors[firstKey]?.message : null;
+      return res.status(400).json({ message: firstMsg || "Invalid message" });
+    }
+
+    if (errName === "CastError") {
+      return res.status(400).json({ message: "Invalid request" });
+    }
+
     return res.status(500).json({ message: "Unable to send message" });
   }
 };
