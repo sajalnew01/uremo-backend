@@ -26,7 +26,9 @@ function broadcastMessage(orderId, payload) {
   const set = subscribersByOrderId.get(key);
   if (!set || set.size === 0) return;
 
-  const data = `event: message\ndata: ${JSON.stringify(payload)}\n\n`;
+  const eventId = payload?._id ? String(payload._id) : String(Date.now());
+  // Default event type is "message" when no `event:` line is provided.
+  const data = `id: ${eventId}\ndata: ${JSON.stringify(payload)}\n\n`;
   for (const res of Array.from(set)) {
     try {
       res.write(data);
@@ -84,10 +86,13 @@ exports.streamOrderMessages = async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
 
     // Let proxies know we're streaming
     res.flushHeaders?.();
 
+    // Tell the client how soon to retry if the connection drops.
+    res.write(`retry: 5000\n`);
     // Initial heartbeat
     res.write(`: connected\n\n`);
 
