@@ -461,6 +461,12 @@ exports.getPublicSettings = async (req, res) => {
   }
 };
 
+// Pure helper for internal callers (e.g., JarvisX) to reuse the exact public projection.
+exports.getPublicSettingsObject = async () => {
+  const doc = await ensureMainSettings();
+  return publicProjection(doc);
+};
+
 exports.getAdminSettings = async (req, res) => {
   try {
     const doc = await ensureMainSettings();
@@ -469,6 +475,13 @@ exports.getAdminSettings = async (req, res) => {
   } catch (err) {
     return res.status(500).json({ message: err?.message || "Server error" });
   }
+};
+
+// Pure helper for internal callers (e.g., JarvisX) to reuse the exact admin settings doc.
+exports.getAdminSettingsObject = async () => {
+  const doc = await ensureMainSettings();
+  await doc.populate("updatedBy", "_id name email role");
+  return doc;
 };
 
 exports.updateAdminSettings = async (req, res) => {
