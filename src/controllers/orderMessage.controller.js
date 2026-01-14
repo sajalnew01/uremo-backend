@@ -36,8 +36,8 @@ function broadcastMessage(orderId, payload) {
       // Best-effort cleanup
       try {
         res.end();
-      } catch {}
-      set.delete(res);
+        `[CHAT_SEND_FAIL] orderId=${orderId} userId=${userId} role=${role} errName=${errName} errCode=${errCode} errMessage=${err?.message}`
+      );
     }
   }
 
@@ -186,7 +186,10 @@ exports.postOrderMessage = async (req, res) => {
 
     // Avoid throwing on invalid ids; let mongoose cast when possible.
     const rawSenderId = req.user?.id ?? null;
-    if (typeof rawSenderId === "string" && !mongoose.Types.ObjectId.isValid(rawSenderId)) {
+    if (
+      typeof rawSenderId === "string" &&
+      !mongoose.Types.ObjectId.isValid(rawSenderId)
+    ) {
       return res.status(401).json({ message: "Invalid token" });
     }
 

@@ -41,10 +41,9 @@ const orderMessageSchema = new mongoose.Schema(
 
 orderMessageSchema.index({ orderId: 1, createdAt: 1 });
 
-orderMessageSchema.pre("validate", function (next) {
+orderMessageSchema.pre("validate", function () {
   if (!this.senderId && this.userId) this.senderId = this.userId;
   if (!this.userId && this.senderId) this.userId = this.senderId;
-  next();
 });
 
 module.exports = mongoose.model("OrderMessage", orderMessageSchema);
