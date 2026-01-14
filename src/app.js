@@ -1,6 +1,7 @@
 // Express app configuration
 const express = require("express");
 const cors = require("cors");
+const mongoose = require("mongoose");
 
 const app = express();
 
@@ -31,6 +32,12 @@ const adminWorkPositionRoutes = require("./routes/admin.workPosition.routes");
 const adminPaymentRoutes = require("./routes/admin.payment.routes");
 const cronRoutes = require("./routes/cron.routes");
 const settingsRoutes = require("./routes/settings.routes");
+
+const auth = require("./middlewares/auth.middleware");
+const admin = require("./middlewares/admin.middleware");
+
+const Order = require("./models/Order");
+const OrderMessage = require("./models/OrderMessage");
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -76,6 +83,46 @@ app.get("/", (req, res) => {
 
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", message: "Backend is live" });
+});
+
+// Debug endpoint for chat health (admin-only)
+app.get("/api/debug/chat-health", auth, admin, async (req, res) => {
+  const orderId = String(req.query.orderId || "").trim();
+
+  if (!orderId) {
+    return res.status(400).json({ message: "orderId query param required" });
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(orderId)) {
+    return res.json({
+      orderExists: false,
+      totalMessagesCount: 0,
+      latestMessageSnippet: null,
+      serverTime: new Date().toISOString(),
+    });
+  }
+
+  try {
+    const order = await Order.findById(orderId).lean();
+    const totalMessagesCount = await OrderMessage.countDocuments({ orderId });
+    const latestMessage = await OrderMessage.findOne({ orderId })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json({
+      orderExists: !!order,
+      totalMessagesCount,
+      latestMessageSnippet: latestMessage?.message
+        ? String(latestMessage.message).slice(0, 80)
+        : null,
+      serverTime: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(
+      `[DEBUG_CHAT_HEALTH_FAIL] orderId=${orderId} errMessage=${err?.message}`
+    );
+    return res.status(500).json({ message: "Debug endpoint error" });
+  }
 });
 
 // API Routes

@@ -12,7 +12,7 @@ const orderMessageSchema = new mongoose.Schema(
     senderId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      default: null,
       index: true,
     },
     userId: {
@@ -29,6 +29,7 @@ const orderMessageSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      maxlength: 2000,
     },
     createdAt: {
       type: Date,
