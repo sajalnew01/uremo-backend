@@ -484,6 +484,44 @@ exports.getAdminSettingsObject = async () => {
   return doc;
 };
 
+// Internal helper for safe partial updates (deep-merge) used by JarvisX write executor.
+// `patch` must be a plain object and is merged into the existing settings.
+exports.applyAdminSettingsPatch = async ({ patch, updatedBy }) => {
+  if (!isPlainSettingsObject(patch)) {
+    const err = new Error("Invalid settings patch");
+    err.status = 400;
+    throw err;
+  }
+
+  const sizeCheck = clampSettingsJsonSize(patch, 200 * 1024);
+  if (!sizeCheck.ok) {
+    const err = new Error("Settings patch too large (max 200KB)");
+    err.status = 413;
+    throw err;
+  }
+
+  await ensureMainSettings();
+
+  const sanitizedPatch = stripSystemFieldsForMerge(patch);
+  const update = deepMerge(
+    {
+      updatedAt: new Date(),
+      updatedBy: updatedBy || undefined,
+    },
+    sanitizedPatch
+  );
+
+  const flattened = flattenForSet(update);
+
+  await SiteSettings.findOneAndUpdate(
+    { singletonKey: "main" },
+    { $set: flattened },
+    { new: false, runValidators: true }
+  );
+
+  return true;
+};
+
 exports.updateAdminSettings = async (req, res) => {
   try {
     const body = req.body || {};

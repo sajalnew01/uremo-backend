@@ -33,6 +33,7 @@ const adminPaymentRoutes = require("./routes/admin.payment.routes");
 const cronRoutes = require("./routes/cron.routes");
 const settingsRoutes = require("./routes/settings.routes");
 const jarvisxRoutes = require("./routes/jarvisx.routes");
+const jarvisxWriteRoutes = require("./routes/jarvisx.write.routes");
 
 const auth = require("./middlewares/auth.middleware");
 const admin = require("./middlewares/admin.middleware");
@@ -143,6 +144,7 @@ app.use("/api/admin/work-positions", adminWorkPositionRoutes);
 app.use("/api/cron", cronRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/jarvisx", jarvisxRoutes);
+app.use("/api/jarvisx/write", jarvisxWriteRoutes);
 
 // TEMP: Debug endpoint to list mounted routes
 app.get("/api/__routes", (req, res) => {
