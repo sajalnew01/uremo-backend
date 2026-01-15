@@ -1,54 +1,102 @@
 const mongoose = require("mongoose");
+const { createHash } = require("crypto");
 
-const jarvisMessageSchema = new mongoose.Schema(
+const JarvisSessionSchema = new mongoose.Schema(
   {
-    role: {
+    // Session key: userId if logged in, else hash(ip+userAgent)
+    sessionKey: {
       type: String,
-      enum: ["user", "assistant", "system"],
       required: true,
-    },
-    content: { type: String, default: "" },
-    at: { type: Date, default: Date.now },
-  },
-  { _id: false }
-);
-
-const jarvisSessionSchema = new mongoose.Schema(
-  {
-    // userId or ip hash
-    key: { type: String, required: true, unique: true, index: true },
-
-    lastIntent: { type: String, default: "" },
-    lastQuestionKey: { type: String, default: "" },
-
-    // Track asked questions to prevent loops
-    askedQuestions: { type: [String], default: [] },
-
-    collected: {
-      platform: { type: String, default: "" },
-      urgency: { type: String, default: "" },
-      category: { type: String, default: "" },
-      details: { type: String, default: "" },
+      unique: true,
+      index: true,
     },
 
-    lastMessages: { type: [jarvisMessageSchema], default: [] },
+    // User reference if authenticated
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
 
-    // TTL: Auto-expire after 30 minutes of inactivity
+    isAdmin: {
+      type: Boolean,
+      default: false,
+    },
+
+    // Deterministic intent tracking
+    lastIntent: {
+      type: String,
+      enum: [
+        "INTERVIEW_HELP",
+        "BUY_SERVICE",
+        "ORDER_STATUS",
+        "PAYMENT_HELP",
+        "CUSTOM_SERVICE",
+        "GENERAL_QUERY",
+      ],
+      default: "GENERAL_QUERY",
+    },
+
+    // Anti-loop tracking
+    askedQuestions: {
+      type: [String],
+      default: [],
+    },
+
+    // Collected data in current session
+    collectedData: {
+      platform: String,
+      urgency: String,
+      serviceType: String,
+      serviceName: String,
+      details: String,
+      orderId: String,
+      email: String,
+    },
+
+    // Conversation history (last 10 exchanges)
+    conversation: [
+      {
+        role: {
+          type: String,
+          enum: ["user", "jarvis"],
+          required: true,
+        },
+        content: {
+          type: String,
+          required: true,
+        },
+        timestamp: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
+
+    // TTL: Auto-delete after 30 minutes of inactivity
     expiresAt: {
       type: Date,
       default: () => new Date(Date.now() + 30 * 60 * 1000),
-      index: { expires: 0 }, // MongoDB TTL index
+      index: { expireAfterSeconds: 0 },
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
-jarvisSessionSchema.index({ updatedAt: -1 });
+// Static method to generate session key
+JarvisSessionSchema.statics.generateSessionKey = function (req) {
+  const userId = req?.user?._id || req?.user?.id;
+  if (userId) {
+    return `user_${userId}`;
+  }
 
-// Update expiresAt on every save to extend session
-jarvisSessionSchema.pre("save", function (next) {
-  this.expiresAt = new Date(Date.now() + 30 * 60 * 1000);
-  next();
-});
+  // Anonymous: hash of IP + User-Agent
+  const ip = req?.ip || req?.connection?.remoteAddress || "";
+  const ua = req?.headers?.["user-agent"] || "";
+  const hash = createHash("sha256").update(`${ip}:${ua}`).digest("hex");
+  return `anon_${hash.substring(0, 16)}`;
+};
 
-module.exports = mongoose.model("JarvisSession", jarvisSessionSchema);
+module.exports = mongoose.model("JarvisSession", JarvisSessionSchema);

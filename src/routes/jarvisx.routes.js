@@ -3,7 +3,7 @@ const rateLimit = require("express-rate-limit");
 const auth = require("../middlewares/auth.middleware");
 const authOptional = require("../middlewares/authOptional.middleware");
 const admin = require("../middlewares/admin.middleware");
-const JarvisX = require("../controllers/jarvisx.controller");
+const JarvisX = require("../controllers/jarvisx.lockdown.controller");
 const JarvisWrite = require("../controllers/jarvisxWrite.controller");
 
 const router = express.Router();

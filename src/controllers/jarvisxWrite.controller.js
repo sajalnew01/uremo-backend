@@ -4,16 +4,12 @@ const mongoose = require("mongoose");
 
 const JarvisActionProposal = require("../models/JarvisActionProposal");
 const JarvisMemory = require("../models/JarvisMemory");
-const JarvisX = require("../controllers/jarvisx.controller");
+const JarvisX = require("../controllers/jarvisx.lockdown.controller");
 const {
   executeAction,
   MAX_ACTIONS_PER_PROPOSAL,
 } = require("../services/jarvisExecutor.service");
-const {
-  callProposalLLM,
-  getLLMConfig,
-  safeJsonParse,
-} = require("../services/jarvisxProviders");
+const { groqChatCompletion } = require("../services/jarvisxProviders");
 
 function clampString(value, maxLen) {
   if (typeof value !== "string") return "";
@@ -51,7 +47,32 @@ function tryAttachUser(req) {
   }
 }
 
-// safeJsonParse is now imported from jarvisxProviders
+function safeJsonParse(maybeJson) {
+  if (typeof maybeJson !== "string") return null;
+  const trimmed = maybeJson.trim();
+  if (!trimmed) return null;
+
+  // Strip ```json fences if present
+  const unfenced = trimmed
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+
+  try {
+    return JSON.parse(unfenced);
+  } catch {
+    return null;
+  }
+}
+
+function getGroqHealth() {
+  return {
+    provider: "groq",
+    model: "llama-3.3-70b-versatile",
+    configured: !!String(process.env.GROQ_API_KEY || "").trim(),
+  };
+}
 
 const ALLOWED_ACTION_TYPES = new Set([
   "service.create",
@@ -159,12 +180,12 @@ function buildFallbackProposal(command) {
 }
 
 exports.health = async (req, res) => {
-  const config = getLLMConfig();
+  const config = getGroqHealth();
 
   return res.json({
     provider: config.provider,
     model: config.model,
-    configured: !!config.apiKey,
+    configured: config.configured,
     actionsCountSupported: MAX_ACTIONS_PER_PROPOSAL,
     serverTime: new Date().toISOString(),
   });
@@ -182,8 +203,7 @@ exports.propose = async (req, res) => {
     return res.status(401).json({ message: "Authentication required" });
   }
 
-  // Use centralized LLM config (Groq by default)
-  const config = getLLMConfig();
+  const config = getGroqHealth();
 
   let proposal = buildFallbackProposal(command);
   let intent = "";
@@ -207,14 +227,10 @@ exports.propose = async (req, res) => {
           .join("\n")}`
       : "";
 
-    if (!config.apiKey) {
+    if (!config.configured) {
       proposal = {
         actions: [],
-        previewText: `AI provider (${
-          config.provider
-        }) is not configured. Please set ${
-          config.provider === "groq" ? "GROQ_API_KEY" : "JARVISX_API_KEY"
-        } in environment variables.`,
+        previewText: `AI provider (groq) is not configured. Please set GROQ_API_KEY in environment variables.`,
       };
     } else {
       const system =
@@ -239,18 +255,38 @@ exports.propose = async (req, res) => {
 
       const user = `Admin command: ${command}`;
 
-      // Use callProposalLLM which handles Groq + JSON retry
-      const result = await callProposalLLM({
-        messages: [
+      const first = await groqChatCompletion(
+        [
           { role: "system", content: system },
           { role: "user", content: user },
         ],
-        temperature: 0.1,
-        max_tokens: 1200,
-      });
+        { temperature: 0.1, max_tokens: 1200 }
+      );
 
-      if (result.ok && result.parsed && typeof result.parsed === "object") {
-        const parsed = result.parsed;
+      const firstText = String(first?.choices?.[0]?.message?.content || "");
+      let parsed = safeJsonParse(firstText);
+
+      if (!parsed) {
+        // One retry with explicit JSON instruction
+        const retry = await groqChatCompletion(
+          [
+            { role: "system", content: system },
+            { role: "user", content: user },
+            { role: "assistant", content: firstText },
+            {
+              role: "user",
+              content:
+                "Your response was not valid JSON. Please return ONLY valid JSON with no markdown, no code fences, no extra text. Start with { and end with }",
+            },
+          ],
+          { temperature: 0.1, max_tokens: 1200 }
+        );
+
+        const retryText = String(retry?.choices?.[0]?.message?.content || "");
+        parsed = safeJsonParse(retryText);
+      }
+
+      if (parsed && typeof parsed === "object") {
         intent = clampString(parsed.intent, 80);
         reasoning = clampString(parsed.reasoning, 1200);
         requiresApproval = parsed.requiresApproval !== false;
@@ -271,17 +307,11 @@ exports.propose = async (req, res) => {
               ? "Proposal generated. Review actions before execution."
               : buildFallbackProposal(command).previewText),
         };
-      } else if (!result.ok) {
-        console.error(
-          `[JARVISX_WRITE_PROPOSE_LLM_FAIL] error=${
-            result.error?.message || "unknown"
-          }`
-        );
+      } else {
         proposal = {
           actions: [],
-          previewText: `LLM error: ${
-            result.error?.message || "Failed to generate proposal"
-          }. Please try again or provide more details.`,
+          previewText:
+            "LLM error: Failed to generate proposal. Please try again or provide more details.",
         };
       }
     }

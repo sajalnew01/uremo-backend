@@ -57,22 +57,12 @@ function clampString(value, maxLen) {
 }
 
 function getJarvisLlmStatus() {
-  const provider =
-    String(process.env.JARVISX_PROVIDER || "groq")
-      .trim()
-      .toLowerCase() || "groq";
-  const apiKey =
-    provider === "groq"
-      ? String(process.env.GROQ_API_KEY || "").trim()
-      : String(process.env.JARVISX_API_KEY || "").trim();
+  const provider = "groq";
+  const apiKey = String(process.env.GROQ_API_KEY || "").trim();
   const model =
-    String(
-      process.env.JARVISX_MODEL ||
-        (provider === "groq" ? "llama-3.3-70b-versatile" : "gpt-4o-mini")
-    )
+    String(process.env.JARVISX_MODEL || "llama-3.3-70b-versatile")
       .trim()
-      .toLowerCase() ||
-    (provider === "groq" ? "llama-3.3-70b-versatile" : "gpt-4o-mini");
+      .toLowerCase() || "llama-3.3-70b-versatile";
   return {
     configured: !!apiKey,
     provider,
@@ -760,24 +750,14 @@ function fallbackAnswerFromContextAdmin(input) {
 }
 
 function normalizeProviderName(provider) {
-  const p = String(provider || "")
-    .trim()
-    .toLowerCase();
-  if (!p) return "";
-  if (p === "groq") return "groq";
-  if (p === "openrouter") return "openrouter";
-  if (p === "openai") return "openai";
-  return p;
+  // Lockdown: Groq-only
+  return "groq";
 }
 
 function resolveJarvisLlmConfig() {
-  const provider = normalizeProviderName(
-    process.env.JARVISX_PROVIDER || "groq"
-  );
+  const provider = "groq";
 
-  const modelDefault =
-    provider === "groq" ? "llama-3.3-70b-versatile" : "gpt-4o-mini";
-
+  const modelDefault = "llama-3.3-70b-versatile";
   const model =
     String(process.env.JARVISX_MODEL || modelDefault).trim() || modelDefault;
 
@@ -791,13 +771,8 @@ function resolveJarvisLlmConfig() {
     ? Math.max(64, Math.min(4096, Math.floor(maxTokensRaw)))
     : 800;
 
-  const apiKey =
-    provider === "groq"
-      ? String(process.env.GROQ_API_KEY || "").trim()
-      : String(process.env.JARVISX_API_KEY || "").trim();
-
-  const supported =
-    provider === "groq" || provider === "openrouter" || provider === "openai";
+  const apiKey = String(process.env.GROQ_API_KEY || "").trim();
+  const supported = true;
 
   return { provider, supported, apiKey, model, temperature, max_tokens };
 }
