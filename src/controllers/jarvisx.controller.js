@@ -11,6 +11,8 @@ const SiteSettings = require("../models/SiteSettings");
 const JarvisChatEvent = require("../models/JarvisChatEvent");
 const JarvisMemory = require("../models/JarvisMemory");
 const { callJarvisLLM } = require("../services/jarvisxProviders");
+const JarvisSession = require("../models/JarvisSession");
+const crypto = require("crypto");
 
 const JARVISX_RULES = {
   manualVerification: true,
@@ -51,6 +53,111 @@ function getJarvisLlmStatus() {
 
 function toBool(v) {
   return !!v;
+}
+
+function normalizeText(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function classifyIntentDeterministic(text) {
+  const msg = normalizeText(text);
+  if (!msg) return "GENERAL_SUPPORT";
+
+  if (/(interview|assessment|screening)/.test(msg))
+    return "INTERVIEW_ASSESSMENT";
+  if (/(apply|application|job|work position|work positions|hiring)/.test(msg))
+    return "APPLY_TO_WORK";
+  if (/(paid|payment|verify|verification|transaction|receipt|proof)/.test(msg))
+    return "PAYMENT_HELP";
+  if (/(delivery|when will|when do i get|timeframe|delivered|late)/.test(msg))
+    return "ORDER_DELIVERY";
+  if (/(buy|purchase|order|checkout)/.test(msg)) return "BUY_SERVICE";
+  if (
+    /(not available|custom|need service|looking for|can you build|can you make)/.test(
+      msg
+    )
+  )
+    return "CUSTOM_SERVICE";
+
+  return "GENERAL_SUPPORT";
+}
+
+function isConfusedMessage(text) {
+  const msg = normalizeText(text);
+  return /(i don t understand|what do you mean|you don t get my point|confused|not clear)/.test(
+    msg
+  );
+}
+
+function platformQuickReplies() {
+  return ["Outlier", "HFM", "TikTok", "Other"];
+}
+
+function urgencyQuickReplies() {
+  return ["ASAP", "This week", "Flexible"];
+}
+
+function getClientIp(req) {
+  const xf = req.headers["x-forwarded-for"];
+  const raw = Array.isArray(xf) ? xf[0] : xf;
+  const first = typeof raw === "string" ? raw.split(",")[0].trim() : "";
+  const ip = first || req.ip || req.connection?.remoteAddress || "";
+  return String(ip || "").trim();
+}
+
+function getSessionKey(req) {
+  const userId = req.user?.id ? String(req.user.id) : "";
+  if (userId) return `user:${userId}`;
+  const ip = getClientIp(req);
+  const hash = crypto
+    .createHash("sha256")
+    .update(String(ip || "unknown"))
+    .digest("hex")
+    .slice(0, 24);
+  return `ip:${hash}`;
+}
+
+async function loadOrCreateSession(req) {
+  const key = getSessionKey(req);
+  const existing = await JarvisSession.findOne({ key });
+  if (existing) return existing;
+  return JarvisSession.create({ key });
+}
+
+async function pushSessionMessage(session, role, content) {
+  session.lastMessages = Array.isArray(session.lastMessages)
+    ? session.lastMessages
+    : [];
+  session.lastMessages.push({
+    role,
+    // Store minimal text only, last 10.
+    content: clampString(String(content || ""), 300),
+    at: new Date(),
+  });
+  if (session.lastMessages.length > 10) {
+    session.lastMessages = session.lastMessages.slice(-10);
+  }
+}
+
+function withBrainEnvelope(
+  payload,
+  { intent, quickReplies, didCreateRequest }
+) {
+  const out = {
+    ...payload,
+    intent: String(intent || "GENERAL_SUPPORT"),
+  };
+  if (Array.isArray(quickReplies) && quickReplies.length) {
+    out.quickReplies = quickReplies.slice(0, 8);
+  }
+  if (typeof didCreateRequest === "boolean") {
+    out.didCreateRequest = didCreateRequest;
+  }
+  return out;
 }
 
 function isAdminUser(req) {
@@ -734,6 +841,8 @@ exports.chat = async (req, res) => {
   const modeRaw = String(req.body?.mode || "public").trim();
   const mode = modeRaw === "admin" ? "admin" : "public";
 
+  const intent = classifyIntentDeterministic(message);
+
   if (!message) {
     return res.status(400).json({ message: "Message is required" });
   }
@@ -764,10 +873,60 @@ exports.chat = async (req, res) => {
   const pendingRequestId = clampString(leadCaptureMeta?.requestId, 64);
 
   try {
+    const session = await loadOrCreateSession(req);
+    session.lastIntent = intent;
+    await pushSessionMessage(session, "user", message);
+
+    if (isConfusedMessage(message)) {
+      session.lastQuestionKey = "CLARIFY_MODE";
+      const reply =
+        "No worries. Just tell me 2 things:\n1) Which platform?\n2) How urgent is it?";
+      await pushSessionMessage(session, "assistant", reply);
+      await session.save();
+      return res.json(
+        withBrainEnvelope(
+          {
+            reply,
+            confidence: 0.9,
+            usedSources: ["rules"],
+            suggestedActions: [],
+            llm: getJarvisLlmStatus(),
+          },
+          {
+            intent,
+            quickReplies: [...platformQuickReplies(), ...urgencyQuickReplies()],
+          }
+        )
+      );
+    }
+
     const context =
       mode === "admin"
         ? await getAdminContextObject()
         : await getPublicContextObject();
+
+    // Deterministic intent handling (no LLM needed)
+    if (mode === "public" && intent === "INTERVIEW_ASSESSMENT") {
+      session.lastQuestionKey = "ASK_PLATFORM";
+      const reply =
+        "Yes ✅ We can help with interview/screening assessments. Which platform is it for?";
+      await pushSessionMessage(session, "assistant", reply);
+      await session.save();
+      return res.json(
+        withBrainEnvelope(
+          {
+            reply,
+            confidence: 0.92,
+            usedSources: ["rules"],
+            suggestedActions: [
+              { label: "Browse Services", url: "/buy-service" },
+            ],
+            llm: getJarvisLlmStatus(),
+          },
+          { intent, quickReplies: ["Outlier", "HFM", "Other"] }
+        )
+      );
+    }
 
     // --- Lead capture (public mode only) ---
     if (mode === "public") {
@@ -790,12 +949,17 @@ exports.chat = async (req, res) => {
             });
             await draft.save();
 
+            session.lastQuestionKey = "cancelled";
+            await session.save();
             return res.json(
-              buildLeadCaptureReply({
-                text: "No problem — I’ve cancelled that request. If you need anything else, just tell me.",
-                requestId: String(draft._id),
-                stepKey: "cancelled",
-              })
+              withBrainEnvelope(
+                buildLeadCaptureReply({
+                  text: "No problem — I’ve cancelled that request. If you need anything else, just tell me.",
+                  requestId: String(draft._id),
+                  stepKey: "cancelled",
+                }),
+                { intent: "CUSTOM_SERVICE" }
+              )
             );
           }
 
@@ -803,6 +967,9 @@ exports.chat = async (req, res) => {
           if (q) {
             // Treat this message as answer to the current question
             const answer = clampString(message, 400);
+
+            const lastQ = String(session.lastQuestionKey || "");
+            const sameQuestion = lastQ && lastQ === q.key;
 
             if (q.key === "requestedService") {
               draft.requestedService = answer;
@@ -813,6 +980,27 @@ exports.chat = async (req, res) => {
             } else if (q.key === "urgency") {
               const u = normalizeUrgencyFromAnswer(answer);
               if (u) draft.urgency = u;
+
+              if (!u && sameQuestion) {
+                const reply =
+                  "Quick check — how urgent is it? Just tap one option.";
+                session.lastQuestionKey = "urgency";
+                await pushSessionMessage(session, "assistant", reply);
+                await session.save();
+                return res.json(
+                  withBrainEnvelope(
+                    buildLeadCaptureReply({
+                      text: reply,
+                      requestId: String(draft._id),
+                      stepKey: q.key,
+                    }),
+                    {
+                      intent: "CUSTOM_SERVICE",
+                      quickReplies: urgencyQuickReplies(),
+                    }
+                  )
+                );
+              }
             } else if (q.key === "budget") {
               if (/^(skip|no|n\/a|none)$/i.test(answer)) {
                 draft.budget = null;
@@ -835,16 +1023,33 @@ exports.chat = async (req, res) => {
             });
             await draft.save();
 
+            session.lastQuestionKey = q.key;
+            await session.save();
+
             const nextQ = nextLeadQuestion(draft);
             if (nextQ) {
               draft.captureStep = nextQ.key;
               await draft.save();
+              session.lastQuestionKey = nextQ.key;
+              await pushSessionMessage(session, "assistant", nextQ.text);
+              await session.save();
               return res.json(
-                buildLeadCaptureReply({
-                  text: nextQ.text,
-                  requestId: String(draft._id),
-                  stepKey: nextQ.key,
-                })
+                withBrainEnvelope(
+                  buildLeadCaptureReply({
+                    text: nextQ.text,
+                    requestId: String(draft._id),
+                    stepKey: nextQ.key,
+                  }),
+                  {
+                    intent: "CUSTOM_SERVICE",
+                    quickReplies:
+                      nextQ.key === "platform"
+                        ? platformQuickReplies()
+                        : nextQ.key === "urgency"
+                        ? urgencyQuickReplies()
+                        : undefined,
+                  }
+                )
               );
             }
 
@@ -858,14 +1063,22 @@ exports.chat = async (req, res) => {
             });
             await draft.save();
 
+            const reply = `Request created ✅\n\nYour request ID is: ${String(
+              draft._id
+            )}\n\nAn admin will contact you shortly in your Order Support Chat/inbox.`;
+            await pushSessionMessage(session, "assistant", reply);
+            session.lastQuestionKey = "created";
+            await session.save();
+
             return res.json(
-              buildLeadCaptureReply({
-                text: `Request created ✅\n\nYour request ID is: ${String(
-                  draft._id
-                )}\n\nAn admin will contact you shortly in your Order Support Chat/inbox.`,
-                requestId: String(draft._id),
-                stepKey: "created",
-              })
+              withBrainEnvelope(
+                buildLeadCaptureReply({
+                  text: reply,
+                  requestId: String(draft._id),
+                  stepKey: "created",
+                }),
+                { intent: "CUSTOM_SERVICE", didCreateRequest: true }
+              )
             );
           }
         }
@@ -971,12 +1184,27 @@ exports.chat = async (req, res) => {
         });
 
         const firstQ = nextLeadQuestion(draft);
+        session.lastQuestionKey = firstQ.key;
+        await pushSessionMessage(session, "assistant", firstQ.text);
+        await session.save();
         return res.json(
-          buildLeadCaptureReply({
-            text: `Got it — we can help. I’ll create a request for the team.\n\n${firstQ.text}`,
-            requestId: String(draft._id),
-            stepKey: firstQ.key,
-          })
+          withBrainEnvelope(
+            buildLeadCaptureReply({
+              text: `Got it — we can help. I’ll create a request for the team.\n\n${firstQ.text}`,
+              requestId: String(draft._id),
+              stepKey: firstQ.key,
+            }),
+            {
+              intent: "CUSTOM_SERVICE",
+              quickReplies:
+                firstQ.key === "platform"
+                  ? platformQuickReplies()
+                  : firstQ.key === "urgency"
+                  ? urgencyQuickReplies()
+                  : undefined,
+              didCreateRequest: true,
+            }
+          )
         );
       }
     }
@@ -1007,7 +1235,8 @@ exports.chat = async (req, res) => {
           providerForLog || ""
         } mode=${mode} usedAi=false`
       );
-      return res.json({ ...out, llm });
+      await session.save();
+      return res.json(withBrainEnvelope({ ...out, llm }, { intent }));
     }
 
     const memories = await getRelevantMemories(message, 5);
@@ -1024,7 +1253,7 @@ exports.chat = async (req, res) => {
           )}\n\nIf any memory conflicts with CONTEXT JSON facts, follow CONTEXT.`
       : "";
 
-    const system = `You are JarvisX Support — Sajal’s human assistant for UREMO.\n\nStrict style rules:\n- Speak like a real human support assistant (not like a chatbot).\n- Very short replies (1-4 lines).\n- Ask max 2 questions.\n- Never mention API keys, system errors, stack traces, or provider issues in PUBLIC mode.\n\nAccuracy rules:\n- Use ONLY the provided CONTEXT JSON facts (services, payment methods, work positions, CMS/support texts, FAQ).\n- Do not hallucinate services, prices, or policies.\n\nIf the user asks for a service that is NOT listed in CONTEXT.services:\n- Don’t just say “not available”.\n- Say we can still help if they share requirements.\n- Ask 1-2 short questions max.\n- Say you’ll create a request for the admin/team.\n\nReturn STRICT JSON only, with keys:\n- reply (string)\n- confidence (0-1)\n- usedSources (array from [settings, services, paymentMethods, workPositions, rules])\n- suggestedActions (array of {label,url})\n\nCONTEXT JSON:\n${JSON.stringify(
+    const system = `You are JarvisX Support — Sajal’s human assistant for UREMO.\n\nStrict style rules:\n- Speak like a real human support assistant (not like a chatbot).\n- Very short replies (1-4 lines).\n- Ask max 1 question.\n- Never repeat the same question twice.\n- Never mention API keys, system errors, stack traces, or provider issues in PUBLIC mode.\n\nAccuracy rules:\n- Use ONLY the provided CONTEXT JSON facts (services, payment methods, work positions, CMS/support texts, FAQ).\n- Do not hallucinate services, prices, or policies.\n\nDeterministic intent: ${intent}\n\nIf the user asks for a service that is NOT listed in CONTEXT.services:\n- Don’t just say “not available”.\n- Say we can still help if they share requirements.\n- Ask max 1 short question.\n- Say you’ll create a request for the admin/team.\n\nReturn STRICT JSON only, with keys:\n- reply (string)\n- confidence (0-1)\n- usedSources (array from [settings, services, paymentMethods, workPositions, rules])\n- suggestedActions (array of {label,url})\n\nCONTEXT JSON:\n${JSON.stringify(
       context
     )}${memoryBlock}`;
 
@@ -1065,7 +1294,8 @@ exports.chat = async (req, res) => {
         page,
       });
 
-      return res.json({ ...out, llm });
+      await session.save();
+      return res.json(withBrainEnvelope({ ...out, llm }, { intent }));
     }
 
     const rawText = llmResult.assistantText;
@@ -1089,9 +1319,16 @@ exports.chat = async (req, res) => {
       if (mode === "admin") {
         const llm = getJarvisLlmStatus();
         const out = fallbackAnswerFromContextAdmin({ message, context });
-        return res.json({ ...out, llm });
+        await session.save();
+        return res.json(withBrainEnvelope({ ...out, llm }, { intent }));
       }
-      return res.json({ ...buildNotSureReply(), llm: getJarvisLlmStatus() });
+      await session.save();
+      return res.json(
+        withBrainEnvelope(
+          { ...buildNotSureReply(), llm: getJarvisLlmStatus() },
+          { intent }
+        )
+      );
     }
 
     await recordChatEvent({
@@ -1107,7 +1344,14 @@ exports.chat = async (req, res) => {
         providerForLog || ""
       } mode=${mode} usedAi=true`
     );
-    return res.json({ ...normalized, llm: getJarvisLlmStatus() });
+    await pushSessionMessage(session, "assistant", normalized.reply);
+    await session.save();
+    return res.json(
+      withBrainEnvelope(
+        { ...normalized, llm: getJarvisLlmStatus() },
+        { intent }
+      )
+    );
   } catch (err) {
     console.error(
       `[JARVISX_CHAT_FAIL] mode=${mode} errMessage=${err?.message}`
@@ -1129,9 +1373,16 @@ exports.chat = async (req, res) => {
     if (mode === "admin") {
       const context = await getAdminContextObject().catch(() => null);
       const out = fallbackAnswerFromContextAdmin({ message, context });
-      return res.json({ ...out, llm: getJarvisLlmStatus() });
+      return res.json(
+        withBrainEnvelope({ ...out, llm: getJarvisLlmStatus() }, { intent })
+      );
     }
-    return res.json({ ...buildNotSureReply(), llm: getJarvisLlmStatus() });
+    return res.json(
+      withBrainEnvelope(
+        { ...buildNotSureReply(), llm: getJarvisLlmStatus() },
+        { intent }
+      )
+    );
   }
 };
 
