@@ -1,6 +1,7 @@
 const Order = require("../models/Order");
 const Service = require("../models/Service");
 const User = require("../models/User");
+const OrderMessage = require("../models/OrderMessage");
 const mongoose = require("mongoose");
 
 const { sendEmail, getAdminEmails } = require("../services/email.service");
@@ -88,9 +89,28 @@ exports.myOrders = async (req, res) => {
   try {
     const orders = await Order.find({ userId: req.user.id })
       .populate("serviceId")
-      .populate("payment.methodId");
+      .populate("payment.methodId")
+      .lean();
 
-    for (const order of orders) {
+    // Fetch last message for each order to detect unread admin replies
+    const orderIds = orders.map((o) => o._id);
+    const lastMessages = await OrderMessage.aggregate([
+      { $match: { orderId: { $in: orderIds } } },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: "$orderId",
+          lastMessage: { $first: "$$ROOT" },
+        },
+      },
+    ]);
+
+    const lastMessageMap = new Map();
+    for (const item of lastMessages) {
+      lastMessageMap.set(String(item._id), item.lastMessage);
+    }
+
+    const result = orders.map((order) => {
       if (order?.payment?.proofUrl) {
         const proofFormat = order.payment.proofFormat;
         const proofResourceType = order.payment.proofResourceType;
@@ -107,9 +127,21 @@ exports.myOrders = async (req, res) => {
           }
         );
       }
-    }
 
-    res.json(orders);
+      // Attach last message info for unread badge detection
+      const lastMsg = lastMessageMap.get(String(order._id));
+      if (lastMsg) {
+        order.lastMessage = {
+          _id: lastMsg._id,
+          senderRole: lastMsg.senderRole,
+          createdAt: lastMsg.createdAt,
+        };
+      }
+
+      return order;
+    });
+
+    res.json(result);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
