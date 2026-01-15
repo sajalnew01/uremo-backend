@@ -9,6 +9,11 @@ const {
   executeAction,
   MAX_ACTIONS_PER_PROPOSAL,
 } = require("../services/jarvisExecutor.service");
+const {
+  callProposalLLM,
+  getLLMConfig,
+  safeJsonParse,
+} = require("../services/jarvisxProviders");
 
 function clampString(value, maxLen) {
   if (typeof value !== "string") return "";
@@ -46,24 +51,7 @@ function tryAttachUser(req) {
   }
 }
 
-function safeJsonParse(maybeJson) {
-  if (typeof maybeJson !== "string") return null;
-  const trimmed = maybeJson.trim();
-  if (!trimmed) return null;
-
-  // Strip common fences
-  const unfenced = trimmed
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```$/i, "")
-    .trim();
-
-  try {
-    return JSON.parse(unfenced);
-  } catch {
-    return null;
-  }
-}
+// safeJsonParse is now imported from jarvisxProviders
 
 const ALLOWED_ACTION_TYPES = new Set([
   "service.create",
@@ -160,51 +148,7 @@ function normalizeActionItem(input) {
   return { type, payload, ...(note ? { note } : {}) };
 }
 
-async function callChatCompletion({ provider, apiKey, model, messages }) {
-  const url =
-    provider === "openrouter"
-      ? "https://openrouter.ai/api/v1/chat/completions"
-      : "https://api.openai.com/v1/chat/completions";
-
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
-  };
-
-  if (provider === "openrouter") {
-    if (process.env.OPENROUTER_SITE_URL)
-      headers["HTTP-Referer"] = process.env.OPENROUTER_SITE_URL;
-    if (process.env.OPENROUTER_APP_NAME)
-      headers["X-Title"] = process.env.OPENROUTER_APP_NAME;
-  }
-
-  const body = {
-    model,
-    messages,
-    temperature: 0.1,
-    max_tokens: 600,
-  };
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  const payload = await res.json().catch(() => null);
-  if (!res.ok) {
-    const msg =
-      payload?.error?.message ||
-      payload?.message ||
-      `JarvisX provider error (${res.status})`;
-    const err = new Error(msg);
-    err.status = res.status;
-    throw err;
-  }
-
-  const content = payload?.choices?.[0]?.message?.content;
-  return typeof content === "string" ? content : "";
-}
+// callChatCompletion removed - now using callProposalLLM from jarvisxProviders
 
 function buildFallbackProposal(command) {
   return {
@@ -215,14 +159,12 @@ function buildFallbackProposal(command) {
 }
 
 exports.health = async (req, res) => {
-  const provider =
-    String(process.env.JARVISX_PROVIDER || "openai").trim() || "openai";
-  const model =
-    String(process.env.JARVISX_MODEL || "gpt-4o-mini").trim() || "gpt-4o-mini";
+  const config = getLLMConfig();
 
   return res.json({
-    provider,
-    model,
+    provider: config.provider,
+    model: config.model,
+    configured: !!config.apiKey,
     actionsCountSupported: MAX_ACTIONS_PER_PROPOSAL,
     serverTime: new Date().toISOString(),
   });
@@ -240,11 +182,8 @@ exports.propose = async (req, res) => {
     return res.status(401).json({ message: "Authentication required" });
   }
 
-  const provider =
-    String(process.env.JARVISX_PROVIDER || "openai").trim() || "openai";
-  const apiKey = String(process.env.JARVISX_API_KEY || "").trim();
-  const model =
-    String(process.env.JARVISX_MODEL || "gpt-4o-mini").trim() || "gpt-4o-mini";
+  // Use centralized LLM config (Groq by default)
+  const config = getLLMConfig();
 
   let proposal = buildFallbackProposal(command);
   let intent = "";
@@ -268,11 +207,14 @@ exports.propose = async (req, res) => {
           .join("\n")}`
       : "";
 
-    if (!apiKey) {
+    if (!config.apiKey) {
       proposal = {
         actions: [],
-        previewText:
-          "AI is not configured (missing JARVISX_API_KEY). Please describe the exact changes, including IDs, or configure the provider.",
+        previewText: `AI provider (${
+          config.provider
+        }) is not configured. Please set ${
+          config.provider === "groq" ? "GROQ_API_KEY" : "JARVISX_API_KEY"
+        } in environment variables.`,
       };
     } else {
       const system =
@@ -297,18 +239,18 @@ exports.propose = async (req, res) => {
 
       const user = `Admin command: ${command}`;
 
-      const raw = await callChatCompletion({
-        provider,
-        apiKey,
-        model,
+      // Use callProposalLLM which handles Groq + JSON retry
+      const result = await callProposalLLM({
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
         ],
+        temperature: 0.1,
+        max_tokens: 1200,
       });
 
-      const parsed = safeJsonParse(raw);
-      if (parsed && typeof parsed === "object") {
+      if (result.ok && result.parsed && typeof result.parsed === "object") {
+        const parsed = result.parsed;
         intent = clampString(parsed.intent, 80);
         reasoning = clampString(parsed.reasoning, 1200);
         requiresApproval = parsed.requiresApproval !== false;
@@ -328,6 +270,18 @@ exports.propose = async (req, res) => {
             (normalizedActions.length
               ? "Proposal generated. Review actions before execution."
               : buildFallbackProposal(command).previewText),
+        };
+      } else if (!result.ok) {
+        console.error(
+          `[JARVISX_WRITE_PROPOSE_LLM_FAIL] error=${
+            result.error?.message || "unknown"
+          }`
+        );
+        proposal = {
+          actions: [],
+          previewText: `LLM error: ${
+            result.error?.message || "Failed to generate proposal"
+          }. Please try again or provide more details.`,
         };
       }
     }

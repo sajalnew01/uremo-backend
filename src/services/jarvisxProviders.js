@@ -62,6 +62,30 @@ function normalizeProviderError({ provider, status, payload, errorMessage }) {
 }
 
 /**
+ * Get the configured LLM provider and API key
+ * Groq is the default and preferred provider
+ */
+function getLLMConfig() {
+  const provider =
+    normalizeProvider(process.env.JARVISX_PROVIDER || "groq") || "groq";
+
+  // For Groq, use GROQ_API_KEY; for others, use JARVISX_API_KEY
+  let apiKey = "";
+  if (provider === "groq") {
+    apiKey = String(process.env.GROQ_API_KEY || "").trim();
+  } else {
+    apiKey = String(process.env.JARVISX_API_KEY || "").trim();
+  }
+
+  const model = String(
+    process.env.JARVISX_MODEL ||
+      (provider === "groq" ? "llama-3.3-70b-versatile" : "gpt-4o-mini")
+  ).trim();
+
+  return { provider, apiKey, model };
+}
+
+/**
  * callJarvisLLM
  * - Never throws raw provider errors upward.
  * - Returns { ok, assistantText, error }.
@@ -161,6 +185,153 @@ async function callJarvisLLM({
   }
 }
 
+/**
+ * Call LLM for proposal/write mode with JSON output
+ * Uses Groq by default, with JSON retry logic
+ */
+async function callProposalLLM({
+  messages,
+  temperature = 0.1,
+  max_tokens = 1200,
+}) {
+  const config = getLLMConfig();
+
+  if (!config.apiKey) {
+    return {
+      ok: false,
+      content: "",
+      error: {
+        code: "LLM_API_KEY_MISSING",
+        provider: config.provider,
+        message: `LLM api key not configured for ${config.provider}`,
+      },
+    };
+  }
+
+  const url = getEndpointForProvider(config.provider);
+  const headers = buildHeaders({
+    provider: config.provider,
+    apiKey: config.apiKey,
+  });
+
+  const body = {
+    model: config.model,
+    messages,
+    temperature,
+    max_tokens,
+  };
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    const payload = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      const msg =
+        payload?.error?.message ||
+        payload?.message ||
+        `LLM error (${res.status})`;
+      return {
+        ok: false,
+        content: "",
+        error: normalizeProviderError({
+          provider: config.provider,
+          status: res.status,
+          payload,
+          errorMessage: msg,
+        }),
+      };
+    }
+
+    const content = payload?.choices?.[0]?.message?.content;
+    const text = typeof content === "string" ? content : "";
+
+    // Try to parse as JSON
+    let parsed = safeJsonParse(text);
+
+    // If JSON parse failed, retry once with explicit JSON instruction
+    if (!parsed && text) {
+      console.log(
+        `[JARVISX_PROPOSAL_JSON_RETRY] First attempt returned non-JSON, retrying...`
+      );
+
+      const retryMessages = [
+        ...messages,
+        { role: "assistant", content: text },
+        {
+          role: "user",
+          content:
+            "Your response was not valid JSON. Please return ONLY valid JSON with no markdown, no code fences, no extra text. Start with { and end with }",
+        },
+      ];
+
+      const retryRes = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ...body, messages: retryMessages }),
+      });
+
+      const retryPayload = await retryRes.json().catch(() => null);
+      if (retryRes.ok) {
+        const retryContent = retryPayload?.choices?.[0]?.message?.content;
+        const retryText = typeof retryContent === "string" ? retryContent : "";
+        parsed = safeJsonParse(retryText);
+        if (parsed) {
+          console.log(`[JARVISX_PROPOSAL_JSON_RETRY] Retry successful`);
+          return { ok: true, content: retryText, parsed, error: null };
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      content: text,
+      parsed,
+      error: null,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      content: "",
+      error: normalizeProviderError({
+        provider: config.provider,
+        status: undefined,
+        payload: null,
+        errorMessage: err?.message || "Proposal LLM request failed",
+      }),
+    };
+  }
+}
+
+/**
+ * Safe JSON parse with fence stripping
+ */
+function safeJsonParse(maybeJson) {
+  if (typeof maybeJson !== "string") return null;
+  const trimmed = maybeJson.trim();
+  if (!trimmed) return null;
+
+  // Strip common fences
+  const unfenced = trimmed
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+
+  try {
+    return JSON.parse(unfenced);
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   callJarvisLLM,
+  callProposalLLM,
+  getLLMConfig,
+  safeJsonParse,
 };

@@ -134,8 +134,44 @@ function updateCollected(session, field, value) {
  * @returns {boolean} true if this would be a repeat
  */
 function wouldRepeatQuestion(session, newQuestionKey) {
-  if (!newQuestionKey || !session.lastQuestionKey) return false;
-  return session.lastQuestionKey === newQuestionKey;
+  if (!newQuestionKey) return false;
+  // Check both lastQuestionKey and askedQuestions array
+  if (session.lastQuestionKey === newQuestionKey) return true;
+  if (
+    Array.isArray(session.askedQuestions) &&
+    session.askedQuestions.includes(newQuestionKey)
+  )
+    return true;
+  return false;
+}
+
+/**
+ * Check if session has asked a specific question
+ * @param {object} session - JarvisSession document
+ * @param {string} questionKey - Question key to check
+ * @returns {boolean} true if question was asked
+ */
+function hasAsked(session, questionKey) {
+  if (!questionKey) return false;
+  if (!Array.isArray(session.askedQuestions)) session.askedQuestions = [];
+  return session.askedQuestions.includes(questionKey);
+}
+
+/**
+ * Add a question to the asked questions list
+ * @param {object} session - JarvisSession document
+ * @param {string} questionKey - Question key to add
+ */
+function addAskedQuestion(session, questionKey) {
+  if (!questionKey) return;
+  if (!Array.isArray(session.askedQuestions)) session.askedQuestions = [];
+  if (!session.askedQuestions.includes(questionKey)) {
+    session.askedQuestions.push(questionKey);
+    // Keep only last 20 questions
+    if (session.askedQuestions.length > 20) {
+      session.askedQuestions = session.askedQuestions.slice(-20);
+    }
+  }
 }
 
 /**
@@ -145,8 +181,8 @@ function wouldRepeatQuestion(session, newQuestionKey) {
  * @returns {number} Count of times asked
  */
 function countQuestionAsked(session, questionKey) {
-  // Simple heuristic: check if lastQuestionKey matches
-  // In production, could track in an array
+  if (!questionKey) return 0;
+  if (hasAsked(session, questionKey)) return 1;
   if (session.lastQuestionKey === questionKey) return 1;
   return 0;
 }
@@ -158,6 +194,7 @@ function countQuestionAsked(session, questionKey) {
 function clearSessionState(session) {
   session.lastIntent = "";
   session.lastQuestionKey = "";
+  session.askedQuestions = [];
   session.collected = { platform: "", urgency: "", category: "", details: "" };
   session.lastMessages = [];
 }
@@ -192,6 +229,8 @@ module.exports = {
   saveSession,
   updateCollected,
   wouldRepeatQuestion,
+  hasAsked,
+  addAskedQuestion,
   countQuestionAsked,
   clearSessionState,
   getSessionSummary,

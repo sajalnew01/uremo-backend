@@ -1,4 +1,4 @@
-const jwt = require("jsonwebtoken");
+﻿const jwt = require("jsonwebtoken");
 const SiteSettingsController = require("./siteSettings.controller");
 const Service = require("../models/Service");
 const PaymentMethod = require("../models/PaymentMethod");
@@ -24,6 +24,8 @@ const {
   wouldRepeatQuestion,
   getSessionSummary,
   clampString: clampStr,
+  hasAsked,
+  addAskedQuestion,
 } = require("../utils/jarvisSession");
 const {
   INTENTS,
@@ -269,14 +271,104 @@ function tryAttachUser(req) {
   }
 }
 
-function buildNotSureReply() {
+/**
+ * Build admin mode greeting/response - NO FALLBACK MESSAGES
+ */
+function buildAdminGreeting(message) {
+  const msg = normalizeText(message);
+  // Greeting/test messages
+  if (!msg || /^(hi|hello|hey|test|yo|sup|sleeping|awake|there)/.test(msg)) {
+    return {
+      reply: "Boss ✅ I'm here. What do you need me to handle?",
+      confidence: 0.95,
+      usedSources: ["rules"],
+      suggestedActions: [
+        { label: "Check Orders", url: "/admin/orders" },
+        { label: "Add Service", url: "/admin/services" },
+        { label: "Support Queue", url: "/admin/support" },
+      ],
+      quickReplies: [
+        "Check orders",
+        "Add service",
+        "Support status",
+        "System health",
+      ],
+    };
+  }
+  return null;
+}
+/**
+ * Build public mode greeting/response - NO FALLBACK MESSAGES
+ */
+function buildPublicGreeting(message) {
+  const msg = normalizeText(message);
+  if (!msg || /^(hi|hello|hey|yo|sup)$/.test(msg)) {
+    return {
+      reply: "Hi 👋 I'm JarvisX Support. How can I help you today?",
+      confidence: 0.95,
+      usedSources: ["rules"],
+      suggestedActions: [
+        { label: "Browse Services", url: "/buy-service" },
+        { label: "Check Orders", url: "/orders" },
+      ],
+      quickReplies: [
+        "Buy service",
+        "Order status",
+        "Interview help",
+        "Custom request",
+      ],
+    };
+  }
+  return null;
+}
+/**
+ * Build intelligent fallback - NEVER say "contact admin" or "not sure"
+ */
+function buildSmartFallback(isAdmin, intent) {
+  if (isAdmin) {
+    return {
+      reply:
+        "I can help with that. Could you give me a bit more detail about what you need?",
+      confidence: 0.7,
+      usedSources: ["rules"],
+      suggestedActions: [{ label: "Dashboard", url: "/admin" }],
+      quickReplies: [
+        "Check orders",
+        "Add service",
+        "View analytics",
+        "Support queue",
+      ],
+    };
+  }
+  const intentReplies = {
+    INTERVIEW_ASSESSMENT:
+      "I can help with interview/assessment support. Which platform is this for?",
+    BUY_SERVICE:
+      "I can help you find the right service. What are you looking for?",
+    CUSTOM_SERVICE:
+      "We can handle custom requests! Tell me what service you need.",
+    ORDER_DELIVERY: "Let me help with your order. Do you have an order ID?",
+    PAYMENT_HELP:
+      "I can assist with payment questions. What do you need help with?",
+  };
   return {
     reply:
-      "I’m not fully sure yet. Please open Order Support Chat or contact WhatsApp support.",
-    confidence: 0.2,
-    usedSources: [],
-    suggestedActions: [],
+      intentReplies[intent] ||
+      "How can I help you today? You can ask about our services, check order status, or request custom support.",
+    confidence: 0.75,
+    usedSources: ["rules"],
+    suggestedActions: [{ label: "Browse Services", url: "/buy-service" }],
+    quickReplies: [
+      "Buy service",
+      "Order status",
+      "Interview help",
+      "Payment help",
+    ],
   };
+}
+// Backwards compatible - delegates to buildSmartFallback
+function buildNotSureReply(isAdmin = false, intent = null) {
+  return buildSmartFallback(isAdmin, intent);
 }
 
 function isPriorityComplaint(message) {
@@ -612,13 +704,15 @@ function fallbackAnswerFromContext(input) {
     };
   }
 
-  return buildNotSureReply();
+  return buildNotSureReply(false, null);
 }
 
 function fallbackAnswerFromContextAdmin(input) {
   const out = fallbackAnswerFromContext(input);
-  const notSure = out?.reply === buildNotSureReply().reply;
-  if (!notSure) return out;
+  // Check if it's a generic fallback response
+  const isGenericFallback =
+    out?.confidence <= 0.75 && !out?.usedSources?.length;
+  if (!isGenericFallback) return out;
 
   const llm = getJarvisLlmStatus();
 
@@ -727,8 +821,13 @@ function safeJsonParse(maybeJson) {
   }
 }
 
-function normalizeAiResponse(raw, inputMessage) {
-  const fallback = buildNotSureReply();
+function normalizeAiResponse(
+  raw,
+  inputMessage,
+  isAdmin = false,
+  intent = null
+) {
+  const fallback = buildNotSureReply(isAdmin, intent);
   const obj = raw && typeof raw === "object" ? raw : null;
   if (!obj) return fallback;
 
@@ -863,6 +962,40 @@ exports.chat = async (req, res) => {
     if (!isAdminUser(req)) {
       return res.status(403).json({ message: "Admin access required" });
     }
+
+    // Check for admin greeting/test message FIRST
+    const adminGreeting = buildAdminGreeting(message);
+    if (adminGreeting) {
+      console.log(
+        `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+          0,
+          12
+        )}... intent=GREETING mode=admin_greeting`
+      );
+      return res.json(
+        withBrainEnvelope(
+          { ...adminGreeting, llm: getJarvisLlmStatus() },
+          { intent: "GREETING" }
+        )
+      );
+    }
+  } else {
+    // Public mode greeting check
+    const publicGreeting = buildPublicGreeting(message);
+    if (publicGreeting) {
+      console.log(
+        `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+          0,
+          12
+        )}... intent=GREETING mode=public_greeting`
+      );
+      return res.json(
+        withBrainEnvelope(
+          { ...publicGreeting, llm: getJarvisLlmStatus() },
+          { intent: "GREETING" }
+        )
+      );
+    }
   }
 
   const meta =
@@ -939,8 +1072,11 @@ exports.chat = async (req, res) => {
       const hasPlatform = !!session.collected?.platform;
       const hasUrgency = !!session.collected?.urgency;
 
-      // Anti-loop: don't ask platform again if already asked
-      if (!hasPlatform && session.lastQuestionKey !== "ASK_PLATFORM") {
+      // Anti-loop: don't ask platform again if already asked in this session
+      const alreadyAskedPlatform = hasAsked(session, "ASK_PLATFORM");
+
+      if (!hasPlatform && !alreadyAskedPlatform) {
+        addAskedQuestion(session, "ASK_PLATFORM");
         session.lastQuestionKey = "ASK_PLATFORM";
         const reply =
           "Yes ✅ We can help with interview/screening assessments. Which platform is it for?";
@@ -971,9 +1107,10 @@ exports.chat = async (req, res) => {
       } else if (
         hasPlatform &&
         !hasUrgency &&
-        session.lastQuestionKey !== "ASK_URGENCY"
+        !hasAsked(session, "ASK_URGENCY")
       ) {
         // Have platform, ask urgency
+        addAskedQuestion(session, "ASK_URGENCY");
         session.lastQuestionKey = "ASK_URGENCY";
         const reply = `Got it, ${session.collected.platform}. How urgent is this?`;
         appendMessage(session, "assistant", reply);
@@ -1508,12 +1645,13 @@ exports.chat = async (req, res) => {
     const rawText = llmResult.assistantText;
 
     const parsed = safeJsonParse(rawText);
-    const normalized = normalizeAiResponse(parsed, message);
+    const isAdmin = mode === "admin";
+    const normalized = normalizeAiResponse(parsed, message, isAdmin, intent);
 
     // Final safety: if model didn't use any sources, do not pretend certainty.
     if (
       !normalized.usedSources.length &&
-      normalized.reply !== buildNotSureReply().reply
+      normalized.reply !== buildNotSureReply(isAdmin, intent).reply
     ) {
       await recordChatEvent({
         mode,
@@ -1532,7 +1670,7 @@ exports.chat = async (req, res) => {
       await saveSession(session);
       return res.json(
         withBrainEnvelope(
-          { ...buildNotSureReply(), llm: getJarvisLlmStatus() },
+          { ...buildNotSureReply(false, intent), llm: getJarvisLlmStatus() },
           { intent }
         )
       );
@@ -1591,7 +1729,7 @@ exports.chat = async (req, res) => {
     }
     return res.json(
       withBrainEnvelope(
-        { ...buildNotSureReply(), llm: getJarvisLlmStatus() },
+        { ...buildNotSureReply(false, intent), llm: getJarvisLlmStatus() },
         { intent }
       )
     );
