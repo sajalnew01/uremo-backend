@@ -31,6 +31,20 @@ const orderMessageSchema = new mongoose.Schema(
       trim: true,
       maxlength: 2000,
     },
+    // Message delivery status
+    status: {
+      type: String,
+      enum: ["sending", "sent", "delivered", "seen", "failed"],
+      default: "sent",
+    },
+    deliveredAt: {
+      type: Date,
+      default: null,
+    },
+    seenAt: {
+      type: Date,
+      default: null,
+    },
     createdAt: {
       type: Date,
       default: Date.now,
