@@ -1711,9 +1711,71 @@ exports.chat = async (req, res) => {
   }
 };
 
+/**
+ * Stable health report contract - ALWAYS returns full shape even on error.
+ * Frontend depends on this contract being stable.
+ */
+function buildSafeHealthResponse(data = {}) {
+  const llm = data.llm ?? { configured: false, provider: "", model: "" };
+  return {
+    ok: data.ok ?? false,
+    generatedAt: data.generatedAt ?? new Date().toISOString(),
+    serverTime: new Date().toISOString(),
+    llm: {
+      configured: llm.configured ?? false,
+      provider: llm.provider ?? "",
+      model: llm.model ?? "",
+    },
+    services: {
+      total: data.services?.total ?? 0,
+      active: data.services?.active ?? 0,
+      missingHeroCount: data.services?.missingHeroCount ?? 0,
+    },
+    workPositions: {
+      total: data.workPositions?.total ?? 0,
+      active: data.workPositions?.active ?? 0,
+    },
+    serviceRequests: {
+      total: data.serviceRequests?.total ?? 0,
+      new: data.serviceRequests?.new ?? 0,
+      draft: data.serviceRequests?.draft ?? 0,
+    },
+    orders: {
+      paymentProofPendingCount: data.orders?.paymentProofPendingCount ?? 0,
+    },
+    settings: {
+      missingKeys: Array.isArray(data.settings?.missingKeys)
+        ? data.settings.missingKeys
+        : [],
+    },
+    jarvisx: {
+      chatTotal24h: data.jarvisx?.chatTotal24h ?? 0,
+      chatOk24h: data.jarvisx?.chatOk24h ?? 0,
+      chatErrorRate24h: data.jarvisx?.chatErrorRate24h ?? 0,
+    },
+  };
+}
+
 exports.healthReport = async (req, res) => {
+  res.set("Cache-Control", "no-store");
+
   try {
     const llm = getJarvisLlmStatus();
+
+    // Wrap each query individually to prevent one failure from breaking all
+    const safeCount = async (model, filter = {}) => {
+      try {
+        return await model.countDocuments(filter);
+      } catch (e) {
+        console.error(
+          `[JARVISX_HEALTH_COUNT_FAIL] model=${
+            model?.modelName || "unknown"
+          } err=${e?.message}`
+        );
+        return 0;
+      }
+    };
+
     const [
       totalServices,
       activeServices,
@@ -1725,80 +1787,102 @@ exports.healthReport = async (req, res) => {
       draftServiceRequests,
       pendingPaymentProof,
     ] = await Promise.all([
-      Service.countDocuments({}),
-      Service.countDocuments({ active: true }),
-      Service.countDocuments({
+      safeCount(Service, {}),
+      safeCount(Service, { active: true }),
+      safeCount(Service, {
         $or: [{ imageUrl: { $exists: false } }, { imageUrl: "" }],
       }),
-      WorkPosition.countDocuments({}),
-      WorkPosition.countDocuments({ active: true }),
-      ServiceRequest.countDocuments({}),
-      ServiceRequest.countDocuments({ status: "new" }),
-      ServiceRequest.countDocuments({ status: "draft" }),
-      Order.countDocuments({
+      safeCount(WorkPosition, {}),
+      safeCount(WorkPosition, { active: true }),
+      safeCount(ServiceRequest, {}),
+      safeCount(ServiceRequest, { status: "new" }),
+      safeCount(ServiceRequest, { status: "draft" }),
+      safeCount(Order, {
         status: { $in: ["payment_submitted", "pending_review", "review"] },
         "payment.proofUrl": { $exists: true, $ne: "" },
         "payment.verifiedAt": { $in: [null, undefined] },
       }),
     ]);
 
-    const settings = await SiteSettings.findOne({
-      singletonKey: "main",
-    }).lean();
-    const missingSettings = [];
-    const heroTitle = settings?.landing?.heroTitle || "";
-    const heroSubtitle = settings?.landing?.heroSubtitle || "";
-    const brandName = settings?.site?.brandName || "";
-    const whatsapp = settings?.support?.whatsappNumber || "";
-    const supportEmail = settings?.support?.supportEmail || "";
-    if (!brandName) missingSettings.push("site.brandName");
-    if (!heroTitle) missingSettings.push("landing.heroTitle");
-    if (!heroSubtitle) missingSettings.push("landing.heroSubtitle");
-    if (!whatsapp) missingSettings.push("support.whatsappNumber");
-    if (!supportEmail) missingSettings.push("support.supportEmail");
+    let missingSettings = [];
+    try {
+      const settings = await SiteSettings.findOne({
+        singletonKey: "main",
+      }).lean();
+      const heroTitle = settings?.landing?.heroTitle || "";
+      const heroSubtitle = settings?.landing?.heroSubtitle || "";
+      const brandName = settings?.site?.brandName || "";
+      const whatsapp = settings?.support?.whatsappNumber || "";
+      const supportEmail = settings?.support?.supportEmail || "";
+      if (!brandName) missingSettings.push("site.brandName");
+      if (!heroTitle) missingSettings.push("landing.heroTitle");
+      if (!heroSubtitle) missingSettings.push("landing.heroSubtitle");
+      if (!whatsapp) missingSettings.push("support.whatsappNumber");
+      if (!supportEmail) missingSettings.push("support.supportEmail");
+    } catch (e) {
+      console.error(`[JARVISX_HEALTH_SETTINGS_FAIL] err=${e?.message}`);
+      missingSettings = ["(settings query failed)"];
+    }
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const [chatTotal24h, chatOk24h] = await Promise.all([
-      JarvisChatEvent.countDocuments({ createdAt: { $gte: since } }),
-      JarvisChatEvent.countDocuments({ createdAt: { $gte: since }, ok: true }),
-    ]);
+    let chatTotal24h = 0;
+    let chatOk24h = 0;
+    try {
+      [chatTotal24h, chatOk24h] = await Promise.all([
+        JarvisChatEvent.countDocuments({ createdAt: { $gte: since } }),
+        JarvisChatEvent.countDocuments({
+          createdAt: { $gte: since },
+          ok: true,
+        }),
+      ]);
+    } catch (e) {
+      console.error(`[JARVISX_HEALTH_CHAT_FAIL] err=${e?.message}`);
+    }
     const chatErrorRate24h = chatTotal24h
       ? Number(((chatTotal24h - chatOk24h) / chatTotal24h).toFixed(4))
       : 0;
 
-    res.set("Cache-Control", "no-store");
-    return res.json({
-      generatedAt: new Date().toISOString(),
-      llm,
-      services: {
-        total: totalServices,
-        active: activeServices,
-        missingHeroCount: servicesMissingHero,
-      },
-      workPositions: {
-        total: totalWorkPositions,
-        active: activeWorkPositions,
-      },
-      serviceRequests: {
-        total: totalServiceRequests,
-        new: newServiceRequests,
-        draft: draftServiceRequests,
-      },
-      orders: {
-        paymentProofPendingCount: pendingPaymentProof,
-      },
-      settings: {
-        missingKeys: missingSettings,
-      },
-      jarvisx: {
-        chatTotal24h,
-        chatOk24h,
-        chatErrorRate24h,
-      },
-    });
+    return res.json(
+      buildSafeHealthResponse({
+        ok: true,
+        generatedAt: new Date().toISOString(),
+        llm,
+        services: {
+          total: totalServices,
+          active: activeServices,
+          missingHeroCount: servicesMissingHero,
+        },
+        workPositions: {
+          total: totalWorkPositions,
+          active: activeWorkPositions,
+        },
+        serviceRequests: {
+          total: totalServiceRequests,
+          new: newServiceRequests,
+          draft: draftServiceRequests,
+        },
+        orders: {
+          paymentProofPendingCount: pendingPaymentProof,
+        },
+        settings: {
+          missingKeys: missingSettings,
+        },
+        jarvisx: {
+          chatTotal24h,
+          chatOk24h,
+          chatErrorRate24h,
+        },
+      })
+    );
   } catch (err) {
-    console.error(`[JARVISX_HEALTH_REPORT_FAIL] errMessage=${err?.message}`);
-    return res.status(500).json({ message: "Unable to build health report" });
+    console.error(`[JARVISX_HEALTH_FAIL] errMessage=${err?.message}`);
+    // ALWAYS return 200 with stable shape - frontend depends on this contract
+    return res.json(
+      buildSafeHealthResponse({
+        ok: false,
+        generatedAt: new Date().toISOString(),
+      })
+    );
   }
 };
 
