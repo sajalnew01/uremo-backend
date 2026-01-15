@@ -5,6 +5,11 @@ const PaymentMethod = require("../models/PaymentMethod");
 const WorkPosition = require("../models/WorkPosition");
 const mongoose = require("mongoose");
 const ServiceRequest = require("../models/ServiceRequest");
+const Order = require("../models/Order");
+const OrderMessage = require("../models/OrderMessage");
+const SiteSettings = require("../models/SiteSettings");
+const JarvisChatEvent = require("../models/JarvisChatEvent");
+const JarvisMemory = require("../models/JarvisMemory");
 
 const JARVISX_RULES = {
   manualVerification: true,
@@ -133,12 +138,94 @@ function buildNotSureReply() {
   };
 }
 
+function isPriorityComplaint(message) {
+  const msg = String(message || "").toLowerCase();
+  if (!msg.trim()) return false;
+
+  // Keep this intentionally simple/transparent (no AI needed).
+  // Goal: bubble urgent issues into admin inbox for fast handling.
+  const urgent = /(urgent|asap|immediately|right now|today)/.test(msg);
+  const dispute =
+    /(chargeback|refund|scam|fraud|stolen|report|lawsuit|police|paypal dispute|stripe dispute)/.test(
+      msg
+    );
+  const angry = /(angry|unacceptable|terrible|worst|rip ?off|cheat)/.test(msg);
+  const broken =
+    /(not working|doesn\s*t work|no response|ignored|still waiting|delayed|late)/.test(
+      msg
+    );
+
+  return urgent || dispute || angry || broken;
+}
+
+async function findEscalationOrderId({ explicitOrderId, userId }) {
+  if (explicitOrderId && mongoose.Types.ObjectId.isValid(explicitOrderId)) {
+    return explicitOrderId;
+  }
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) return null;
+
+  const latest = await Order.findOne({ userId })
+    .sort({ createdAt: -1 })
+    .select("_id")
+    .lean();
+  return latest?._id ? String(latest._id) : null;
+}
+
 function normalizeTextForMatch(s) {
   return String(s || "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function tokenizeForSearch(text) {
+  const msg = String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  if (!msg) return [];
+  const tokens = msg
+    .split(" ")
+    .filter((t) => t.length >= 4)
+    .slice(0, 8);
+  return Array.from(new Set(tokens));
+}
+
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function getRelevantMemories(text, limit = 5) {
+  const tokens = tokenizeForSearch(text);
+  if (!tokens.length) return [];
+
+  const or = tokens.map((t) => ({
+    triggerText: { $regex: escapeRegex(t), $options: "i" },
+  }));
+  const tagOr = tokens.map((t) => ({ tags: t }));
+
+  const items = await JarvisMemory.find({ $or: [...or, ...tagOr] })
+    .sort({ confidence: -1, createdAt: -1 })
+    .limit(Math.max(1, Math.min(10, limit)))
+    .lean();
+
+  return Array.isArray(items) ? items : [];
+}
+
+async function recordChatEvent({ mode, ok, usedAi, provider, model, page }) {
+  try {
+    await JarvisChatEvent.create({
+      mode,
+      ok: !!ok,
+      usedAi: !!usedAi,
+      provider: clampString(provider, 40),
+      model: clampString(model, 60),
+      page: clampString(page, 120),
+    });
+  } catch (err) {
+    console.error(`[JARVISX_CHAT_EVENT_FAIL] errMessage=${err?.message}`);
+  }
 }
 
 function findMatchingServiceTitle(message, services) {
@@ -553,6 +640,10 @@ exports.chat = async (req, res) => {
   const orderId = clampString(meta.orderId, 64);
   const page = clampString(meta.page, 120);
 
+  let usedAi = false;
+  let providerForLog = "";
+  let modelForLog = "";
+
   // Lead capture state (client echoes this back to keep the flow going)
   const leadCaptureMeta =
     meta?.leadCapture && typeof meta.leadCapture === "object"
@@ -675,6 +766,71 @@ exports.chat = async (req, res) => {
       );
       const intent = isServiceRequestIntent(message);
 
+      // --- Priority complaints -> Admin Inbox (public mode) ---
+      // If a user is upset / requesting refund / chargeback etc, escalate by creating
+      // an OrderMessage so it appears in the existing admin inbox UI.
+      if (isPriorityComplaint(message)) {
+        const escalationOrderId = await findEscalationOrderId({
+          explicitOrderId: orderId,
+          userId: req.user?.id,
+        });
+
+        if (escalationOrderId) {
+          try {
+            await OrderMessage.create({
+              orderId: escalationOrderId,
+              senderRole: "user",
+              senderId: req.user?.id || null,
+              userId: req.user?.id || null,
+              message: clampString(`[JarvisX Priority] ${message}`, 2000),
+            });
+          } catch (err) {
+            console.error(
+              `[JARVISX_PRIORITY_INBOX_FAIL] errMessage=${err?.message}`
+            );
+          }
+
+          const reply =
+            "Ive escalated this to an admin for fast review. Please keep an eye on your Order Support Chat for a response.";
+          await recordChatEvent({
+            mode,
+            ok: true,
+            usedAi: false,
+            provider: "",
+            model: "",
+            page,
+          });
+          return res.json({
+            reply,
+            confidence: 0.95,
+            usedSources: ["rules"],
+            suggestedActions: [
+              {
+                label: "Open your order",
+                url: `/orders/${String(escalationOrderId)}`,
+              },
+            ],
+          });
+        }
+
+        // If we couldn't map this to an order, ask the user to open an order.
+        await recordChatEvent({
+          mode,
+          ok: true,
+          usedAi: false,
+          provider: "",
+          model: "",
+          page,
+        });
+        return res.json({
+          reply:
+            "I can escalate this to an admin, but I need your order context. Please open your order and send this message from there, or tell me your order ID.",
+          confidence: 0.85,
+          usedSources: ["rules"],
+          suggestedActions: [{ label: "Go to Orders", url: "/orders" }],
+        });
+      }
+
       if (intent && !matchedServiceTitle) {
         const draft = await ServiceRequest.create({
           userId: req.user?.id || undefined,
@@ -721,15 +877,40 @@ exports.chat = async (req, res) => {
       "gpt-4o-mini";
 
     const wantsAi = toBool(apiKey);
+    usedAi = wantsAi;
+    providerForLog = provider;
+    modelForLog = model;
 
     if (!wantsAi) {
       const out = fallbackAnswerFromContext({ message, context });
+      await recordChatEvent({
+        mode,
+        ok: true,
+        usedAi,
+        provider: providerForLog,
+        model: modelForLog,
+        page,
+      });
       return res.json(out);
     }
 
+    const memories = await getRelevantMemories(message, 5);
+    const memoryBlock = memories.length
+      ? `\n\nMEMORIES (admin feedback about style/corrections):\n${memories
+          .map(
+            (m) =>
+              `- [${String(m.source)}|c=${Number(m.confidence).toFixed(
+                2
+              )}] ${clampString(m.correctResponse, 240)}`
+          )
+          .join(
+            "\n"
+          )}\n\nIf any memory conflicts with CONTEXT JSON facts, follow CONTEXT.`
+      : "";
+
     const system = `You are JarvisX, the UREMO 24/7 support assistant.\n\nRules:\n- Only answer using the provided CONTEXT JSON.\n- If the answer is not clearly present in CONTEXT, reply exactly: \"I’m not sure. Please contact admin in Order Support Chat.\"\n- Keep replies short, direct, friendly.\n- Return STRICT JSON with keys: reply (string), confidence (0-1), usedSources (array of strings from [settings, services, paymentMethods, workPositions, rules]), suggestedActions (array of {label,url}).\n\nCONTEXT JSON:\n${JSON.stringify(
       context
-    )}`;
+    )}${memoryBlock}`;
 
     const user = `User message: ${message}\n\nMeta: page=${
       page || ""
@@ -753,16 +934,129 @@ exports.chat = async (req, res) => {
       !normalized.usedSources.length &&
       normalized.reply !== buildNotSureReply().reply
     ) {
+      await recordChatEvent({
+        mode,
+        ok: true,
+        usedAi,
+        provider: providerForLog,
+        model: modelForLog,
+        page,
+      });
       return res.json(buildNotSureReply());
     }
 
+    await recordChatEvent({
+      mode,
+      ok: true,
+      usedAi,
+      provider: providerForLog,
+      model: modelForLog,
+      page,
+    });
     return res.json(normalized);
   } catch (err) {
     console.error(
       `[JARVISX_CHAT_FAIL] mode=${mode} errMessage=${err?.message}`
     );
+    await recordChatEvent({
+      mode,
+      ok: false,
+      usedAi,
+      provider: providerForLog,
+      model: modelForLog,
+      page,
+    });
     // Keep the system usable.
     return res.json(buildNotSureReply());
+  }
+};
+
+exports.healthReport = async (req, res) => {
+  try {
+    const [
+      totalServices,
+      activeServices,
+      servicesMissingHero,
+      totalWorkPositions,
+      activeWorkPositions,
+      totalServiceRequests,
+      newServiceRequests,
+      draftServiceRequests,
+      pendingPaymentProof,
+    ] = await Promise.all([
+      Service.countDocuments({}),
+      Service.countDocuments({ active: true }),
+      Service.countDocuments({
+        $or: [{ imageUrl: { $exists: false } }, { imageUrl: "" }],
+      }),
+      WorkPosition.countDocuments({}),
+      WorkPosition.countDocuments({ active: true }),
+      ServiceRequest.countDocuments({}),
+      ServiceRequest.countDocuments({ status: "new" }),
+      ServiceRequest.countDocuments({ status: "draft" }),
+      Order.countDocuments({
+        status: { $in: ["payment_submitted", "pending_review", "review"] },
+        "payment.proofUrl": { $exists: true, $ne: "" },
+        "payment.verifiedAt": { $in: [null, undefined] },
+      }),
+    ]);
+
+    const settings = await SiteSettings.findOne({
+      singletonKey: "main",
+    }).lean();
+    const missingSettings = [];
+    const heroTitle = settings?.landing?.heroTitle || "";
+    const heroSubtitle = settings?.landing?.heroSubtitle || "";
+    const brandName = settings?.site?.brandName || "";
+    const whatsapp = settings?.support?.whatsappNumber || "";
+    const supportEmail = settings?.support?.supportEmail || "";
+    if (!brandName) missingSettings.push("site.brandName");
+    if (!heroTitle) missingSettings.push("landing.heroTitle");
+    if (!heroSubtitle) missingSettings.push("landing.heroSubtitle");
+    if (!whatsapp) missingSettings.push("support.whatsappNumber");
+    if (!supportEmail) missingSettings.push("support.supportEmail");
+
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [chatTotal24h, chatOk24h] = await Promise.all([
+      JarvisChatEvent.countDocuments({ createdAt: { $gte: since } }),
+      JarvisChatEvent.countDocuments({ createdAt: { $gte: since }, ok: true }),
+    ]);
+    const chatErrorRate24h = chatTotal24h
+      ? Number(((chatTotal24h - chatOk24h) / chatTotal24h).toFixed(4))
+      : 0;
+
+    res.set("Cache-Control", "no-store");
+    return res.json({
+      generatedAt: new Date().toISOString(),
+      services: {
+        total: totalServices,
+        active: activeServices,
+        missingHeroCount: servicesMissingHero,
+      },
+      workPositions: {
+        total: totalWorkPositions,
+        active: activeWorkPositions,
+      },
+      serviceRequests: {
+        total: totalServiceRequests,
+        new: newServiceRequests,
+        draft: draftServiceRequests,
+      },
+      orders: {
+        paymentProofPendingCount: pendingPaymentProof,
+      },
+      settings: {
+        missingKeys: missingSettings,
+      },
+      jarvisx: {
+        chatTotal24h,
+        chatOk24h,
+        chatErrorRate24h,
+      },
+    });
+  } catch (err) {
+    console.error(`[JARVISX_HEALTH_REPORT_FAIL] errMessage=${err?.message}`);
+    return res.status(500).json({ message: "Unable to build health report" });
   }
 };
 

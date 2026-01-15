@@ -21,6 +21,8 @@ router.post(
 // Proposals
 router.get("/proposals", auth, admin, JarvisWrite.listProposals);
 router.get("/proposals/:id", auth, admin, JarvisWrite.getProposal);
+router.patch("/proposals/:id", auth, admin, JarvisWrite.updateProposal);
+router.put("/proposals/:id", auth, admin, JarvisWrite.updateProposal);
 router.post(
   "/proposals/:id/approve",
   auth,
@@ -28,5 +30,9 @@ router.post(
   JarvisWrite.approveAndExecute
 );
 router.post("/proposals/:id/reject", auth, admin, JarvisWrite.reject);
+
+// Memory (admin-only)
+router.get("/memory", auth, admin, JarvisWrite.listMemory);
+router.delete("/memory/:id", auth, admin, JarvisWrite.deleteMemory);
 
 module.exports = router;

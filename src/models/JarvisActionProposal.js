@@ -9,6 +9,7 @@ const actionItemSchema = new mongoose.Schema(
         "service.create",
         "service.update",
         "service.delete",
+        "service.uploadHero",
         "paymentMethod.create",
         "paymentMethod.update",
         "paymentMethod.delete",
@@ -16,6 +17,7 @@ const actionItemSchema = new mongoose.Schema(
         "workPosition.update",
         "workPosition.delete",
         "settings.update",
+        "serviceRequest.create",
       ],
     },
     payload: {
@@ -66,6 +68,9 @@ const jarvisActionProposalSchema = new mongoose.Schema(
       trim: true,
       maxlength: 2000,
     },
+    intent: { type: String, default: "", trim: true, maxlength: 80 },
+    reasoning: { type: String, default: "", trim: true, maxlength: 1200 },
+    requiresApproval: { type: Boolean, default: true },
     status: {
       type: String,
       enum: ["pending", "approved", "rejected", "executed", "failed"],
@@ -76,6 +81,7 @@ const jarvisActionProposalSchema = new mongoose.Schema(
     actions: { type: [actionItemSchema], default: [] },
     previewText: { type: String, default: "", trim: true, maxlength: 2000 },
     executionResult: { type: executionResultSchema, default: undefined },
+    undoActions: { type: [actionItemSchema], default: [] },
     executedAt: { type: Date, default: null },
     ip: { type: String, default: "", trim: true, maxlength: 80 },
   },

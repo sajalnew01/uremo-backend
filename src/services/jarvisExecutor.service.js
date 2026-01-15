@@ -4,6 +4,8 @@ const Service = require("../models/Service");
 const PaymentMethod = require("../models/PaymentMethod");
 const WorkPosition = require("../models/WorkPosition");
 const SiteSettingsController = require("../controllers/siteSettings.controller");
+const ServiceRequest = require("../models/ServiceRequest");
+const cloudinary = require("../config/cloudinary");
 
 const MAX_ACTIONS_PER_PROPOSAL = 10;
 
@@ -97,7 +99,16 @@ async function executeAction(action, opts) {
         createdBy: actorAdminId || undefined,
       });
 
-      return { ok: true, entity: "service", id: created._id };
+      return {
+        ok: true,
+        entity: "service",
+        id: created._id,
+        undo: {
+          type: "service.delete",
+          payload: { id: String(created._id) },
+          note: "Rollback: delete created service",
+        },
+      };
     }
 
     case "service.update": {
@@ -135,6 +146,7 @@ async function executeAction(action, opts) {
 
       if (patch.isActive != null) update.active = Boolean(patch.isActive);
 
+      const before = await Service.findById(id).lean();
       const updated = await Service.findByIdAndUpdate(id, update, {
         new: true,
         runValidators: true,
@@ -146,18 +158,112 @@ async function executeAction(action, opts) {
         throw err;
       }
 
-      return { ok: true, entity: "service", id: updated._id };
+      return {
+        ok: true,
+        entity: "service",
+        id: updated._id,
+        undo: before
+          ? {
+              type: "service.update",
+              payload: {
+                id: String(updated._id),
+                patch: {
+                  title: before.title,
+                  description: before.description,
+                  category: before.category,
+                  price: before.price,
+                  deliveryType: before.deliveryType,
+                  imageUrl: before.imageUrl,
+                  isActive: before.active,
+                },
+              },
+              note: "Rollback: restore previous service fields",
+            }
+          : undefined,
+      };
     }
 
     case "service.delete": {
       const id = assertObjectId(payload.id, "service id");
+      const before = await Service.findById(id).lean();
       const deleted = await Service.findByIdAndDelete(id);
       if (!deleted) {
         const err = new Error("Service not found");
         err.status = 404;
         throw err;
       }
-      return { ok: true, entity: "service", id: deleted._id };
+      return {
+        ok: true,
+        entity: "service",
+        id: deleted._id,
+        // Best-effort rollback: recreate.
+        undo: before
+          ? {
+              type: "service.create",
+              payload: {
+                title: before.title,
+                description: before.description,
+                category: before.category,
+                price: before.price,
+                deliveryType: before.deliveryType,
+                imageUrl: before.imageUrl,
+                isActive: before.active,
+              },
+              note: "Rollback: recreate deleted service (new id)",
+            }
+          : undefined,
+      };
+    }
+
+    case "service.uploadHero": {
+      const id = assertObjectId(payload.id, "service id");
+      const remoteUrl = clampString(payload.remoteUrl, 800);
+      const imageUrl = clampString(payload.imageUrl, 800);
+
+      const before = await Service.findById(id).lean();
+      if (!before) {
+        const err = new Error("Service not found");
+        err.status = 404;
+        throw err;
+      }
+
+      let finalUrl = imageUrl;
+      if (!finalUrl && remoteUrl) {
+        // Upload remote URL to Cloudinary (best-effort; requires configured env vars)
+        const uploaded = await cloudinary.uploader.upload(remoteUrl, {
+          folder: "uremo/services",
+          overwrite: false,
+        });
+        finalUrl = clampString(uploaded?.secure_url, 800);
+      }
+
+      if (!finalUrl) {
+        const err = new Error(
+          "service.uploadHero requires imageUrl or remoteUrl"
+        );
+        err.status = 400;
+        throw err;
+      }
+
+      const updated = await Service.findByIdAndUpdate(
+        id,
+        { imageUrl: finalUrl },
+        { new: true, runValidators: true }
+      );
+
+      return {
+        ok: true,
+        entity: "service",
+        id: updated?._id || id,
+        undo: {
+          type: "service.update",
+          payload: {
+            id,
+            patch: { imageUrl: before.imageUrl || "" },
+          },
+          note: "Rollback: restore previous hero imageUrl",
+        },
+      };
     }
 
     // =================
@@ -184,7 +290,16 @@ async function executeAction(action, opts) {
         active,
       });
 
-      return { ok: true, entity: "paymentMethod", id: created._id };
+      return {
+        ok: true,
+        entity: "paymentMethod",
+        id: created._id,
+        undo: {
+          type: "paymentMethod.delete",
+          payload: { id: String(created._id) },
+          note: "Rollback: delete created payment method",
+        },
+      };
     }
 
     case "paymentMethod.update": {
@@ -205,6 +320,7 @@ async function executeAction(action, opts) {
       if (patch.type != null) update.type = clampString(patch.type, 24);
       if (patch.isActive != null) update.active = Boolean(patch.isActive);
 
+      const before = await PaymentMethod.findById(id).lean();
       const updated = await PaymentMethod.findByIdAndUpdate(id, update, {
         new: true,
         runValidators: true,
@@ -216,18 +332,56 @@ async function executeAction(action, opts) {
         throw err;
       }
 
-      return { ok: true, entity: "paymentMethod", id: updated._id };
+      return {
+        ok: true,
+        entity: "paymentMethod",
+        id: updated._id,
+        undo: before
+          ? {
+              type: "paymentMethod.update",
+              payload: {
+                id: String(updated._id),
+                patch: {
+                  name: before.name,
+                  type: before.type,
+                  details: before.details,
+                  instructions: before.instructions,
+                  isActive: before.active,
+                },
+              },
+              note: "Rollback: restore previous payment method fields",
+            }
+          : undefined,
+      };
     }
 
     case "paymentMethod.delete": {
       const id = assertObjectId(payload.id, "payment method id");
+      const before = await PaymentMethod.findById(id).lean();
       const deleted = await PaymentMethod.findByIdAndDelete(id);
       if (!deleted) {
         const err = new Error("Payment method not found");
         err.status = 404;
         throw err;
       }
-      return { ok: true, entity: "paymentMethod", id: deleted._id };
+      return {
+        ok: true,
+        entity: "paymentMethod",
+        id: deleted._id,
+        undo: before
+          ? {
+              type: "paymentMethod.create",
+              payload: {
+                name: before.name,
+                type: before.type,
+                details: before.details,
+                instructions: before.instructions,
+                isActive: before.active,
+              },
+              note: "Rollback: recreate deleted payment method (new id)",
+            }
+          : undefined,
+      };
     }
 
     // =================
@@ -254,7 +408,16 @@ async function executeAction(action, opts) {
         active,
       });
 
-      return { ok: true, entity: "workPosition", id: created._id };
+      return {
+        ok: true,
+        entity: "workPosition",
+        id: created._id,
+        undo: {
+          type: "workPosition.delete",
+          payload: { id: String(created._id) },
+          note: "Rollback: delete created work position",
+        },
+      };
     }
 
     case "workPosition.update": {
@@ -278,6 +441,7 @@ async function executeAction(action, opts) {
       if (patch.sortOrder != null)
         update.sortOrder = Math.trunc(Number(patch.sortOrder) || 0);
 
+      const before = await WorkPosition.findById(id).lean();
       const updated = await WorkPosition.findByIdAndUpdate(id, update, {
         new: true,
         runValidators: true,
@@ -289,18 +453,57 @@ async function executeAction(action, opts) {
         throw err;
       }
 
-      return { ok: true, entity: "workPosition", id: updated._id };
+      return {
+        ok: true,
+        entity: "workPosition",
+        id: updated._id,
+        undo: before
+          ? {
+              type: "workPosition.update",
+              payload: {
+                id: String(updated._id),
+                patch: {
+                  title: before.title,
+                  category: before.category,
+                  description: before.description,
+                  requirements: before.requirements,
+                  isActive: before.active,
+                  sortOrder: before.sortOrder,
+                },
+              },
+              note: "Rollback: restore previous work position fields",
+            }
+          : undefined,
+      };
     }
 
     case "workPosition.delete": {
       const id = assertObjectId(payload.id, "work position id");
+      const before = await WorkPosition.findById(id).lean();
       const deleted = await WorkPosition.findByIdAndDelete(id);
       if (!deleted) {
         const err = new Error("Work position not found");
         err.status = 404;
         throw err;
       }
-      return { ok: true, entity: "workPosition", id: deleted._id };
+      return {
+        ok: true,
+        entity: "workPosition",
+        id: deleted._id,
+        undo: before
+          ? {
+              type: "workPosition.create",
+              payload: {
+                title: before.title,
+                category: before.category,
+                description: before.description,
+                requirements: before.requirements,
+                isActive: before.active,
+              },
+              note: "Rollback: recreate deleted work position (new id)",
+            }
+          : undefined,
+      };
     }
 
     // =================
@@ -314,12 +517,93 @@ async function executeAction(action, opts) {
         throw err;
       }
 
+      // Best-effort rollback: snapshot current settings before patch.
+      const before = await SiteSettingsController.getAdminSettingsObject();
+
       await SiteSettingsController.applyAdminSettingsPatch({
         patch,
         updatedBy: actorAdminId,
       });
 
-      return { ok: true, entity: "settings", id: "main" };
+      return {
+        ok: true,
+        entity: "settings",
+        id: "main",
+        undo: before
+          ? {
+              type: "settings.update",
+              payload: {
+                patch: {
+                  site: before.site,
+                  support: before.support,
+                  footer: before.footer,
+                  landing: before.landing,
+                  payment: before.payment,
+                  orders: before.orders,
+                  services: before.services,
+                  orderSupport: before.orderSupport,
+                  applyWork: before.applyWork,
+                },
+              },
+              note: "Rollback: restore full settings snapshot",
+            }
+          : undefined,
+      };
+    }
+
+    // =================
+    // SERVICE REQUESTS
+    // =================
+    case "serviceRequest.create": {
+      const requestedService = clampString(payload.requestedService, 200);
+      const platform = clampString(payload.platform, 120);
+      const country = clampString(payload.country, 120);
+      const urgency = clampString(payload.urgency, 40);
+      const notes = clampString(payload.notes, 1200);
+      const rawMessage = clampString(payload.rawMessage, 1200);
+
+      const created = await ServiceRequest.create({
+        userId:
+          payload.userId &&
+          mongoose.Types.ObjectId.isValid(String(payload.userId))
+            ? payload.userId
+            : undefined,
+        email: clampString(payload.email, 200).toLowerCase(),
+        name: clampString(payload.name, 120),
+        source: clampString(payload.source, 20) || "public",
+        rawMessage,
+        requestedService,
+        platform,
+        country,
+        urgency,
+        budget:
+          payload.budget === null || payload.budget === undefined
+            ? undefined
+            : Number(payload.budget),
+        budgetCurrency: clampString(payload.budgetCurrency, 8) || "USD",
+        notes,
+        status: "new",
+        events: [
+          {
+            type: "created",
+            message: "Created by JarvisX tool",
+            meta: { actorAdminId },
+          },
+        ],
+      });
+
+      return {
+        ok: true,
+        entity: "serviceRequest",
+        id: created._id,
+        undo: {
+          type: "serviceRequest.create",
+          payload: {
+            requestedService: "ROLLBACK_PLACEHOLDER",
+          },
+          note: "Rollback not supported for serviceRequest.create (manual delete)",
+        },
+      };
     }
 
     default: {
