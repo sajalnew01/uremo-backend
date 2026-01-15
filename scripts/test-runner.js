@@ -22,10 +22,14 @@ const DEFAULT_CANDIDATES = [
 ];
 
 function parseArgs(argv) {
-  const out = { base: null, auth: false };
+  const out = { base: null, auth: false, email: null, password: null };
   for (const raw of argv.slice(2)) {
     if (raw === "--auth") out.auth = true;
     else if (raw.startsWith("--base=")) out.base = raw.slice("--base=".length);
+    else if (raw.startsWith("--email="))
+      out.email = raw.slice("--email=".length);
+    else if (raw.startsWith("--password="))
+      out.password = raw.slice("--password=".length);
   }
   return out;
 }
@@ -144,12 +148,14 @@ async function testServices(base) {
   pass(`/api/services ok (${body.length} items)`);
 }
 
-async function testAuthOrdersMy(base) {
-  const email = String(process.env.TEST_EMAIL || "").trim();
-  const password = String(process.env.TEST_PASSWORD || "");
+async function testAuthOrdersMy(base, creds) {
+  const email = String(creds?.email || process.env.TEST_EMAIL || "").trim();
+  const password = String(creds?.password || process.env.TEST_PASSWORD || "");
 
   if (!email || !password) {
-    fail("--auth requires TEST_EMAIL and TEST_PASSWORD env vars");
+    fail(
+      "--auth requires credentials via --email/--password or TEST_EMAIL/TEST_PASSWORD env vars"
+    );
     return;
   }
 
@@ -228,7 +234,10 @@ async function main() {
   await testServices(normalizedBase);
 
   if (args.auth) {
-    await testAuthOrdersMy(normalizedBase);
+    await testAuthOrdersMy(normalizedBase, {
+      email: args.email,
+      password: args.password,
+    });
   } else {
     console.log(
       "ℹ️  Auth test skipped (run with --auth + TEST_EMAIL/TEST_PASSWORD). "
