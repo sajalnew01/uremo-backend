@@ -36,8 +36,9 @@ function broadcastMessage(orderId, payload) {
       // Best-effort cleanup
       try {
         res.end();
-        `[CHAT_SEND_FAIL] orderId=${orderId} userId=${userId} role=${role} errName=${errName} errCode=${errCode} errMessage=${err?.message}`
-      );
+      } catch (closeErr) {}
+
+      set.delete(res);
     }
   }
 
@@ -112,7 +113,7 @@ exports.streamOrderMessages = async (req, res) => {
       removeSubscriber(order._id, res);
       try {
         res.end();
-      } catch {}
+      } catch (closeErr) {}
     });
   } catch (err) {
     console.error(
@@ -124,7 +125,7 @@ exports.streamOrderMessages = async (req, res) => {
     }
     try {
       res.end();
-    } catch {}
+    } catch (closeErr) {}
   }
 };
 
