@@ -24,6 +24,19 @@ function clampString(value, maxLen) {
   return v.length <= maxLen ? v : v.slice(0, maxLen);
 }
 
+function getJarvisLlmStatus() {
+  const provider =
+    String(process.env.JARVISX_PROVIDER || "openai").trim() || "openai";
+  const apiKey = String(process.env.JARVISX_API_KEY || "").trim();
+  const model =
+    String(process.env.JARVISX_MODEL || "gpt-4o-mini").trim() || "gpt-4o-mini";
+  return {
+    configured: !!apiKey,
+    provider,
+    model,
+  };
+}
+
 function toBool(v) {
   return !!v;
 }
@@ -474,6 +487,50 @@ function fallbackAnswerFromContext(input) {
   return buildNotSureReply();
 }
 
+function fallbackAnswerFromContextAdmin(input) {
+  const out = fallbackAnswerFromContext(input);
+  const notSure = out?.reply === buildNotSureReply().reply;
+  if (!notSure) return out;
+
+  const services = Array.isArray(input?.context?.services)
+    ? input.context.services
+    : [];
+  const paymentMethods = Array.isArray(input?.context?.paymentMethods)
+    ? input.context.paymentMethods
+    : [];
+  const workPositions = Array.isArray(input?.context?.workPositions)
+    ? input.context.workPositions
+    : [];
+
+  const topServices = services
+    .slice(0, 6)
+    .map((s) => String(s?.title || "").trim())
+    .filter(Boolean);
+  const topPayments = paymentMethods
+    .slice(0, 6)
+    .map((p) => String(p?.name || "").trim())
+    .filter(Boolean);
+
+  const lines = [
+    `LLM not configured. I can still answer from CONTEXT.`,
+    `Services: ${services.length}${
+      topServices.length ? ` (e.g. ${topServices.join(", ")})` : ""
+    }`,
+    `Payment Methods: ${paymentMethods.length}${
+      topPayments.length ? ` (e.g. ${topPayments.join(", ")})` : ""
+    }`,
+    `Work Positions: ${workPositions.length}`,
+    `Ask about: services, pricing, payment instructions, work positions, site settings.`,
+  ];
+
+  return {
+    reply: lines.join("\n"),
+    confidence: 0.55,
+    usedSources: ["settings", "services", "paymentMethods", "workPositions"],
+    suggestedActions: [{ label: "Open Settings", url: "/admin/settings" }],
+  };
+}
+
 async function callChatCompletion({ provider, apiKey, model, messages }) {
   const url =
     provider === "openrouter"
@@ -876,13 +933,18 @@ exports.chat = async (req, res) => {
       String(process.env.JARVISX_MODEL || "gpt-4o-mini").trim() ||
       "gpt-4o-mini";
 
+    const llm = getJarvisLlmStatus();
+
     const wantsAi = toBool(apiKey);
     usedAi = wantsAi;
     providerForLog = provider;
     modelForLog = model;
 
     if (!wantsAi) {
-      const out = fallbackAnswerFromContext({ message, context });
+      const out =
+        mode === "admin"
+          ? fallbackAnswerFromContextAdmin({ message, context })
+          : fallbackAnswerFromContext({ message, context });
       await recordChatEvent({
         mode,
         ok: true,
@@ -891,7 +953,7 @@ exports.chat = async (req, res) => {
         model: modelForLog,
         page,
       });
-      return res.json(out);
+      return res.json({ ...out, llm });
     }
 
     const memories = await getRelevantMemories(message, 5);
@@ -942,7 +1004,12 @@ exports.chat = async (req, res) => {
         model: modelForLog,
         page,
       });
-      return res.json(buildNotSureReply());
+      if (mode === "admin") {
+        const llm = getJarvisLlmStatus();
+        const out = fallbackAnswerFromContextAdmin({ message, context });
+        return res.json({ ...out, llm });
+      }
+      return res.json({ ...buildNotSureReply(), llm: getJarvisLlmStatus() });
     }
 
     await recordChatEvent({
@@ -953,7 +1020,7 @@ exports.chat = async (req, res) => {
       model: modelForLog,
       page,
     });
-    return res.json(normalized);
+    return res.json({ ...normalized, llm: getJarvisLlmStatus() });
   } catch (err) {
     console.error(
       `[JARVISX_CHAT_FAIL] mode=${mode} errMessage=${err?.message}`
@@ -967,12 +1034,18 @@ exports.chat = async (req, res) => {
       page,
     });
     // Keep the system usable.
-    return res.json(buildNotSureReply());
+    if (mode === "admin") {
+      const context = await getAdminContextObject().catch(() => null);
+      const out = fallbackAnswerFromContextAdmin({ message, context });
+      return res.json({ ...out, llm: getJarvisLlmStatus() });
+    }
+    return res.json({ ...buildNotSureReply(), llm: getJarvisLlmStatus() });
   }
 };
 
 exports.healthReport = async (req, res) => {
   try {
+    const llm = getJarvisLlmStatus();
     const [
       totalServices,
       activeServices,
@@ -1028,6 +1101,7 @@ exports.healthReport = async (req, res) => {
     res.set("Cache-Control", "no-store");
     return res.json({
       generatedAt: new Date().toISOString(),
+      llm,
       services: {
         total: totalServices,
         active: activeServices,

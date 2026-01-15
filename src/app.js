@@ -36,6 +36,7 @@ const settingsRoutes = require("./routes/settings.routes");
 const jarvisxRoutes = require("./routes/jarvisx.routes");
 const jarvisxWriteRoutes = require("./routes/jarvisx.write.routes");
 const serviceRequestRoutes = require("./routes/serviceRequest.routes");
+const debugRoutes = require("./routes/debug.routes");
 
 const auth = require("./middlewares/auth.middleware");
 const admin = require("./middlewares/admin.middleware");
@@ -149,6 +150,7 @@ app.use("/api/settings", settingsRoutes);
 app.use("/api/jarvisx", jarvisxRoutes);
 app.use("/api/jarvisx/write", jarvisxWriteRoutes);
 app.use("/api/service-requests", serviceRequestRoutes);
+app.use("/api/debug", debugRoutes);
 
 // TEMP: Debug endpoint to list mounted routes
 app.get("/api/__routes", (req, res) => {

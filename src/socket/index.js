@@ -9,6 +9,38 @@ const mongoose = require("mongoose");
 
 let io = null;
 
+// In-memory socket health logs (best-effort, process-local)
+const SOCKET_LOG_LIMIT = 200;
+const socketLogs = [];
+
+function pushSocketLog(tag, meta) {
+  const entry = {
+    ts: new Date().toISOString(),
+    tag: String(tag || ""),
+    ...(meta && typeof meta === "object" ? meta : {}),
+  };
+  socketLogs.push(entry);
+  if (socketLogs.length > SOCKET_LOG_LIMIT) socketLogs.shift();
+
+  // Also print a concise console line for Render logs.
+  const parts = [];
+  if (entry.userId) parts.push(`user=${entry.userId}`);
+  if (entry.role) parts.push(`role=${entry.role}`);
+  if (entry.orderId) parts.push(`orderId=${entry.orderId}`);
+  if (entry.msgId) parts.push(`msgId=${entry.msgId}`);
+  if (entry.error) parts.push(`error=${entry.error}`);
+  console.log(`[${entry.tag}]${parts.length ? " " + parts.join(" ") : ""}`);
+}
+
+function safeAck(ack, payload) {
+  if (typeof ack !== "function") return;
+  try {
+    ack(payload);
+  } catch {
+    // ignore ack errors
+  }
+}
+
 /**
  * Allowed origins for Socket.io CORS.
  */
@@ -46,6 +78,7 @@ function initSocket(httpServer) {
         socket.handshake.auth?.token || socket.handshake.query?.token;
 
       if (!token) {
+        pushSocketLog("SOCKET_AUTH_FAIL", { error: "AUTH_FAILED" });
         return next(new Error("No token provided"));
       }
 
@@ -59,6 +92,7 @@ function initSocket(httpServer) {
       socket.user = normalized;
       next();
     } catch (err) {
+      pushSocketLog("SOCKET_AUTH_FAIL", { error: "AUTH_FAILED" });
       next(new Error("Invalid token"));
     }
   });
@@ -77,21 +111,44 @@ async function handleConnection(socket) {
   const userRole = socket.user?.role;
   const isAdmin = userRole === "admin";
 
-  console.log(`[Socket.io] Connected: userId=${userId} role=${userRole}`);
+  pushSocketLog("SOCKET_CONNECT_OK", { userId, role: userRole });
 
   // Join order room
-  socket.on("join:order", async (data) => {
+  socket.on("join:order", async (data, ack) => {
     const orderId = String(data?.orderId || "").trim();
 
+    if (!socket.user?.id) {
+      pushSocketLog("SOCKET_JOIN_FAIL", {
+        userId,
+        role: userRole,
+        orderId,
+        error: "AUTH_FAILED",
+      });
+      safeAck(ack, { ok: false, error: "AUTH_FAILED" });
+      return;
+    }
+
     if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
-      socket.emit("error", { message: "Invalid orderId" });
+      pushSocketLog("SOCKET_JOIN_FAIL", {
+        userId,
+        role: userRole,
+        orderId,
+        error: "INVALID_ORDER",
+      });
+      safeAck(ack, { ok: false, error: "INVALID_ORDER" });
       return;
     }
 
     // Check permission
     const order = await Order.findById(orderId).select("userId").lean();
     if (!order) {
-      socket.emit("error", { message: "Order not found" });
+      pushSocketLog("SOCKET_JOIN_FAIL", {
+        userId,
+        role: userRole,
+        orderId,
+        error: "ORDER_NOT_FOUND",
+      });
+      safeAck(ack, { ok: false, error: "ORDER_NOT_FOUND" });
       return;
     }
 
@@ -99,7 +156,13 @@ async function handleConnection(socket) {
     const canJoin = isAdmin || orderOwnerId === String(userId);
 
     if (!canJoin) {
-      socket.emit("error", { message: "Access denied" });
+      pushSocketLog("SOCKET_JOIN_FAIL", {
+        userId,
+        role: userRole,
+        orderId,
+        error: "FORBIDDEN",
+      });
+      safeAck(ack, { ok: false, error: "FORBIDDEN" });
       return;
     }
 
@@ -108,7 +171,8 @@ async function handleConnection(socket) {
     socket.currentOrderRoom = room;
     socket.currentOrderId = orderId;
 
-    console.log(`[Socket.io] User ${userId} joined room ${room}`);
+    pushSocketLog("SOCKET_JOIN_OK", { userId, role: userRole, orderId });
+    safeAck(ack, { ok: true });
 
     // Send existing messages
     const messages = await OrderMessage.find({ orderId })
@@ -134,32 +198,88 @@ async function handleConnection(socket) {
   });
 
   // Send message
-  socket.on("message:send", async (data) => {
-    const orderId = socket.currentOrderId;
+  socket.on("message:send", async (data, ack) => {
     const tempId = data?.tempId; // Client-side temp ID for optimistic UI
-    const messageText = String(data?.message || "").trim();
+    const orderId = String(data?.orderId || socket.currentOrderId || "").trim();
+    const messageText = String(data?.text || data?.message || "").trim();
+
+    if (!socket.user?.id) {
+      pushSocketLog("SOCKET_SEND_FAIL", {
+        userId,
+        role: userRole,
+        orderId,
+        error: "AUTH_FAILED",
+      });
+      safeAck(ack, { ok: false, error: "AUTH_FAILED" });
+      return;
+    }
 
     if (!orderId) {
-      socket.emit("message:error", {
-        tempId,
-        error: "Not in an order room",
+      pushSocketLog("SOCKET_SEND_FAIL", {
+        userId,
+        role: userRole,
+        orderId,
+        error: "INVALID_ORDER",
       });
+      safeAck(ack, { ok: false, error: "INVALID_ORDER" });
+      return;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      pushSocketLog("SOCKET_SEND_FAIL", {
+        userId,
+        role: userRole,
+        orderId,
+        error: "INVALID_ORDER",
+      });
+      safeAck(ack, { ok: false, error: "INVALID_ORDER" });
+      return;
+    }
+
+    // Join must be completed before sending.
+    if (String(socket.currentOrderId || "") !== String(orderId || "")) {
+      pushSocketLog("SOCKET_SEND_FAIL", {
+        userId,
+        role: userRole,
+        orderId,
+        error: "NOT_JOINED",
+      });
+      safeAck(ack, { ok: false, error: "NOT_JOINED" });
+      return;
+    }
+
+    // Permission check (defense-in-depth)
+    const order = await Order.findById(orderId).select("userId").lean();
+    if (!order) {
+      pushSocketLog("SOCKET_SEND_FAIL", {
+        userId,
+        role: userRole,
+        orderId,
+        error: "ORDER_NOT_FOUND",
+      });
+      safeAck(ack, { ok: false, error: "ORDER_NOT_FOUND" });
+      return;
+    }
+    const orderOwnerId = String(order.userId);
+    const canSend = isAdmin || orderOwnerId === String(userId);
+    if (!canSend) {
+      pushSocketLog("SOCKET_SEND_FAIL", {
+        userId,
+        role: userRole,
+        orderId,
+        error: "FORBIDDEN",
+      });
+      safeAck(ack, { ok: false, error: "FORBIDDEN" });
       return;
     }
 
     if (!messageText) {
-      socket.emit("message:error", {
-        tempId,
-        error: "Message is required",
-      });
+      safeAck(ack, { ok: false, error: "MESSAGE_REQUIRED" });
       return;
     }
 
     if (messageText.length > 2000) {
-      socket.emit("message:error", {
-        tempId,
-        error: "Message too long (max 2000 characters)",
-      });
+      safeAck(ack, { ok: false, error: "MESSAGE_TOO_LONG" });
       return;
     }
 
@@ -177,15 +297,29 @@ async function handleConnection(socket) {
       });
 
       const payload = normalizeMessage(created.toObject());
-      payload.tempId = tempId; // Include tempId for client reconciliation
+      // Include tempId for client reconciliation (helps avoid duplicates)
+      if (tempId) payload.tempId = tempId;
+
+      pushSocketLog("SOCKET_SEND_OK", {
+        userId,
+        role: userRole,
+        orderId,
+        msgId: String(created._id),
+      });
+
+      safeAck(ack, { ok: true, message: payload });
 
       // Broadcast to all in room (including sender)
       const room = `order:${orderId}`;
       io.to(room).emit("message:new", payload);
-
-      console.log(`[Socket.io] Message sent in ${room} by ${userId}`);
     } catch (err) {
-      console.error("[Socket.io] message:send error:", err?.message);
+      pushSocketLog("SOCKET_SEND_FAIL", {
+        userId,
+        role: userRole,
+        orderId,
+        error: "SEND_FAILED",
+      });
+      safeAck(ack, { ok: false, error: "SEND_FAILED" });
       socket.emit("message:error", {
         tempId,
         error: "Failed to send message",
@@ -272,7 +406,11 @@ async function handleConnection(socket) {
 
   // Disconnect
   socket.on("disconnect", (reason) => {
-    console.log(`[Socket.io] Disconnected: userId=${userId} reason=${reason}`);
+    pushSocketLog("SOCKET_DISCONNECT", {
+      userId,
+      role: userRole,
+      error: reason,
+    });
   });
 }
 
@@ -310,8 +448,40 @@ function broadcastToOrder(orderId, event, payload) {
   io.to(room).emit(event, payload);
 }
 
+function getSocketHealthSnapshot() {
+  if (!io) {
+    return {
+      activeConnections: 0,
+      rooms: [],
+      logs: socketLogs.slice(-20),
+    };
+  }
+
+  const rooms = [];
+  const adapterRooms = io.sockets?.adapter?.rooms;
+  if (adapterRooms && typeof adapterRooms.forEach === "function") {
+    adapterRooms.forEach((sids, roomName) => {
+      // Filter out per-socket rooms (roomName == socketId)
+      if (io.sockets.sockets.has(roomName)) return;
+      rooms.push({
+        name: roomName,
+        size: Array.isArray(sids) ? sids.length : sids?.size || 0,
+      });
+    });
+  }
+
+  rooms.sort((a, b) => b.size - a.size);
+
+  return {
+    activeConnections: io.engine?.clientsCount || 0,
+    rooms,
+    logs: socketLogs.slice(-20),
+  };
+}
+
 module.exports = {
   initSocket,
   getIO,
   broadcastToOrder,
+  getSocketHealthSnapshot,
 };
