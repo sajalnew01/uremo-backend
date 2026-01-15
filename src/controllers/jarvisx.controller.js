@@ -14,6 +14,33 @@ const { callJarvisLLM } = require("../services/jarvisxProviders");
 const JarvisSession = require("../models/JarvisSession");
 const crypto = require("crypto");
 
+// Brain upgrade imports
+const {
+  getSessionKey,
+  loadOrCreateSession: loadSessionHelper,
+  appendMessage,
+  saveSession,
+  updateCollected,
+  wouldRepeatQuestion,
+  getSessionSummary,
+  clampString: clampStr,
+} = require("../utils/jarvisSession");
+const {
+  INTENTS,
+  classifyIntent: classifyIntentUtil,
+  isConfusedMessage: isConfusedUtil,
+  wantsCancel: wantsCancelUtil,
+  isGreeting,
+  isAffirmative,
+  isNegative,
+  extractPlatform,
+  extractUrgency,
+  getQuickRepliesForIntent,
+  getClarifyQuickReplies,
+  platformQuickReplies: getPlatformReplies,
+  urgencyQuickReplies: getUrgencyReplies,
+} = require("../utils/jarvisIntent");
+
 const JARVISX_RULES = {
   manualVerification: true,
   proofAccepted: ["image", "pdf"],
@@ -63,42 +90,23 @@ function normalizeText(s) {
     .trim();
 }
 
+// Use the centralized classifier from jarvisIntent.js
 function classifyIntentDeterministic(text) {
-  const msg = normalizeText(text);
-  if (!msg) return "GENERAL_SUPPORT";
-
-  if (/(interview|assessment|screening)/.test(msg))
-    return "INTERVIEW_ASSESSMENT";
-  if (/(apply|application|job|work position|work positions|hiring)/.test(msg))
-    return "APPLY_TO_WORK";
-  if (/(paid|payment|verify|verification|transaction|receipt|proof)/.test(msg))
-    return "PAYMENT_HELP";
-  if (/(delivery|when will|when do i get|timeframe|delivered|late)/.test(msg))
-    return "ORDER_DELIVERY";
-  if (/(buy|purchase|order|checkout)/.test(msg)) return "BUY_SERVICE";
-  if (
-    /(not available|custom|need service|looking for|can you build|can you make)/.test(
-      msg
-    )
-  )
-    return "CUSTOM_SERVICE";
-
-  return "GENERAL_SUPPORT";
+  return classifyIntentUtil(text);
 }
 
+// Use centralized confusion detector
 function isConfusedMessage(text) {
-  const msg = normalizeText(text);
-  return /(i don t understand|what do you mean|you don t get my point|confused|not clear)/.test(
-    msg
-  );
+  return isConfusedUtil(text);
 }
 
+// Quick reply helpers now from jarvisIntent.js
 function platformQuickReplies() {
-  return ["Outlier", "HFM", "TikTok", "Other"];
+  return getPlatformReplies();
 }
 
 function urgencyQuickReplies() {
-  return ["ASAP", "This week", "Flexible"];
+  return getUrgencyReplies();
 }
 
 function getClientIp(req) {
@@ -395,9 +403,9 @@ function isServiceRequestIntent(message) {
   );
 }
 
+// Use centralized wantsCancel from jarvisIntent.js
 function wantsCancel(message) {
-  const msg = String(message || "").toLowerCase();
-  return /(cancel|never mind|nevermind|stop|forget it|abort)/.test(msg);
+  return wantsCancelUtil(message);
 }
 
 function parseBudget(message) {
@@ -842,6 +850,7 @@ exports.chat = async (req, res) => {
   const mode = modeRaw === "admin" ? "admin" : "public";
 
   const intent = classifyIntentDeterministic(message);
+  const sessionKey = getSessionKey(req);
 
   if (!message) {
     return res.status(400).json({ message: "Message is required" });
@@ -864,6 +873,7 @@ exports.chat = async (req, res) => {
   let usedAi = false;
   let providerForLog = "";
   let modelForLog = "";
+  let replyMode = "normal"; // normal | clarify | anti-loop
 
   // Lead capture state (client echoes this back to keep the flow going)
   const leadCaptureMeta =
@@ -873,16 +883,33 @@ exports.chat = async (req, res) => {
   const pendingRequestId = clampString(leadCaptureMeta?.requestId, 64);
 
   try {
-    const session = await loadOrCreateSession(req);
-    session.lastIntent = intent;
-    await pushSessionMessage(session, "user", message);
+    const session = await loadSessionHelper(req);
 
+    // Extract any platform/urgency from user message for session memory
+    const detectedPlatform = extractPlatform(message);
+    const detectedUrgency = extractUrgency(message);
+    if (detectedPlatform)
+      updateCollected(session, "platform", detectedPlatform);
+    if (detectedUrgency) updateCollected(session, "urgency", detectedUrgency);
+
+    session.lastIntent = intent;
+    appendMessage(session, "user", message);
+
+    // --- ANTI-LOOP: Clarify mode when user is confused ---
     if (isConfusedMessage(message)) {
+      replyMode = "clarify";
       session.lastQuestionKey = "CLARIFY_MODE";
-      const reply =
-        "No worries. Just tell me 2 things:\n1) Which platform?\n2) How urgent is it?";
-      await pushSessionMessage(session, "assistant", reply);
-      await session.save();
+      const reply = "No worries! Let me help you. What do you need help with?";
+      appendMessage(session, "assistant", reply);
+      await saveSession(session);
+
+      console.log(
+        `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+          0,
+          12
+        )}... intent=${intent} provider=none mode=${replyMode}`
+      );
+
       return res.json(
         withBrainEnvelope(
           {
@@ -894,7 +921,7 @@ exports.chat = async (req, res) => {
           },
           {
             intent,
-            quickReplies: [...platformQuickReplies(), ...urgencyQuickReplies()],
+            quickReplies: getClarifyQuickReplies(),
           }
         )
       );
@@ -906,26 +933,136 @@ exports.chat = async (req, res) => {
         : await getPublicContextObject();
 
     // Deterministic intent handling (no LLM needed)
+    // INTERVIEW_ASSESSMENT intent handling with anti-loop
     if (mode === "public" && intent === "INTERVIEW_ASSESSMENT") {
-      session.lastQuestionKey = "ASK_PLATFORM";
-      const reply =
-        "Yes ✅ We can help with interview/screening assessments. Which platform is it for?";
-      await pushSessionMessage(session, "assistant", reply);
-      await session.save();
-      return res.json(
-        withBrainEnvelope(
-          {
-            reply,
-            confidence: 0.92,
-            usedSources: ["rules"],
-            suggestedActions: [
-              { label: "Browse Services", url: "/buy-service" },
-            ],
-            llm: getJarvisLlmStatus(),
-          },
-          { intent, quickReplies: ["Outlier", "HFM", "Other"] }
-        )
-      );
+      // Check if we already have platform collected
+      const hasPlatform = !!session.collected?.platform;
+      const hasUrgency = !!session.collected?.urgency;
+
+      // Anti-loop: don't ask platform again if already asked
+      if (!hasPlatform && session.lastQuestionKey !== "ASK_PLATFORM") {
+        session.lastQuestionKey = "ASK_PLATFORM";
+        const reply =
+          "Yes ✅ We can help with interview/screening assessments. Which platform is it for?";
+        appendMessage(session, "assistant", reply);
+        await saveSession(session);
+
+        console.log(
+          `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+            0,
+            12
+          )}... intent=${intent} provider=none mode=deterministic`
+        );
+
+        return res.json(
+          withBrainEnvelope(
+            {
+              reply,
+              confidence: 0.92,
+              usedSources: ["rules"],
+              suggestedActions: [
+                { label: "Browse Services", url: "/buy-service" },
+              ],
+              llm: getJarvisLlmStatus(),
+            },
+            { intent, quickReplies: platformQuickReplies() }
+          )
+        );
+      } else if (
+        hasPlatform &&
+        !hasUrgency &&
+        session.lastQuestionKey !== "ASK_URGENCY"
+      ) {
+        // Have platform, ask urgency
+        session.lastQuestionKey = "ASK_URGENCY";
+        const reply = `Got it, ${session.collected.platform}. How urgent is this?`;
+        appendMessage(session, "assistant", reply);
+        await saveSession(session);
+
+        console.log(
+          `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+            0,
+            12
+          )}... intent=${intent} provider=none mode=deterministic`
+        );
+
+        return res.json(
+          withBrainEnvelope(
+            {
+              reply,
+              confidence: 0.9,
+              usedSources: ["rules"],
+              suggestedActions: [
+                { label: "Browse Services", url: "/buy-service" },
+              ],
+              llm: getJarvisLlmStatus(),
+            },
+            { intent, quickReplies: urgencyQuickReplies() }
+          )
+        );
+      } else if (hasPlatform && hasUrgency) {
+        // Both collected, confirm and guide to services
+        const reply = `Perfect! For ${session.collected.platform} assessment help with ${session.collected.urgency} urgency — check our services or an admin will reach out soon.`;
+        appendMessage(session, "assistant", reply);
+        session.lastQuestionKey = "COMPLETE";
+        await saveSession(session);
+
+        console.log(
+          `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+            0,
+            12
+          )}... intent=${intent} provider=none mode=deterministic`
+        );
+
+        return res.json(
+          withBrainEnvelope(
+            {
+              reply,
+              confidence: 0.95,
+              usedSources: ["rules", "services"],
+              suggestedActions: [
+                { label: "Browse Services", url: "/buy-service" },
+              ],
+              llm: getJarvisLlmStatus(),
+            },
+            { intent }
+          )
+        );
+      } else {
+        // Anti-loop fallback: we asked platform but user didn't provide it
+        // Don't repeat, offer alternative
+        replyMode = "anti-loop";
+        const reply =
+          "No problem! You can browse our services directly or tap an option below.";
+        appendMessage(session, "assistant", reply);
+        session.lastQuestionKey = "ANTI_LOOP_FALLBACK";
+        await saveSession(session);
+
+        console.log(
+          `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+            0,
+            12
+          )}... intent=${intent} provider=none mode=${replyMode}`
+        );
+
+        return res.json(
+          withBrainEnvelope(
+            {
+              reply,
+              confidence: 0.8,
+              usedSources: ["rules"],
+              suggestedActions: [
+                { label: "Browse Services", url: "/buy-service" },
+              ],
+              llm: getJarvisLlmStatus(),
+            },
+            {
+              intent,
+              quickReplies: [...platformQuickReplies(), "Browse Services"],
+            }
+          )
+        );
+      }
     }
 
     // --- Lead capture (public mode only) ---
@@ -950,7 +1087,15 @@ exports.chat = async (req, res) => {
             await draft.save();
 
             session.lastQuestionKey = "cancelled";
-            await session.save();
+            await saveSession(session);
+
+            console.log(
+              `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+                0,
+                12
+              )}... intent=CUSTOM_SERVICE provider=none mode=cancelled`
+            );
+
             return res.json(
               withBrainEnvelope(
                 buildLeadCaptureReply({
@@ -974,19 +1119,35 @@ exports.chat = async (req, res) => {
             if (q.key === "requestedService") {
               draft.requestedService = answer;
             } else if (q.key === "platform") {
-              draft.platform = answer;
+              // Extract platform intelligently
+              const platformAnswer = extractPlatform(answer) || answer;
+              draft.platform = platformAnswer;
+              updateCollected(session, "platform", platformAnswer);
             } else if (q.key === "country") {
               draft.country = answer;
             } else if (q.key === "urgency") {
               const u = normalizeUrgencyFromAnswer(answer);
-              if (u) draft.urgency = u;
+              if (u) {
+                draft.urgency = u;
+                updateCollected(session, "urgency", u);
+              }
 
+              // ANTI-LOOP: Don't repeat urgency question twice
               if (!u && sameQuestion) {
+                replyMode = "anti-loop";
                 const reply =
-                  "Quick check — how urgent is it? Just tap one option.";
-                session.lastQuestionKey = "urgency";
-                await pushSessionMessage(session, "assistant", reply);
-                await session.save();
+                  "No worries! Just tap an option below, or type 'flexible' if not urgent.";
+                session.lastQuestionKey = "urgency_antiloop";
+                appendMessage(session, "assistant", reply);
+                await saveSession(session);
+
+                console.log(
+                  `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+                    0,
+                    12
+                  )}... intent=CUSTOM_SERVICE provider=none mode=${replyMode}`
+                );
+
                 return res.json(
                   withBrainEnvelope(
                     buildLeadCaptureReply({
@@ -996,7 +1157,7 @@ exports.chat = async (req, res) => {
                     }),
                     {
                       intent: "CUSTOM_SERVICE",
-                      quickReplies: urgencyQuickReplies(),
+                      quickReplies: [...urgencyQuickReplies(), "Skip"],
                     }
                   )
                 );
@@ -1024,15 +1185,23 @@ exports.chat = async (req, res) => {
             await draft.save();
 
             session.lastQuestionKey = q.key;
-            await session.save();
+            await saveSession(session);
 
             const nextQ = nextLeadQuestion(draft);
             if (nextQ) {
               draft.captureStep = nextQ.key;
               await draft.save();
               session.lastQuestionKey = nextQ.key;
-              await pushSessionMessage(session, "assistant", nextQ.text);
-              await session.save();
+              appendMessage(session, "assistant", nextQ.text);
+              await saveSession(session);
+
+              console.log(
+                `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+                  0,
+                  12
+                )}... intent=CUSTOM_SERVICE provider=none mode=lead_capture`
+              );
+
               return res.json(
                 withBrainEnvelope(
                   buildLeadCaptureReply({
@@ -1066,9 +1235,16 @@ exports.chat = async (req, res) => {
             const reply = `Request created ✅\n\nYour request ID is: ${String(
               draft._id
             )}\n\nAn admin will contact you shortly in your Order Support Chat/inbox.`;
-            await pushSessionMessage(session, "assistant", reply);
+            appendMessage(session, "assistant", reply);
             session.lastQuestionKey = "created";
-            await session.save();
+            await saveSession(session);
+
+            console.log(
+              `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+                0,
+                12
+              )}... intent=CUSTOM_SERVICE provider=none mode=lead_created`
+            );
 
             return res.json(
               withBrainEnvelope(
@@ -1185,8 +1361,16 @@ exports.chat = async (req, res) => {
 
         const firstQ = nextLeadQuestion(draft);
         session.lastQuestionKey = firstQ.key;
-        await pushSessionMessage(session, "assistant", firstQ.text);
-        await session.save();
+        appendMessage(session, "assistant", firstQ.text);
+        await saveSession(session);
+
+        console.log(
+          `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+            0,
+            12
+          )}... intent=CUSTOM_SERVICE provider=none mode=new_lead`
+        );
+
         return res.json(
           withBrainEnvelope(
             buildLeadCaptureReply({
@@ -1231,11 +1415,14 @@ exports.chat = async (req, res) => {
         page,
       });
       console.log(
-        `[JARVISX_CHAT_OK] provider=${
-          providerForLog || ""
-        } mode=${mode} usedAi=false`
+        `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+          0,
+          12
+        )}... intent=${intent} provider=${
+          providerForLog || "none"
+        } mode=${mode}`
       );
-      await session.save();
+      await saveSession(session);
       return res.json(withBrainEnvelope({ ...out, llm }, { intent }));
     }
 
@@ -1253,9 +1440,20 @@ exports.chat = async (req, res) => {
           )}\n\nIf any memory conflicts with CONTEXT JSON facts, follow CONTEXT.`
       : "";
 
+    // Build session context for LLM (what we already collected)
+    const sessionContext = session.collected || {};
+    const sessionHints = [];
+    if (sessionContext.platform)
+      sessionHints.push(`Platform: ${sessionContext.platform}`);
+    if (sessionContext.urgency)
+      sessionHints.push(`Urgency: ${sessionContext.urgency}`);
+    const sessionBlock = sessionHints.length
+      ? `\nSESSION (already collected): ${sessionHints.join(", ")}`
+      : "";
+
     const system = `You are JarvisX Support — Sajal’s human assistant for UREMO.\n\nStrict style rules:\n- Speak like a real human support assistant (not like a chatbot).\n- Very short replies (1-4 lines).\n- Ask max 1 question.\n- Never repeat the same question twice.\n- Never mention API keys, system errors, stack traces, or provider issues in PUBLIC mode.\n\nAccuracy rules:\n- Use ONLY the provided CONTEXT JSON facts (services, payment methods, work positions, CMS/support texts, FAQ).\n- Do not hallucinate services, prices, or policies.\n\nDeterministic intent: ${intent}\n\nIf the user asks for a service that is NOT listed in CONTEXT.services:\n- Don’t just say “not available”.\n- Say we can still help if they share requirements.\n- Ask max 1 short question.\n- Say you’ll create a request for the admin/team.\n\nReturn STRICT JSON only, with keys:\n- reply (string)\n- confidence (0-1)\n- usedSources (array from [settings, services, paymentMethods, workPositions, rules])\n- suggestedActions (array of {label,url})\n\nCONTEXT JSON:\n${JSON.stringify(
       context
-    )}${memoryBlock}`;
+    )}${memoryBlock}${sessionBlock}`;
 
     const user = `User message: ${message}\n\nMeta: page=${
       page || ""
@@ -1294,7 +1492,16 @@ exports.chat = async (req, res) => {
         page,
       });
 
-      await session.save();
+      console.log(
+        `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+          0,
+          12
+        )}... intent=${intent} provider=${
+          providerForLog || "none"
+        } mode=llm_fallback`
+      );
+
+      await saveSession(session);
       return res.json(withBrainEnvelope({ ...out, llm }, { intent }));
     }
 
@@ -1319,10 +1526,10 @@ exports.chat = async (req, res) => {
       if (mode === "admin") {
         const llm = getJarvisLlmStatus();
         const out = fallbackAnswerFromContextAdmin({ message, context });
-        await session.save();
+        await saveSession(session);
         return res.json(withBrainEnvelope({ ...out, llm }, { intent }));
       }
-      await session.save();
+      await saveSession(session);
       return res.json(
         withBrainEnvelope(
           { ...buildNotSureReply(), llm: getJarvisLlmStatus() },
@@ -1340,12 +1547,15 @@ exports.chat = async (req, res) => {
       page,
     });
     console.log(
-      `[JARVISX_CHAT_OK] provider=${
-        providerForLog || ""
-      } mode=${mode} usedAi=true`
+      `[JARVISX_CHAT_OK] key=${sessionKey.slice(
+        0,
+        12
+      )}... intent=${intent} provider=${
+        providerForLog || "none"
+      } mode=llm_success`
     );
-    await pushSessionMessage(session, "assistant", normalized.reply);
-    await session.save();
+    appendMessage(session, "assistant", normalized.reply);
+    await saveSession(session);
     return res.json(
       withBrainEnvelope(
         { ...normalized, llm: getJarvisLlmStatus() },
@@ -1354,12 +1564,14 @@ exports.chat = async (req, res) => {
     );
   } catch (err) {
     console.error(
-      `[JARVISX_CHAT_FAIL] mode=${mode} errMessage=${err?.message}`
+      `[JARVISX_CHAT_FAIL] key=${
+        sessionKey?.slice(0, 12) || "unknown"
+      }... err=${err?.message}`
     );
     console.log(
-      `[JARVISX_CHAT_FAIL] provider=${
-        providerForLog || ""
-      } mode=${mode} error=exception`
+      `[JARVISX_CHAT_FAIL] key=${
+        sessionKey?.slice(0, 12) || "unknown"
+      }... intent=${intent} provider=${providerForLog || "none"} mode=exception`
     );
     await recordChatEvent({
       mode,
