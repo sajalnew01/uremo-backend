@@ -30,10 +30,12 @@ const applyWorkRoutes = require("./routes/applyWork.routes");
 const workPositionRoutes = require("./routes/workPosition.routes");
 const adminWorkPositionRoutes = require("./routes/admin.workPosition.routes");
 const adminPaymentRoutes = require("./routes/admin.payment.routes");
+const adminServiceRequestRoutes = require("./routes/admin.serviceRequest.routes");
 const cronRoutes = require("./routes/cron.routes");
 const settingsRoutes = require("./routes/settings.routes");
 const jarvisxRoutes = require("./routes/jarvisx.routes");
 const jarvisxWriteRoutes = require("./routes/jarvisx.write.routes");
+const serviceRequestRoutes = require("./routes/serviceRequest.routes");
 
 const auth = require("./middlewares/auth.middleware");
 const admin = require("./middlewares/admin.middleware");
@@ -134,6 +136,7 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/admin/payments", adminPaymentRoutes);
+app.use("/api/admin/service-requests", adminServiceRequestRoutes);
 app.use("/api/payment", paymentRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/payment-methods", paymentMethodRoutes);
@@ -145,6 +148,7 @@ app.use("/api/cron", cronRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/jarvisx", jarvisxRoutes);
 app.use("/api/jarvisx/write", jarvisxWriteRoutes);
+app.use("/api/service-requests", serviceRequestRoutes);
 
 // TEMP: Debug endpoint to list mounted routes
 app.get("/api/__routes", (req, res) => {

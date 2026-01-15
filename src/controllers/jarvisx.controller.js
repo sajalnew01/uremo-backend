@@ -3,6 +3,8 @@ const SiteSettingsController = require("./siteSettings.controller");
 const Service = require("../models/Service");
 const PaymentMethod = require("../models/PaymentMethod");
 const WorkPosition = require("../models/WorkPosition");
+const mongoose = require("mongoose");
+const ServiceRequest = require("../models/ServiceRequest");
 
 const JARVISX_RULES = {
   manualVerification: true,
@@ -129,6 +131,129 @@ function buildNotSureReply() {
     usedSources: [],
     suggestedActions: [],
   };
+}
+
+function normalizeTextForMatch(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findMatchingServiceTitle(message, services) {
+  const msg = normalizeTextForMatch(message);
+  if (!msg) return null;
+
+  const list = Array.isArray(services) ? services : [];
+  for (const s of list) {
+    const title = String(s?.title || "").trim();
+    if (!title) continue;
+    const t = normalizeTextForMatch(title);
+    if (!t) continue;
+
+    // direct contains either direction, or strong token overlap
+    if (msg.includes(t) || t.includes(msg)) return title;
+
+    const msgTokens = msg.split(" ").filter((x) => x.length >= 4);
+    const titleTokens = new Set(t.split(" ").filter((x) => x.length >= 4));
+    const overlap = msgTokens.filter((x) => titleTokens.has(x)).length;
+    if (overlap >= 2) return title;
+  }
+  return null;
+}
+
+function isServiceRequestIntent(message) {
+  const msg = String(message || "").toLowerCase();
+  return (
+    /(i\s*(need|want|require)|looking\s*for|can\s*you\s*(do|help)|do\s*you\s*(offer|provide)|service\s*for|help\s*me\s*with)/.test(
+      msg
+    ) &&
+    /(service|account|kyc|verification|outlier|paypal|binance|stripe|payment|ads|instagram|tiktok|facebook|google|shopify|amazon|upwork|fiverr)/.test(
+      msg
+    )
+  );
+}
+
+function wantsCancel(message) {
+  const msg = String(message || "").toLowerCase();
+  return /(cancel|never mind|nevermind|stop|forget it|abort)/.test(msg);
+}
+
+function parseBudget(message) {
+  const msg = String(message || "").toLowerCase();
+  const m = msg.match(
+    /(\$|usd|eur|ngn|gbp)?\s*([0-9]{2,7})(?:\s*(\$|usd|eur|ngn|gbp))?/i
+  );
+  if (!m) return null;
+  const amount = Number(m[2]);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const currencyRaw = (m[1] || m[3] || "usd").toLowerCase();
+  const currency =
+    currencyRaw === "$" ? "USD" : currencyRaw.toUpperCase().slice(0, 3);
+  return { amount, currency };
+}
+
+function normalizeUrgencyFromAnswer(answer) {
+  const v = String(answer || "")
+    .trim()
+    .toLowerCase();
+  if (!v) return "";
+  if (/(asap|urgent|now|today)/.test(v)) return "asap";
+  if (/(week|7)/.test(v)) return "this_week";
+  if (/(month|30)/.test(v)) return "this_month";
+  if (/(flex|any|whenever|no rush)/.test(v)) return "flexible";
+  if (["asap", "this_week", "this_month", "flexible"].includes(v)) return v;
+  return "";
+}
+
+function nextLeadQuestion(doc) {
+  if (!doc.requestedService) {
+    return {
+      key: "requestedService",
+      text: "What service do you need exactly? (Describe it in 1 sentence.)",
+    };
+  }
+  if (!doc.platform) {
+    return {
+      key: "platform",
+      text: "Which platform is this for? (e.g., Outlier, PayPal, Binance, TikTok, Instagram, Shopify)",
+    };
+  }
+  if (!doc.country) {
+    return {
+      key: "country",
+      text: "Which country/region should we target?",
+    };
+  }
+  if (!doc.urgency) {
+    return {
+      key: "urgency",
+      text: "How urgent is it? Reply with: ASAP, this week, this month, or flexible.",
+    };
+  }
+  // budget is optional; treat undefined as "not answered yet" (null = skipped)
+  if (doc.budget === undefined) {
+    return {
+      key: "budget",
+      text: "Optional: what’s your budget range? (You can reply like “$50” or “skip”)",
+    };
+  }
+  return null;
+}
+
+function buildLeadCaptureReply({ text, requestId, stepKey }) {
+  const out = {
+    reply: text,
+    confidence: 0.85,
+    usedSources: [],
+    suggestedActions: [{ label: "Support", url: "/support" }],
+    leadCapture: {
+      requestId,
+      step: stepKey || "",
+    },
+  };
+  return out;
 }
 
 function buildSuggestedActionsFromMessage(message) {
@@ -428,11 +553,165 @@ exports.chat = async (req, res) => {
   const orderId = clampString(meta.orderId, 64);
   const page = clampString(meta.page, 120);
 
+  // Lead capture state (client echoes this back to keep the flow going)
+  const leadCaptureMeta =
+    meta?.leadCapture && typeof meta.leadCapture === "object"
+      ? meta.leadCapture
+      : null;
+  const pendingRequestId = clampString(leadCaptureMeta?.requestId, 64);
+
   try {
     const context =
       mode === "admin"
         ? await getAdminContextObject()
         : await getPublicContextObject();
+
+    // --- Lead capture (public mode only) ---
+    if (mode === "public") {
+      // Resume an in-progress draft request
+      if (
+        pendingRequestId &&
+        mongoose.Types.ObjectId.isValid(pendingRequestId)
+      ) {
+        const draft = await ServiceRequest.findById(pendingRequestId);
+
+        if (draft && draft.status === "draft") {
+          if (wantsCancel(message)) {
+            draft.status = "cancelled";
+            draft.captureStep = "cancelled";
+            draft.events = draft.events || [];
+            draft.events.push({
+              type: "cancelled",
+              message: "User cancelled lead capture",
+              meta: { page },
+            });
+            await draft.save();
+
+            return res.json(
+              buildLeadCaptureReply({
+                text: "No problem — I’ve cancelled that request. If you need anything else, just tell me.",
+                requestId: String(draft._id),
+                stepKey: "cancelled",
+              })
+            );
+          }
+
+          const q = nextLeadQuestion(draft);
+          if (q) {
+            // Treat this message as answer to the current question
+            const answer = clampString(message, 400);
+
+            if (q.key === "requestedService") {
+              draft.requestedService = answer;
+            } else if (q.key === "platform") {
+              draft.platform = answer;
+            } else if (q.key === "country") {
+              draft.country = answer;
+            } else if (q.key === "urgency") {
+              const u = normalizeUrgencyFromAnswer(answer);
+              if (u) draft.urgency = u;
+            } else if (q.key === "budget") {
+              if (/^(skip|no|n\/a|none)$/i.test(answer)) {
+                draft.budget = null;
+                draft.budgetProvided = false;
+              } else {
+                const parsed = parseBudget(answer);
+                if (parsed) {
+                  draft.budget = parsed.amount;
+                  draft.budgetCurrency = parsed.currency;
+                  draft.budgetProvided = true;
+                }
+              }
+            }
+
+            draft.events = draft.events || [];
+            draft.events.push({
+              type: "user_answer",
+              message: `Answered ${q.key}`,
+              meta: { page },
+            });
+            await draft.save();
+
+            const nextQ = nextLeadQuestion(draft);
+            if (nextQ) {
+              draft.captureStep = nextQ.key;
+              await draft.save();
+              return res.json(
+                buildLeadCaptureReply({
+                  text: nextQ.text,
+                  requestId: String(draft._id),
+                  stepKey: nextQ.key,
+                })
+              );
+            }
+
+            // Finalize
+            draft.status = "new";
+            draft.captureStep = "created";
+            draft.events.push({
+              type: "created",
+              message: "Service request created via JarvisX",
+              meta: { page },
+            });
+            await draft.save();
+
+            return res.json(
+              buildLeadCaptureReply({
+                text: `Request created ✅\n\nYour request ID is: ${String(
+                  draft._id
+                )}\n\nAn admin will contact you shortly in your Order Support Chat/inbox.`,
+                requestId: String(draft._id),
+                stepKey: "created",
+              })
+            );
+          }
+        }
+      }
+
+      // Start a new lead capture if user asks for an unlisted service
+      const matchedServiceTitle = findMatchingServiceTitle(
+        message,
+        context?.services
+      );
+      const intent = isServiceRequestIntent(message);
+
+      if (intent && !matchedServiceTitle) {
+        const draft = await ServiceRequest.create({
+          userId: req.user?.id || undefined,
+          source: "jarvisx",
+          status: "draft",
+          rawMessage: message,
+          requestedService: clampString(message, 200),
+          platform: "",
+          country: "",
+          urgency: "",
+          budget: undefined,
+          budgetCurrency: "USD",
+          captureStep: "platform",
+          budgetProvided: false,
+          createdFrom: {
+            page,
+            userAgent: clampString(req.headers["user-agent"], 240),
+          },
+          events: [
+            {
+              type: "draft_started",
+              message: "Lead capture started",
+              meta: { page },
+            },
+          ],
+        });
+
+        const firstQ = nextLeadQuestion(draft);
+        return res.json(
+          buildLeadCaptureReply({
+            text: `Got it — we can help. I’ll create a request for the team.\n\n${firstQ.text}`,
+            requestId: String(draft._id),
+            stepKey: firstQ.key,
+          })
+        );
+      }
+    }
 
     const provider =
       String(process.env.JARVISX_PROVIDER || "openai").trim() || "openai";
@@ -448,7 +727,7 @@ exports.chat = async (req, res) => {
       return res.json(out);
     }
 
-    const system = `You are JarvisX, the UREMO 24/7 support brain in READ-ONLY mode.\n\nRules:\n- READ ONLY: never suggest creating/editing/deleting data.\n- Only answer using the provided CONTEXT JSON.\n- If the answer is not clearly present in CONTEXT, reply exactly: \"I’m not sure. Please contact admin in Order Support Chat.\"\n- Keep replies short, direct, business tone.\n- Return STRICT JSON with keys: reply (string), confidence (0-1), usedSources (array of strings from [settings, services, paymentMethods, workPositions, rules]), suggestedActions (array of {label,url}).\n\nCONTEXT JSON:\n${JSON.stringify(
+    const system = `You are JarvisX, the UREMO 24/7 support assistant.\n\nRules:\n- Only answer using the provided CONTEXT JSON.\n- If the answer is not clearly present in CONTEXT, reply exactly: \"I’m not sure. Please contact admin in Order Support Chat.\"\n- Keep replies short, direct, friendly.\n- Return STRICT JSON with keys: reply (string), confidence (0-1), usedSources (array of strings from [settings, services, paymentMethods, workPositions, rules]), suggestedActions (array of {label,url}).\n\nCONTEXT JSON:\n${JSON.stringify(
       context
     )}`;
 
