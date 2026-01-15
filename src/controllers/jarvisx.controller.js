@@ -10,6 +10,7 @@ const OrderMessage = require("../models/OrderMessage");
 const SiteSettings = require("../models/SiteSettings");
 const JarvisChatEvent = require("../models/JarvisChatEvent");
 const JarvisMemory = require("../models/JarvisMemory");
+const { callJarvisLLM } = require("../services/jarvisxProviders");
 
 const JARVISX_RULES = {
   manualVerification: true,
@@ -26,10 +27,21 @@ function clampString(value, maxLen) {
 
 function getJarvisLlmStatus() {
   const provider =
-    String(process.env.JARVISX_PROVIDER || "openai").trim() || "openai";
-  const apiKey = String(process.env.JARVISX_API_KEY || "").trim();
+    String(process.env.JARVISX_PROVIDER || "groq")
+      .trim()
+      .toLowerCase() || "groq";
+  const apiKey =
+    provider === "groq"
+      ? String(process.env.GROQ_API_KEY || "").trim()
+      : String(process.env.JARVISX_API_KEY || "").trim();
   const model =
-    String(process.env.JARVISX_MODEL || "gpt-4o-mini").trim() || "gpt-4o-mini";
+    String(
+      process.env.JARVISX_MODEL ||
+        (provider === "groq" ? "llama-3.3-70b-versatile" : "gpt-4o-mini")
+    )
+      .trim()
+      .toLowerCase() ||
+    (provider === "groq" ? "llama-3.3-70b-versatile" : "gpt-4o-mini");
   return {
     configured: !!apiKey,
     provider,
@@ -144,7 +156,8 @@ function tryAttachUser(req) {
 
 function buildNotSureReply() {
   return {
-    reply: "I’m not sure. Please contact admin in Order Support Chat.",
+    reply:
+      "I’m not fully sure yet. Please open Order Support Chat or contact WhatsApp support.",
     confidence: 0.2,
     usedSources: [],
     suggestedActions: [],
@@ -492,6 +505,8 @@ function fallbackAnswerFromContextAdmin(input) {
   const notSure = out?.reply === buildNotSureReply().reply;
   if (!notSure) return out;
 
+  const llm = getJarvisLlmStatus();
+
   const services = Array.isArray(input?.context?.services)
     ? input.context.services
     : [];
@@ -512,7 +527,11 @@ function fallbackAnswerFromContextAdmin(input) {
     .filter(Boolean);
 
   const lines = [
-    `LLM not configured. I can still answer from CONTEXT.`,
+    `${
+      llm.provider === "groq"
+        ? "Groq not configured in ENV yet."
+        : "LLM not configured."
+    } I can still answer from CONTEXT.`,
     `Services: ${services.length}${
       topServices.length ? ` (e.g. ${topServices.join(", ")})` : ""
     }`,
@@ -531,52 +550,47 @@ function fallbackAnswerFromContextAdmin(input) {
   };
 }
 
-async function callChatCompletion({ provider, apiKey, model, messages }) {
-  const url =
-    provider === "openrouter"
-      ? "https://openrouter.ai/api/v1/chat/completions"
-      : "https://api.openai.com/v1/chat/completions";
+function normalizeProviderName(provider) {
+  const p = String(provider || "")
+    .trim()
+    .toLowerCase();
+  if (!p) return "";
+  if (p === "groq") return "groq";
+  if (p === "openrouter") return "openrouter";
+  if (p === "openai") return "openai";
+  return p;
+}
 
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
-  };
+function resolveJarvisLlmConfig() {
+  const provider = normalizeProviderName(
+    process.env.JARVISX_PROVIDER || "groq"
+  );
 
-  // OpenRouter optional headers (safe if missing)
-  if (provider === "openrouter") {
-    if (process.env.OPENROUTER_SITE_URL)
-      headers["HTTP-Referer"] = process.env.OPENROUTER_SITE_URL;
-    if (process.env.OPENROUTER_APP_NAME)
-      headers["X-Title"] = process.env.OPENROUTER_APP_NAME;
-  }
+  const modelDefault =
+    provider === "groq" ? "llama-3.3-70b-versatile" : "gpt-4o-mini";
 
-  const body = {
-    model,
-    messages,
-    temperature: 0.2,
-    max_tokens: 300,
-  };
+  const model =
+    String(process.env.JARVISX_MODEL || modelDefault).trim() || modelDefault;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+  const temperatureRaw = Number(process.env.JARVISX_TEMPERATURE);
+  const temperature = Number.isFinite(temperatureRaw)
+    ? Math.max(0, Math.min(1, temperatureRaw))
+    : 0.4;
 
-  const payload = await res.json().catch(() => null);
-  if (!res.ok) {
-    const msg =
-      payload?.error?.message ||
-      payload?.message ||
-      `JarvisX provider error (${res.status})`;
-    const err = new Error(msg);
-    err.status = res.status;
-    err.payload = payload;
-    throw err;
-  }
+  const maxTokensRaw = Number(process.env.JARVISX_MAX_TOKENS);
+  const max_tokens = Number.isFinite(maxTokensRaw)
+    ? Math.max(64, Math.min(4096, Math.floor(maxTokensRaw)))
+    : 800;
 
-  const content = payload?.choices?.[0]?.message?.content;
-  return typeof content === "string" ? content : "";
+  const apiKey =
+    provider === "groq"
+      ? String(process.env.GROQ_API_KEY || "").trim()
+      : String(process.env.JARVISX_API_KEY || "").trim();
+
+  const supported =
+    provider === "groq" || provider === "openrouter" || provider === "openai";
+
+  return { provider, supported, apiKey, model, temperature, max_tokens };
 }
 
 function safeJsonParse(maybeJson) {
@@ -657,6 +671,47 @@ exports.getPublicContext = async (req, res) => {
   } catch (err) {
     console.error(`[JARVISX_PUBLIC_CONTEXT_FAIL] errMessage=${err?.message}`);
     return res.status(500).json({ message: "Unable to load JarvisX context" });
+  }
+};
+
+exports.requestService = async (req, res) => {
+  try {
+    tryAttachUser(req);
+
+    const message = clampString(req.body?.message, 2000);
+    const detectedServiceName = clampString(req.body?.detectedServiceName, 120);
+    const page = clampString(req.body?.page, 120);
+
+    if (!message) {
+      return res.status(400).json({ message: "message is required" });
+    }
+
+    const doc = await ServiceRequest.create({
+      userId: req.user?.id || undefined,
+      source: "jarvisx",
+      status: "new",
+      rawMessage: message,
+      requestedService: detectedServiceName || clampString(message, 200),
+      captureStep: "",
+      createdFrom: {
+        page,
+        userAgent: clampString(req.headers["user-agent"], 240),
+      },
+      events: [
+        {
+          type: "service_request_created",
+          message: "Service request created from JarvisX",
+          meta: { page },
+        },
+      ],
+    });
+
+    return res.json({ success: true, id: String(doc._id) });
+  } catch (err) {
+    console.error(`[JARVISX_REQUEST_SERVICE_FAIL] errMessage=${err?.message}`);
+    return res
+      .status(200)
+      .json({ success: false, message: "Unable to create request" });
   }
 };
 
@@ -926,19 +981,13 @@ exports.chat = async (req, res) => {
       }
     }
 
-    const provider =
-      String(process.env.JARVISX_PROVIDER || "openai").trim() || "openai";
-    const apiKey = String(process.env.JARVISX_API_KEY || "").trim();
-    const model =
-      String(process.env.JARVISX_MODEL || "gpt-4o-mini").trim() ||
-      "gpt-4o-mini";
-
+    const llmConfig = resolveJarvisLlmConfig();
     const llm = getJarvisLlmStatus();
 
-    const wantsAi = toBool(apiKey);
+    const wantsAi = toBool(llmConfig.apiKey) && !!llmConfig.supported;
     usedAi = wantsAi;
-    providerForLog = provider;
-    modelForLog = model;
+    providerForLog = llmConfig.provider;
+    modelForLog = llmConfig.model;
 
     if (!wantsAi) {
       const out =
@@ -953,6 +1002,11 @@ exports.chat = async (req, res) => {
         model: modelForLog,
         page,
       });
+      console.log(
+        `[JARVISX_CHAT_OK] provider=${
+          providerForLog || ""
+        } mode=${mode} usedAi=false`
+      );
       return res.json({ ...out, llm });
     }
 
@@ -970,7 +1024,7 @@ exports.chat = async (req, res) => {
           )}\n\nIf any memory conflicts with CONTEXT JSON facts, follow CONTEXT.`
       : "";
 
-    const system = `You are JarvisX, the UREMO 24/7 support assistant.\n\nRules:\n- Only answer using the provided CONTEXT JSON.\n- If the answer is not clearly present in CONTEXT, reply exactly: \"I’m not sure. Please contact admin in Order Support Chat.\"\n- Keep replies short, direct, friendly.\n- Return STRICT JSON with keys: reply (string), confidence (0-1), usedSources (array of strings from [settings, services, paymentMethods, workPositions, rules]), suggestedActions (array of {label,url}).\n\nCONTEXT JSON:\n${JSON.stringify(
+    const system = `You are JarvisX Support — Sajal’s human assistant for UREMO.\n\nStrict style rules:\n- Speak like a real human support assistant (not like a chatbot).\n- Very short replies (1-4 lines).\n- Ask max 2 questions.\n- Never mention API keys, system errors, stack traces, or provider issues in PUBLIC mode.\n\nAccuracy rules:\n- Use ONLY the provided CONTEXT JSON facts (services, payment methods, work positions, CMS/support texts, FAQ).\n- Do not hallucinate services, prices, or policies.\n\nIf the user asks for a service that is NOT listed in CONTEXT.services:\n- Don’t just say “not available”.\n- Say we can still help if they share requirements.\n- Ask 1-2 short questions max.\n- Say you’ll create a request for the admin/team.\n\nReturn STRICT JSON only, with keys:\n- reply (string)\n- confidence (0-1)\n- usedSources (array from [settings, services, paymentMethods, workPositions, rules])\n- suggestedActions (array of {label,url})\n\nCONTEXT JSON:\n${JSON.stringify(
       context
     )}${memoryBlock}`;
 
@@ -978,15 +1032,43 @@ exports.chat = async (req, res) => {
       page || ""
     } orderId=${orderId || ""}`;
 
-    const rawText = await callChatCompletion({
-      provider,
-      apiKey,
-      model,
+    const llmResult = await callJarvisLLM({
+      provider: llmConfig.provider,
+      apiKey: llmConfig.apiKey,
+      model: llmConfig.model,
+      temperature: llmConfig.temperature,
+      max_tokens: llmConfig.max_tokens,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
       ],
     });
+
+    if (!llmResult.ok) {
+      console.log(
+        `[JARVISX_CHAT_FAIL] provider=${
+          providerForLog || ""
+        } mode=${mode} errorCode=${llmResult.error?.code || "UNKNOWN"}`
+      );
+
+      const out =
+        mode === "admin"
+          ? fallbackAnswerFromContextAdmin({ message, context })
+          : fallbackAnswerFromContext({ message, context });
+
+      await recordChatEvent({
+        mode,
+        ok: true,
+        usedAi: false,
+        provider: providerForLog,
+        model: modelForLog,
+        page,
+      });
+
+      return res.json({ ...out, llm });
+    }
+
+    const rawText = llmResult.assistantText;
 
     const parsed = safeJsonParse(rawText);
     const normalized = normalizeAiResponse(parsed, message);
@@ -1020,10 +1102,20 @@ exports.chat = async (req, res) => {
       model: modelForLog,
       page,
     });
+    console.log(
+      `[JARVISX_CHAT_OK] provider=${
+        providerForLog || ""
+      } mode=${mode} usedAi=true`
+    );
     return res.json({ ...normalized, llm: getJarvisLlmStatus() });
   } catch (err) {
     console.error(
       `[JARVISX_CHAT_FAIL] mode=${mode} errMessage=${err?.message}`
+    );
+    console.log(
+      `[JARVISX_CHAT_FAIL] provider=${
+        providerForLog || ""
+      } mode=${mode} error=exception`
     );
     await recordChatEvent({
       mode,
