@@ -4,6 +4,7 @@ const WorkPosition = require("../models/WorkPosition");
 const SiteSettings = require("../models/SiteSettings");
 const ServiceRequest = require("../models/ServiceRequest");
 const Order = require("../models/Order");
+const mongoose = require("mongoose");
 
 const sessionManager = require("../utils/sessionManager");
 const {
@@ -79,6 +80,48 @@ function setJarvisxSidCookieIfNeeded(req, res) {
     path: "/",
   });
 }
+
+function isDbConnected() {
+  try {
+    return mongoose?.connection?.readyState === 1;
+  } catch {
+    return false;
+  }
+}
+
+// PATCH_08: Monitoring endpoint. Must never crash.
+exports.health = async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const llm = getGroqStatus();
+    return res.status(200).json({
+      ok: true,
+      service: "jarvisx",
+      groq: {
+        keyPresent: !!llm.configured,
+        model: llm.model,
+        provider: llm.provider,
+      },
+      database: { connected: isDbConnected() },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(`[JARVISX_HEALTH_FAIL] errMessage=${err?.message}`);
+    return res.status(200).json({
+      ok: true,
+      service: "jarvisx",
+      groq: {
+        keyPresent: !!String(process.env.GROQ_API_KEY || "").trim(),
+        model: String(process.env.JARVISX_MODEL || "llama-3.3-70b-versatile")
+          .trim()
+          .toLowerCase(),
+        provider: "groq",
+      },
+      database: { connected: false },
+      timestamp: new Date().toISOString(),
+    });
+  }
+};
 
 exports.llmStatus = async (req, res) => {
   const model = String(process.env.JARVISX_MODEL || "llama-3.3-70b-versatile")
@@ -619,6 +662,22 @@ exports.chat = async (req, res) => {
     // PATCH_07: GENERAL_CHAT must always call Groq (real assistant behavior)
     if (intent === "GENERAL_CHAT") {
       try {
+        const llm = getGroqStatus();
+        if (!llm.configured) {
+          const out =
+            "JarvisX is temporarily offline. Please contact support or try again later.";
+          await sessionManager.addMessage(session, "user", message);
+          await sessionManager.addMessage(session, "jarvis", out);
+          return res.status(200).json({
+            ok: false,
+            maintenance: true,
+            message: out,
+            reply: out,
+            intent: "GENERAL_CHAT",
+            quickReplies: ["Contact support", "Retry"],
+          });
+        }
+
         const services = await Service.find({ active: true })
           .sort({ createdAt: -1 })
           .limit(18)
@@ -646,6 +705,7 @@ exports.chat = async (req, res) => {
             temperature: 0.6,
             max_tokens: 220,
             model: String(process.env.JARVISX_MODEL || "").trim(),
+            timeoutMs: 10000,
           }
         );
 
@@ -683,7 +743,8 @@ exports.chat = async (req, res) => {
         await sessionManager.addMessage(session, "user", message);
         await sessionManager.addMessage(session, "jarvis", out);
         return res.status(200).json({
-          ok: true,
+          ok: false,
+          message: out,
           reply: out,
           intent: "GENERAL_CHAT",
           quickReplies: ["Buy service", "Order status", "Interview help"],
@@ -764,12 +825,19 @@ exports.chat = async (req, res) => {
   } catch (error) {
     console.error("[JarvisX Error]", error?.message);
 
-    return res.status(500).json({
+    console.error("[JARVISX_FATAL]", error?.stack || error);
+
+    // PATCH_08: Never return 500 for normal usage. Always degrade gracefully.
+    const reply = wantsAdmin
+      ? "System updating. Please check back in 2 minutes."
+      : "Assistant is currently updating. Please try again in a moment.";
+
+    return res.status(200).json({
       ok: false,
-      reply: wantsAdmin
-        ? "System updating. Please check back in 2 minutes."
-        : "Assistant is currently updating. Please try again in a moment.",
+      message: reply,
+      reply,
       intent: "ERROR",
+      quickReplies: ["Retry", "Contact support"],
     });
   }
 };

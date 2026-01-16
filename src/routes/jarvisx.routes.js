@@ -24,6 +24,8 @@ const chatLimiterMaybeAdmin = (req, res, next) => {
 
 router.get("/context/public", JarvisX.getPublicContext);
 router.get("/context/admin", auth, admin, JarvisX.getAdminContext);
+// PATCH_08: Monitoring endpoint (must never crash)
+router.get("/health", JarvisX.health);
 // Public-safe: lets admin UI load even if auth headers are stripped by proxies.
 // Does NOT return sensitive user data.
 router.get("/health-report", authOptional, JarvisX.healthReport);

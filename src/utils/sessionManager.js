@@ -1,5 +1,27 @@
 const JarvisSession = require("../models/JarvisSession");
 
+function wrapNonThrowingSave(session) {
+  if (!session || typeof session.save !== "function") return session;
+  if (session._jarvisxSaveWrapped) return session;
+
+  const original = session.save.bind(session);
+  session.save = async (...args) => {
+    try {
+      return await original(...args);
+    } catch (err) {
+      console.error(
+        `[JARVISX_SESSION_SAVE_FAIL] errMessage=${err?.message}\n${
+          err?.stack || ""
+        }`
+      );
+      return session;
+    }
+  };
+
+  session._jarvisxSaveWrapped = true;
+  return session;
+}
+
 class SessionManager {
   /**
    * Get or create session for request
@@ -7,7 +29,28 @@ class SessionManager {
   async getOrCreateSession(req) {
     const sessionKey = JarvisSession.generateSessionKey(req);
 
-    let session = await JarvisSession.findOne({ sessionKey });
+    let session = null;
+    try {
+      session = await JarvisSession.findOne({ sessionKey });
+    } catch (err) {
+      console.error(
+        `[JARVISX_SESSION_FIND_FAIL] errMessage=${err?.message}\n${
+          err?.stack || ""
+        }`
+      );
+      // Mongo down / buffering timeout: return volatile in-memory session.
+      return {
+        _volatile: true,
+        sessionKey,
+        userId: req.user?._id || req.user?.id || null,
+        isAdmin: req.user?.role === "admin",
+        askedQuestions: [],
+        collectedData: {},
+        conversation: [],
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        save: async () => {},
+      };
+    }
 
     if (!session) {
       session = new JarvisSession({
@@ -19,6 +62,9 @@ class SessionManager {
         conversation: [],
       });
     }
+
+    // Never allow session.save() to crash JarvisX chat.
+    wrapNonThrowingSave(session);
 
     // Keep identity/admin flag fresh (in case role/login changes)
     session.userId = req.user?._id || req.user?.id || session.userId || null;
@@ -90,7 +136,18 @@ class SessionManager {
       session.conversation = session.conversation.slice(-10);
     }
 
-    await session.save();
+    try {
+      if (typeof session.save === "function") {
+        await session.save();
+      }
+    } catch (err) {
+      // Should be rare due to wrapped save, but keep this defensive.
+      console.error(
+        `[JARVISX_SESSION_WRITE_FAIL] errMessage=${err?.message}\n${
+          err?.stack || ""
+        }`
+      );
+    }
   }
 
   /**
