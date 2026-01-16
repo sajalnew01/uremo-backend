@@ -39,6 +39,31 @@ async function groqChatCompletion(messages, options = {}) {
   });
 }
 
+function buildJarvisxPublicSystemPrompt(context = {}) {
+  // REQUIRED (PATCH_07): Public JarvisX Support must behave like a real assistant.
+  const base =
+    "You are JarvisX Support, a helpful human-like assistant for UREMO (uremo.online). You MUST:\n" +
+    "- Answer naturally like a real assistant.\n" +
+    "- If asked your name/identity: say you're JarvisX Support.\n" +
+    "- If asked about UREMO offerings: explain briefly and list active services from context.\n" +
+    "- If user asks for a service not listed: ask what they need, then offer to create a request for admin.\n" +
+    "- If user asks a general question: answer normally.\n" +
+    "- Keep replies short (1–3 sentences).\n" +
+    "- Do NOT repeatedly output a menu unless the user explicitly asks for options/menu.";
+
+  const services = Array.isArray(context?.services) ? context.services : [];
+  const titles = services
+    .map((s) => String(s?.title || "").trim())
+    .filter(Boolean)
+    .slice(0, 18);
+
+  const servicesLine = titles.length
+    ? `Active services: ${titles.join(", ")}`
+    : "Active services: (none listed)";
+
+  return `${base}\n\nCONTEXT:\n- Website: uremo.online\n- ${servicesLine}`;
+}
+
 // Proposal generation (admin write mode)
 async function groqGenerateProposal(actionType, context) {
   // STRICT JSON output for proposals
@@ -73,4 +98,5 @@ module.exports = {
   groq,
   groqChatCompletion,
   groqGenerateProposal,
+  buildJarvisxPublicSystemPrompt,
 };

@@ -10,7 +10,10 @@ const {
   classifyIntent,
   getIntentResponse,
 } = require("../utils/intentClassifier");
-const { groqChatCompletion } = require("../services/jarvisxProviders");
+const {
+  groqChatCompletion,
+  buildJarvisxPublicSystemPrompt,
+} = require("../services/jarvisxProviders");
 const {
   getQuickReplyRoute,
   applyRouteToSession,
@@ -180,6 +183,45 @@ function brainV1IsGreeting(text) {
     .trim()
     .toLowerCase();
   return /^(hi|hello|hey|yo|sup)(\b|$)/.test(t);
+}
+
+// PATCH_07 helpers (strict menu + identity)
+function isExplicitMenuRequest(text) {
+  const t = String(text || "").toLowerCase();
+  return (
+    t.includes("what can you do") ||
+    t.includes("options") ||
+    t.includes("menu") ||
+    t.includes("help menu") ||
+    t.includes("commands")
+  );
+}
+
+function isGreetingOnly(text) {
+  const t = String(text || "")
+    .trim()
+    .toLowerCase();
+  return ["hi", "hello", "hey", "start", "yo"].includes(t);
+}
+
+function isIdentityQuestion(text) {
+  const t = String(text || "").toLowerCase();
+  return (
+    t.includes("your name") ||
+    t.includes("who are you") ||
+    t.includes("what are you") ||
+    t.includes("jarvis")
+  );
+}
+
+function buildPublicMenuReply(session) {
+  const hasFlow = !!(session?.flow && hasActiveFlow(session));
+  return {
+    reply: "I can help with services, orders, or support. What do you need?",
+    quickReplies: hasFlow
+      ? ["Continue", "Buy service", "Order status", "Interview help"]
+      : ["Buy service", "Order status", "Interview help"],
+  };
 }
 
 function brainV1RephraseQuestion(questionKey) {
@@ -403,11 +445,59 @@ exports.chat = async (req, res) => {
     }
 
     // =============================
-    // PUBLIC MODE — STATE MACHINE
+    // PUBLIC MODE — STATE MACHINE + LLM
     // =============================
     const route = getQuickReplyRoute(message);
     if (route) {
       applyRouteToSession(session, route);
+    }
+
+    // Identity questions should NOT hijack flows.
+    // If user is mid-flow, answer identity and keep the flow intact.
+    if (!route && hasActiveFlow(session) && isIdentityQuestion(message)) {
+      const out =
+        "I’m JarvisX Support ✅ UREMO’s assistant. I help customers with buying services, order updates, and support.";
+      await sessionManager.addMessage(session, "user", message);
+      await sessionManager.addMessage(session, "jarvis", out);
+      return res.json({
+        ok: true,
+        reply: out,
+        intent: "IDENTITY",
+        quickReplies: ["Continue", "Menu"],
+      });
+    }
+
+    // Menu should be STRICT:
+    // - ONLY when session has no history AND greeting-only
+    // - OR user explicitly asks for menu/options
+    if (
+      !route &&
+      (isExplicitMenuRequest(message) ||
+        (!hasHistory && isGreetingOnly(message)))
+    ) {
+      const menu = buildPublicMenuReply(session);
+      await sessionManager.addMessage(session, "user", message);
+      await sessionManager.addMessage(session, "jarvis", menu.reply);
+      return res.json({
+        ok: true,
+        reply: menu.reply,
+        intent: "MENU",
+        quickReplies: menu.quickReplies,
+      });
+    }
+
+    // Identity questions (general) — respond directly (NO menu)
+    if (!route && isIdentityQuestion(message)) {
+      const out =
+        "I’m JarvisX Support ✅ UREMO’s assistant. I help customers with buying services, order updates, and support.";
+      await sessionManager.addMessage(session, "user", message);
+      await sessionManager.addMessage(session, "jarvis", out);
+      return res.json({
+        ok: true,
+        reply: out,
+        intent: "IDENTITY",
+        quickReplies: ["Buy service", "Order status", "Interview help", "Menu"],
+      });
     }
 
     // Greeting should never override an active flow.
@@ -511,7 +601,7 @@ exports.chat = async (req, res) => {
       }
     }
 
-    // Public greeting only if it's purely a greeting and there is no history.
+    // Keep legacy greeting behavior for non-exact greetings, but never show menu here.
     if (isPureGreeting(message) && !hasHistory) {
       const greeting = "Hi 👋 I’m JarvisX Support. Tell me what you need.";
       await sessionManager.addMessage(session, "user", message);
@@ -525,6 +615,81 @@ exports.chat = async (req, res) => {
     }
 
     const intent = classifyIntent(message);
+
+    // PATCH_07: GENERAL_CHAT must always call Groq (real assistant behavior)
+    if (intent === "GENERAL_CHAT") {
+      try {
+        const services = await Service.find({ active: true })
+          .sort({ createdAt: -1 })
+          .limit(18)
+          .lean();
+
+        const system = buildJarvisxPublicSystemPrompt({ services });
+
+        const history = (
+          Array.isArray(session.conversation) ? session.conversation : []
+        )
+          .slice(-6)
+          .map((m) => ({
+            role: m.role === "user" ? "user" : "assistant",
+            content: String(m.content || ""),
+          }))
+          .filter((m) => m.content.trim());
+
+        const completion = await groqChatCompletion(
+          [
+            { role: "system", content: system },
+            ...history,
+            { role: "user", content: message },
+          ],
+          {
+            temperature: 0.6,
+            max_tokens: 220,
+            model: String(process.env.JARVISX_MODEL || "").trim(),
+          }
+        );
+
+        const text = completion?.choices?.[0]?.message?.content;
+        const out = typeof text === "string" ? text.trim() : "";
+        if (!out) throw new Error("Empty LLM response");
+
+        session.lastIntent = intent;
+        await session.save();
+
+        await sessionManager.addMessage(session, "user", message);
+        await sessionManager.addMessage(session, "jarvis", out);
+
+        const responseTime = Date.now() - startTime;
+        console.log(
+          `[JarvisX] Intent: GENERAL_CHAT, Provider: groq, Time: ${responseTime}ms`
+        );
+
+        return res.json({
+          ok: true,
+          reply: out,
+          intent: "GENERAL_CHAT",
+          quickReplies: [
+            "Buy service",
+            "Order status",
+            "Interview help",
+            "Menu",
+          ],
+        });
+      } catch (err) {
+        console.error(`[JARVISX_PUBLIC_LLM_FAIL] errMessage=${err?.message}`);
+        // Safe fallback: short, non-looping guidance (avoid auto-menu reset).
+        const out =
+          "I can help — tell me what you’re trying to do (buy a service, check an order, or interview help).";
+        await sessionManager.addMessage(session, "user", message);
+        await sessionManager.addMessage(session, "jarvis", out);
+        return res.status(200).json({
+          ok: true,
+          reply: out,
+          intent: "GENERAL_CHAT",
+          quickReplies: ["Buy service", "Order status", "Interview help"],
+        });
+      }
+    }
     const intentInfo = getIntentResponse(intent, isAdmin);
     const currentQuestionKey = intentInfo.nextQuestion;
 

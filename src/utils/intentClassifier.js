@@ -1,65 +1,22 @@
 /**
  * DETERMINISTIC INTENT CLASSIFIER
- * No LLM calls, only regex patterns
- * Must execute in < 50ms
+ * No LLM calls, only explicit regex patterns.
+ * Important: NEVER match BUY_SERVICE just because text contains "service".
  */
 
-const INTENT_PATTERNS = {
-  INTERVIEW_HELP: [
-    /assessment/i,
-    /screening/i,
-    /interview/i,
-    /video test/i,
-    /practice interview/i,
-    /interview help/i,
-    /interview support/i,
-  ],
+// P0: Explicit purchase intent only (prevents hijacking normal sentences)
+const BUY_PAT =
+  /(\bbuy\b|\bpurchase\b|\border\s+now\b|\bplace\s+order\b|\bcheckout\b|\bget\s+service\b|\bneed\s+service\s+to\s+buy\b|\bwant\s+to\s+buy\b|\bhow\s+to\s+buy\b)/i;
+const STATUS_PAT =
+  /(\border\s+status\b|\btrack\b|\btracking\b|\bdelivery\b|\bwhere\s+is\s+my\s+order\b|\border\s+update\b|\bwhen\s+will\b)/i;
+const INTERVIEW_PAT =
+  /(\bassessment\b|\bscreening\b|\binterview\b|\bvideo\s+test\b|\binterview\s+help\b|\binterview\s+support\b)/i;
 
-  BUY_SERVICE: [
-    /buy/i,
-    /purchase/i,
-    /order/i,
-    /need service/i,
-    /want to buy/i,
-    /how to buy/i,
-    /get service/i,
-    /service price/i,
-    /what services/i,
-    /show services/i,
-  ],
-
-  ORDER_STATUS: [
-    /status/i,
-    /update/i,
-    /delivery/i,
-    /when will/i,
-    /where is/i,
-    /order update/i,
-    /track order/i,
-    /order status/i,
-  ],
-
-  PAYMENT_HELP: [
-    /paid/i,
-    /payment/i,
-    /transaction/i,
-    /verify/i,
-    /screenshot/i,
-    /payment proof/i,
-    /i have paid/i,
-    /sent payment/i,
-  ],
-
-  CUSTOM_SERVICE: [
-    /not listed/i,
-    /custom/i,
-    /special request/i,
-    /add service/i,
-    /handshake ai/i,
-    /need bybit/i,
-    /not available/i,
-  ],
-};
+// Keep additional deterministic intents, but keep patterns explicit
+const PAYMENT_PAT =
+  /(\bpayment\b|\bpaid\b|\btransaction\b|\bpayment\s+proof\b|\bscreenshot\b|\bi\s+have\s+paid\b|\bsent\s+payment\b|\bverify\s+payment\b)/i;
+const CUSTOM_SERVICE_PAT =
+  /(\bcustom\b|\bnot\s+listed\b|\bspecial\s+request\b|\badd\s+service\b|\bnot\s+available\b)/i;
 
 /**
  * Classify user message intent
@@ -67,27 +24,20 @@ const INTENT_PATTERNS = {
  * @returns {string} Intent string
  */
 function classifyIntent(text) {
-  if (!text || typeof text !== "string") return "GENERAL_QUERY";
+  if (!text || typeof text !== "string") return "GENERAL_CHAT";
+  const t = text.trim();
+  if (!t) return "GENERAL_CHAT";
 
-  const lowerText = text.toLowerCase();
-  let detectedIntent = "GENERAL_QUERY";
-  let highestScore = 0;
+  // Deterministic flows
+  if (BUY_PAT.test(t)) return "BUY_SERVICE";
+  if (STATUS_PAT.test(t)) return "ORDER_STATUS";
+  if (INTERVIEW_PAT.test(t)) return "INTERVIEW_HELP";
 
-  for (const [intent, patterns] of Object.entries(INTENT_PATTERNS)) {
-    for (const pattern of patterns) {
-      if (pattern.test(lowerText)) {
-        // Score by pattern match
-        const score = 1;
-        if (score > highestScore) {
-          highestScore = score;
-          detectedIntent = intent;
-        }
-        break; // Found match for this intent, move to next intent
-      }
-    }
-  }
+  // Other explicit intents
+  if (PAYMENT_PAT.test(t)) return "PAYMENT_HELP";
+  if (CUSTOM_SERVICE_PAT.test(t)) return "CUSTOM_SERVICE";
 
-  return detectedIntent;
+  return "GENERAL_CHAT";
 }
 
 /**
@@ -132,14 +82,14 @@ function getIntentResponse(intent, isAdmin = false) {
       nextQuestion: "payment_proof",
     },
 
-    GENERAL_QUERY: {
+    GENERAL_CHAT: {
       admin: "Yes boss ✅ I'm here. What should I handle?",
-      public: "I can help with services, orders, or support. What do you need?",
+      public: "",
       quickReplies: ["Buy service", "Order status", "Interview help"],
     },
   };
 
-  return templates[intent] || templates.GENERAL_QUERY;
+  return templates[intent] || templates.GENERAL_CHAT;
 }
 
 module.exports = {
