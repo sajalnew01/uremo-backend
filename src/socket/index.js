@@ -113,6 +113,33 @@ async function handleConnection(socket) {
 
   pushSocketLog("SOCKET_CONNECT_OK", { userId, role: userRole });
 
+  // Admin global room (for inbox / notifications)
+  socket.on("admin:join_orders", (data, ack) => {
+    if (!socket.user?.id) {
+      pushSocketLog("SOCKET_ADMIN_JOIN_FAIL", {
+        userId,
+        role: userRole,
+        error: "AUTH_FAILED",
+      });
+      safeAck(ack, { ok: false, error: "AUTH_FAILED" });
+      return;
+    }
+
+    if (!isAdmin) {
+      pushSocketLog("SOCKET_ADMIN_JOIN_FAIL", {
+        userId,
+        role: userRole,
+        error: "FORBIDDEN",
+      });
+      safeAck(ack, { ok: false, error: "FORBIDDEN" });
+      return;
+    }
+
+    socket.join("admin:orders");
+    pushSocketLog("SOCKET_ADMIN_JOIN_OK", { userId, role: userRole });
+    safeAck(ack, { ok: true });
+  });
+
   // Join order room
   socket.on("join:order", async (data, ack) => {
     const orderId = String(data?.orderId || "").trim();
@@ -312,6 +339,14 @@ async function handleConnection(socket) {
       // Broadcast to all in room (including sender)
       const room = `order:${orderId}`;
       io.to(room).emit("message:new", payload);
+
+      // Notify admins globally (only when a user sends a message)
+      if (senderRole === "user") {
+        io.to("admin:orders").emit("admin:order_message", {
+          orderId,
+          message: payload,
+        });
+      }
     } catch (err) {
       pushSocketLog("SOCKET_SEND_FAIL", {
         userId,

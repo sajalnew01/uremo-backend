@@ -1,5 +1,6 @@
 const Order = require("../models/Order");
 const OrderMessage = require("../models/OrderMessage");
+const mongoose = require("mongoose");
 
 const { sendEmail } = require("../services/email.service");
 const {
@@ -323,6 +324,29 @@ exports.getAdminInbox = async (req, res) => {
     }
 
     const orderIds = Array.from(byOrder.keys());
+
+    // Compute unread counts for each order (user -> admin messages not yet seen)
+    const orderObjectIds = orderIds
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      .map((id) => new mongoose.Types.ObjectId(id));
+
+    const unreadAgg = await OrderMessage.aggregate([
+      {
+        $match: {
+          orderId: { $in: orderObjectIds },
+          senderRole: "user",
+          status: { $ne: "seen" },
+        },
+      },
+      { $group: { _id: "$orderId", count: { $sum: 1 } } },
+    ]);
+    const unreadMap = new Map(
+      (Array.isArray(unreadAgg) ? unreadAgg : []).map((x) => [
+        String(x._id),
+        Number(x.count || 0),
+      ])
+    );
+
     const orders = await Order.find({ _id: { $in: orderIds } })
       .populate("userId", "email")
       .populate("serviceId", "title")
@@ -343,6 +367,7 @@ exports.getAdminInbox = async (req, res) => {
           status: order.status,
           userEmail: order.userId?.email || "",
           serviceTitle: order.serviceId?.title || "",
+          unreadCount: unreadMap.get(orderId) || 0,
         };
       })
       .filter(Boolean)
@@ -354,6 +379,57 @@ exports.getAdminInbox = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: err.message || "Server error" });
+  }
+};
+
+exports.getAdminUnreadSnapshot = async (req, res) => {
+  try {
+    const agg = await OrderMessage.aggregate([
+      {
+        $match: {
+          senderRole: "user",
+          status: { $ne: "seen" },
+        },
+      },
+      { $group: { _id: "$orderId", count: { $sum: 1 } } },
+    ]);
+
+    const byOrder = {};
+    let totalUnread = 0;
+    for (const row of Array.isArray(agg) ? agg : []) {
+      const key = String(row._id);
+      const count = Number(row.count || 0);
+      byOrder[key] = count;
+      totalUnread += count;
+    }
+
+    res.json({ totalUnread, byOrder });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err?.message || "Server error" });
+  }
+};
+
+exports.markOrderSupportRead = async (req, res) => {
+  try {
+    const id = String(req.params?.id || "").trim();
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    const result = await OrderMessage.updateMany(
+      {
+        orderId: new mongoose.Types.ObjectId(id),
+        senderRole: "user",
+        status: { $ne: "seen" },
+      },
+      { $set: { status: "seen", seenAt: new Date() } }
+    );
+
+    res.json({ ok: true, updated: result?.modifiedCount || 0 });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err?.message || "Server error" });
   }
 };
 

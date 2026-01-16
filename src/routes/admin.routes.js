@@ -9,6 +9,8 @@ const {
   addOrderNote,
   adminReplyToOrder,
   getAdminInbox,
+  getAdminUnreadSnapshot,
+  markOrderSupportRead,
   archiveRejectedOrder,
   unarchiveRejectedOrder,
   testEmail,
@@ -38,6 +40,7 @@ const router = express.Router();
 router.get("/orders", auth, admin, getAllOrders);
 router.get("/orders/rejected", auth, admin, getRejectedArchivedOrders);
 router.get("/messages", auth, admin, getAdminInbox);
+router.get("/messages/unread", auth, admin, getAdminUnreadSnapshot);
 router.put("/orders/:id", auth, admin, updateOrderStatus);
 router.put("/orders/:id/verify-payment", auth, admin, verifyPayment);
 router.put("/orders/:id/archive-rejected", auth, admin, archiveRejectedOrder);
@@ -49,6 +52,7 @@ router.put(
 );
 router.post("/orders/:id/note", auth, admin, addOrderNote);
 router.post("/orders/:id/reply", auth, admin, adminReplyToOrder);
+router.post("/orders/:id/support/mark-read", auth, admin, markOrderSupportRead);
 
 // Debug/test email route (admin-only)
 router.post("/test-email", auth, admin, testEmail);

@@ -200,6 +200,7 @@ exports.postOrderMessage = async (req, res) => {
       userId: rawSenderId,
       senderRole,
       message,
+      status: "sent",
       createdAt: new Date(),
     });
 
@@ -210,13 +211,35 @@ exports.postOrderMessage = async (req, res) => {
     const payload = {
       _id: created._id,
       id: created._id,
+      orderId: order._id,
+      senderId: created.senderId,
       senderRole: created.senderRole,
       message: created.message,
+      status: created.status || "sent",
       createdAt: created.createdAt,
+      deliveredAt: created.deliveredAt || null,
+      seenAt: created.seenAt || null,
     };
 
     // Broadcast to all SSE subscribers for this order
     broadcastMessage(order._id, payload);
+
+    // Best-effort Socket.IO broadcast (so REST fallback still updates realtime chat)
+    try {
+      const { getIO } = require("../socket");
+      const io = getIO();
+      if (io) {
+        io.to(`order:${String(order._id)}`).emit("message:new", payload);
+        if (senderRole === "user") {
+          io.to("admin:orders").emit("admin:order_message", {
+            orderId: String(order._id),
+            message: payload,
+          });
+        }
+      }
+    } catch {
+      // ignore broadcast errors
+    }
 
     return res.status(201).json(payload);
   } catch (err) {
