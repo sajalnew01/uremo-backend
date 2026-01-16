@@ -90,6 +90,13 @@ const ALLOWED_ACTION_TYPES = new Set([
   "workPosition.delete",
   "settings.update",
   "serviceRequest.create",
+  // Orders (admin-only)
+  "order.updateStatus",
+  "order.verifyPayment",
+  "order.archiveRejected",
+  "order.unarchiveRejected",
+  "order.addNote",
+  "order.delete",
 ]);
 
 const TOOL_TO_ACTION_TYPE = {
@@ -106,6 +113,14 @@ const TOOL_TO_ACTION_TYPE = {
   "workPositions.delete": "workPosition.delete",
   "settings.update": "settings.update",
   "serviceRequests.create": "serviceRequest.create",
+
+  // Orders (admin-only)
+  "orders.updateStatus": "order.updateStatus",
+  "orders.verifyPayment": "order.verifyPayment",
+  "orders.archiveRejected": "order.archiveRejected",
+  "orders.unarchiveRejected": "order.unarchiveRejected",
+  "orders.addNote": "order.addNote",
+  "orders.delete": "order.delete",
 };
 
 function extractTagsFromActions(actions) {
@@ -253,7 +268,16 @@ exports.propose = async (req, res) => {
         "- paymentMethods.create | paymentMethods.update | paymentMethods.delete\n" +
         "- workPositions.create | workPositions.update | workPositions.delete\n" +
         "- settings.update\n" +
-        "- serviceRequests.create\n\n" +
+        "- serviceRequests.create\n" +
+        "- orders.updateStatus | orders.verifyPayment | orders.archiveRejected | orders.unarchiveRejected | orders.addNote | orders.delete\n\n" +
+        "Orders tool arg rules:\n" +
+        "- orders.updateStatus args: { id: string, status: one of [payment_pending,payment_submitted,processing,completed,rejected] }\n" +
+        "- orders.verifyPayment args: { id: string } (only valid if order.status is payment_submitted)\n" +
+        "- orders.archiveRejected args: { id: string } (only valid if order.status is rejected)\n" +
+        "- orders.unarchiveRejected args: { id: string } (only valid if order.isRejectedArchive is true)\n" +
+        "- orders.addNote args: { id: string, message: string }\n" +
+        "- orders.delete args: { id: string, confirmDelete: true, deleteMessages?: boolean }\n" +
+        "SAFETY: orders.delete MUST only be proposed when the admin explicitly asked to permanently delete the order.\n\n" +
         "CRITICAL: For services.create, you MUST include ALL these fields:\n" +
         "- title: string (required, min 3 chars)\n" +
         "- description: string (required, min 10 chars, describe what the service does)\n" +

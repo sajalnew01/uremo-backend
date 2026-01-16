@@ -3,6 +3,8 @@ const mongoose = require("mongoose");
 const Service = require("../models/Service");
 const PaymentMethod = require("../models/PaymentMethod");
 const WorkPosition = require("../models/WorkPosition");
+const Order = require("../models/Order");
+const OrderMessage = require("../models/OrderMessage");
 const SiteSettingsController = require("../controllers/siteSettings.controller");
 const ServiceRequest = require("../models/ServiceRequest");
 const cloudinary = require("../config/cloudinary");
@@ -152,6 +154,56 @@ function validateActionPayload(action) {
       if (!payload.category) result.missingFields.push("category");
       break;
     }
+
+    // =================
+    // ORDERS (admin-only)
+    // =================
+    case "order.updateStatus": {
+      if (!payload.id) result.missingFields.push("id (order ID)");
+      if (!payload.status) result.missingFields.push("status");
+      const status = String(payload.status || "").trim();
+      const allowed = [
+        "payment_pending",
+        "payment_submitted",
+        "processing",
+        "completed",
+        "rejected",
+      ];
+      if (status && !allowed.includes(status)) {
+        result.errors.push(`Invalid status: ${status}`);
+      }
+      break;
+    }
+
+    case "order.verifyPayment": {
+      if (!payload.id) result.missingFields.push("id (order ID)");
+      break;
+    }
+
+    case "order.archiveRejected": {
+      if (!payload.id) result.missingFields.push("id (order ID)");
+      break;
+    }
+
+    case "order.unarchiveRejected": {
+      if (!payload.id) result.missingFields.push("id (order ID)");
+      break;
+    }
+
+    case "order.addNote": {
+      if (!payload.id) result.missingFields.push("id (order ID)");
+      if (!clampString(payload.message, 2000))
+        result.missingFields.push("message");
+      break;
+    }
+
+    case "order.delete": {
+      if (!payload.id) result.missingFields.push("id (order ID)");
+      if (payload.confirmDelete !== true) {
+        result.missingFields.push("confirmDelete (must be true)");
+      }
+      break;
+    }
   }
 
   if (result.missingFields.length > 0) {
@@ -277,6 +329,233 @@ async function executeAction(action, opts) {
           note: "Rollback: delete created service",
         },
       };
+    }
+
+    // =================
+    // ORDERS (admin-only)
+    // =================
+    case "order.updateStatus": {
+      const id = assertObjectId(payload.id, "order id");
+      const status = clampString(payload.status, 40);
+      const allowed = [
+        "payment_pending",
+        "payment_submitted",
+        "processing",
+        "completed",
+        "rejected",
+      ];
+      if (!allowed.includes(status)) {
+        const err = new Error("Invalid status");
+        err.status = 400;
+        throw err;
+      }
+
+      const order = await Order.findById(id);
+      if (!order) {
+        const err = new Error("Order not found");
+        err.status = 404;
+        throw err;
+      }
+
+      const prevStatus = String(order.status || "");
+      order.status = status;
+
+      order.statusLog = order.statusLog || [];
+      if (
+        prevStatus === "payment_submitted" &&
+        ["processing", "completed"].includes(status)
+      ) {
+        order.statusLog.push({
+          text: "Payment verified by admin",
+          at: new Date(),
+        });
+      }
+
+      if (status === "rejected") {
+        order.statusLog.push({
+          text: "Payment rejected — user must resubmit proof",
+          at: new Date(),
+        });
+      } else {
+        order.statusLog.push({
+          text: `Status changed to: ${status}`,
+          at: new Date(),
+        });
+      }
+
+      order.timeline = order.timeline || [];
+      order.timeline.push({
+        message: `Status updated to ${status}`,
+        by: "admin",
+      });
+
+      await order.save();
+      return { id: String(order._id), status: order.status };
+    }
+
+    case "order.verifyPayment": {
+      const id = assertObjectId(payload.id, "order id");
+      const order = await Order.findById(id);
+      if (!order) {
+        const err = new Error("Order not found");
+        err.status = 404;
+        throw err;
+      }
+
+      if (order.status !== "payment_submitted") {
+        const err = new Error(
+          "Payment can only be verified when status is payment_submitted"
+        );
+        err.status = 400;
+        throw err;
+      }
+
+      const now = new Date();
+      order.status = "processing";
+      order.payment = order.payment || {};
+      order.payment.verifiedAt = now;
+
+      order.statusLog = order.statusLog || [];
+      order.statusLog.push({ text: "Payment verified by admin", at: now });
+
+      order.timeline = order.timeline || [];
+      order.timeline.push({
+        message: "Payment verified by admin",
+        by: "admin",
+        createdAt: now,
+      });
+
+      await order.save();
+      return {
+        id: String(order._id),
+        status: order.status,
+        verifiedAt: now.toISOString(),
+      };
+    }
+
+    case "order.archiveRejected": {
+      const id = assertObjectId(payload.id, "order id");
+      const order = await Order.findById(id);
+      if (!order) {
+        const err = new Error("Order not found");
+        err.status = 404;
+        throw err;
+      }
+
+      if (order.status !== "rejected") {
+        const err = new Error("Only rejected orders can be archived");
+        err.status = 400;
+        throw err;
+      }
+
+      if (!order.isRejectedArchive) {
+        order.isRejectedArchive = true;
+        order.rejectedAt = new Date();
+
+        order.statusLog = order.statusLog || [];
+        order.statusLog.push({
+          text: "Order archived to rejected list",
+          at: new Date(),
+        });
+
+        order.timeline = order.timeline || [];
+        order.timeline.push({
+          message: "Order moved to rejected list",
+          by: "admin",
+        });
+
+        await order.save();
+      }
+
+      return {
+        id: String(order._id),
+        isRejectedArchive: !!order.isRejectedArchive,
+      };
+    }
+
+    case "order.unarchiveRejected": {
+      const id = assertObjectId(payload.id, "order id");
+      const order = await Order.findById(id);
+      if (!order) {
+        const err = new Error("Order not found");
+        err.status = 404;
+        throw err;
+      }
+
+      if (!order.isRejectedArchive) {
+        const err = new Error("Order is not archived");
+        err.status = 400;
+        throw err;
+      }
+
+      order.isRejectedArchive = false;
+      order.rejectedAt = null;
+
+      order.statusLog = order.statusLog || [];
+      order.statusLog.push({
+        text: "Order unarchived from rejected list",
+        at: new Date(),
+      });
+
+      order.timeline = order.timeline || [];
+      order.timeline.push({
+        message: "Order removed from rejected list",
+        by: "admin",
+      });
+
+      await order.save();
+      return {
+        id: String(order._id),
+        isRejectedArchive: !!order.isRejectedArchive,
+      };
+    }
+
+    case "order.addNote": {
+      const id = assertObjectId(payload.id, "order id");
+      const message = clampString(payload.message, 2000);
+      if (!message) {
+        const err = new Error("Note message is required");
+        err.status = 400;
+        throw err;
+      }
+
+      const order = await Order.findById(id);
+      if (!order) {
+        const err = new Error("Order not found");
+        err.status = 404;
+        throw err;
+      }
+
+      order.timeline = order.timeline || [];
+      order.timeline.push({ message, by: "admin" });
+      await order.save();
+      return { id: String(order._id) };
+    }
+
+    case "order.delete": {
+      const id = assertObjectId(payload.id, "order id");
+      const confirmDelete = payload.confirmDelete === true;
+      const deleteMessages = payload.deleteMessages === true;
+
+      if (!confirmDelete) {
+        const err = new Error("order.delete requires confirmDelete: true");
+        err.status = 400;
+        throw err;
+      }
+
+      const order = await Order.findById(id).lean();
+      if (!order) {
+        const err = new Error("Order not found");
+        err.status = 404;
+        throw err;
+      }
+
+      await Order.deleteOne({ _id: id });
+      if (deleteMessages) {
+        await OrderMessage.deleteMany({ orderId: id });
+      }
+
+      return { id, deleted: true, deletedMessages: deleteMessages };
     }
 
     case "service.update": {
