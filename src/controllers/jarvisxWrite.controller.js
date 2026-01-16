@@ -268,6 +268,14 @@ exports.propose = async (req, res) => {
         '{"title": "Handshake AI USA Gig", "description": "Professional setup for Handshake AI platform gig verification in the USA market.", "price": 40, "category": "Onboarding", "deliveryType": "manual", "imageUrl": "' +
         DEFAULT_SERVICE_HERO_IMAGE +
         '", "isActive": true}\n\n' +
+        "CRITICAL: For paymentMethods.create, you MUST include ALL these fields:\n" +
+        "- name: string (required, e.g. 'Airtm')\n" +
+        "- type: 'paypal' | 'crypto' | 'binance' | 'bank' (required)\n" +
+        "- details: string (required, MUST be a string; if you have structured data, stringify it)\n" +
+        "- instructions: string (optional)\n" +
+        "- isActive: boolean (default: true)\n\n" +
+        "Example paymentMethods.create args:\n" +
+        '{"name": "Airtm", "type": "bank", "details": "user@email.com", "instructions": "Send proof after transfer.", "isActive": true}\n\n' +
         "Constraints: max 10 actions. If you do not have enough info (like IDs), return actions=[] and previewText asking for clarification.\n\n" +
         `ADMIN CONTEXT JSON: ${JSON.stringify(context)}${memoryBlock}`;
 
@@ -478,19 +486,23 @@ exports.approveAndExecute = async (req, res) => {
   // P0 FIX: Validate all actions BEFORE execution
   const validation = validateProposal(actions);
   if (!validation.valid) {
-    const errorDetails = validation.actionErrors
-      .map(
-        (e) =>
-          `Action ${e.index + 1} (${e.type}): Missing ${e.missingFields.join(
-            ", "
-          )}`
+    const missingFields = Array.from(
+      new Set(
+        validation.actionErrors
+          .flatMap((e) =>
+            Array.isArray(e.missingFields) ? e.missingFields : []
+          )
+          .map((f) => String(f || "").trim())
+          .filter(Boolean)
       )
-      .join("; ");
+    );
 
-    return res.status(400).json({
-      message: "Proposal validation failed - missing required fields",
+    // Return a structured, non-throwing response so the frontend can show EDIT_REQUIRED.
+    return res.status(200).json({
+      ok: false,
+      action: "EDIT_REQUIRED",
+      missingFields,
       validationErrors: validation.actionErrors,
-      details: errorDetails,
     });
   }
 

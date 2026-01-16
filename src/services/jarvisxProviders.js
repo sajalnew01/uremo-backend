@@ -24,8 +24,13 @@ function requireGroqClient() {
 // Chat completion (public and admin)
 async function groqChatCompletion(messages, options = {}) {
   const client = requireGroqClient();
+  const model = String(
+    options.model || process.env.JARVISX_MODEL || "llama-3.3-70b-versatile"
+  )
+    .trim()
+    .toLowerCase();
   return await client.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
+    model: model || "llama-3.3-70b-versatile",
     messages,
     temperature:
       typeof options.temperature === "number" ? options.temperature : 0.7,
@@ -53,7 +58,9 @@ Output ONLY valid JSON with this structure:
 
   const client = requireGroqClient();
   const completion = await client.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
+    model: String(process.env.JARVISX_MODEL || "llama-3.3-70b-versatile")
+      .trim()
+      .toLowerCase(),
     messages: [{ role: "user", content: prompt }],
     temperature: 0.2,
     response_format: { type: "json_object" },

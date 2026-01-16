@@ -3,6 +3,7 @@ const PaymentMethod = require("../models/PaymentMethod");
 const WorkPosition = require("../models/WorkPosition");
 const SiteSettings = require("../models/SiteSettings");
 const ServiceRequest = require("../models/ServiceRequest");
+const Order = require("../models/Order");
 
 const sessionManager = require("../utils/sessionManager");
 const {
@@ -10,6 +11,14 @@ const {
   getIntentResponse,
 } = require("../utils/intentClassifier");
 const { groqChatCompletion } = require("../services/jarvisxProviders");
+const {
+  getQuickReplyRoute,
+  applyRouteToSession,
+  getStepResponse,
+  hasActiveFlow,
+  isPureGreeting,
+  advanceFlow,
+} = require("../utils/jarvisStateMachine");
 
 function clampString(value, maxLen) {
   if (typeof value !== "string") return "";
@@ -36,6 +45,86 @@ function getGroqStatus() {
     model,
   };
 }
+
+function setJarvisxSidCookieIfNeeded(req, res) {
+  if (!req?._jarvisxNewSid) return;
+
+  // IMPORTANT: cross-site cookies require SameSite=None;Secure.
+  // If frontend proxies requests through the same site, Lax is fine.
+  let sameSite = "lax";
+  let secure = process.env.NODE_ENV === "production";
+
+  try {
+    const origin = String(req.headers?.origin || "").trim();
+    const host = String(req.headers?.host || "").trim();
+    if (origin) {
+      const originHost = new URL(origin).host;
+      if (originHost && host && originHost !== host) {
+        sameSite = "none";
+        secure = true;
+      }
+    }
+  } catch {
+    // ignore; keep defaults
+  }
+
+  res.cookie("jarvisx_sid", req._jarvisxNewSid, {
+    httpOnly: true,
+    sameSite,
+    secure,
+    maxAge: 30 * 60 * 1000,
+    path: "/",
+  });
+}
+
+exports.llmStatus = async (req, res) => {
+  const model = String(process.env.JARVISX_MODEL || "llama-3.3-70b-versatile")
+    .trim()
+    .toLowerCase();
+
+  res.set("Cache-Control", "no-store");
+
+  const apiKey = String(process.env.GROQ_API_KEY || "").trim();
+  if (!apiKey) {
+    return res.json({
+      configured: false,
+      provider: "groq",
+      model: model || "llama-3.3-70b-versatile",
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  try {
+    const completion = await groqChatCompletion(
+      [
+        {
+          role: "user",
+          content: "Reply with the single word 'ok'. Do not add punctuation.",
+        },
+      ],
+      { temperature: 0, max_tokens: 5, model }
+    );
+
+    const text = String(completion?.choices?.[0]?.message?.content || "")
+      .trim()
+      .toLowerCase();
+
+    return res.json({
+      configured: text === "ok" || text.length > 0,
+      provider: "groq",
+      model: model || "llama-3.3-70b-versatile",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(`[JARVISX_LLM_DOWN] errMessage=${err?.message}`);
+    return res.json({
+      configured: false,
+      provider: "groq",
+      model: model || "llama-3.3-70b-versatile",
+      timestamp: new Date().toISOString(),
+    });
+  }
+};
 
 async function getPublicContextObject() {
   const [settings, services, paymentMethods, workPositions] = await Promise.all(
@@ -197,18 +286,243 @@ exports.chat = async (req, res) => {
     }
   }
 
-  if (wantsAdmin && brainV1IsGreeting(message)) {
-    return res.json({
-      ok: true,
-      reply: "Yes boss ✅ What can I do for you today?",
-      intent: "GREETING",
-      quickReplies: [],
-    });
-  }
-
   try {
     const session = await sessionManager.getOrCreateSession(req);
     session.collectedData = session.collectedData || {};
+
+    // Ensure stable session cookie is set (anonymous users).
+    setJarvisxSidCookieIfNeeded(req, res);
+
+    const hasHistory =
+      Array.isArray(session.conversation) && session.conversation.length > 0;
+
+    // =============================
+    // ADMIN MODE — ALWAYS CALL GROQ
+    // =============================
+    if (wantsAdmin) {
+      // Greeting fallback ONLY if it's a greeting AND there is no session history.
+      if (brainV1IsGreeting(message) && !hasHistory) {
+        await sessionManager.addMessage(session, "user", message);
+        await sessionManager.addMessage(
+          session,
+          "jarvis",
+          "Yes boss ✅ I'm here. What should I handle?"
+        );
+        return res.json({
+          ok: true,
+          reply: "Yes boss ✅ I'm here. What should I handle?",
+          intent: "GREETING",
+          quickReplies: [],
+        });
+      }
+
+      const context = await getAdminContextObject();
+
+      const system =
+        "You are JarvisX Admin — a real AI assistant for the UREMO admin.\n" +
+        "Rules:\n" +
+        "- Be concise, action-oriented, and accurate.\n" +
+        "- Never loop on greetings.\n" +
+        "- If user asks 'who am i', reply with their email/role if available.\n" +
+        "- If you cannot do something, ask ONE clarifying question.\n\n" +
+        `ADMIN CONTEXT JSON: ${JSON.stringify(context)}\n` +
+        `SESSION DATA JSON: ${JSON.stringify(session.collectedData || {})}`;
+
+      const history = (
+        Array.isArray(session.conversation) ? session.conversation : []
+      )
+        .slice(-10)
+        .map((m) => ({
+          role: m.role === "user" ? "user" : "assistant",
+          content: String(m.content || ""),
+        }))
+        .filter((m) => m.content.trim());
+
+      // Special-case: who am i?
+      if (/^who\s+am\s+i\??$/i.test(message.trim())) {
+        const email = String(req.user?.email || "").trim();
+        const role = String(req.user?.role || "").trim();
+        const out =
+          email || role
+            ? `You are ${email || ""} (${role || ""})`.trim()
+            : "You're logged in as an admin user.";
+        await sessionManager.addMessage(session, "user", message);
+        await sessionManager.addMessage(session, "jarvis", out);
+        return res.json({
+          ok: true,
+          reply: out,
+          intent: "WHO_AM_I",
+          quickReplies: [],
+        });
+      }
+
+      try {
+        const completion = await groqChatCompletion(
+          [
+            { role: "system", content: system },
+            ...history,
+            { role: "user", content: message },
+          ],
+          {
+            temperature: 0.2,
+            max_tokens: 350,
+            model: String(process.env.JARVISX_MODEL || "").trim(),
+          }
+        );
+
+        const text = completion?.choices?.[0]?.message?.content;
+        const out = typeof text === "string" ? text.trim() : "";
+        if (!out) {
+          throw new Error("Empty LLM response");
+        }
+
+        await sessionManager.addMessage(session, "user", message);
+        await sessionManager.addMessage(session, "jarvis", out);
+
+        const responseTime = Date.now() - startTime;
+        console.log(
+          `[JarvisX] Intent: ADMIN_LLM, Provider: groq, Time: ${responseTime}ms`
+        );
+
+        return res.json({
+          ok: true,
+          reply: out,
+          intent: "ADMIN_LLM",
+          quickReplies: [],
+        });
+      } catch (err) {
+        console.error(`[JARVISX_LLM_DOWN] errMessage=${err?.message}`);
+        return res.status(200).json({
+          ok: false,
+          reply:
+            "JarvisX is temporarily unavailable. Please try again shortly.",
+          intent: "ERROR",
+          quickReplies: ["Retry", "Contact support"],
+        });
+      }
+    }
+
+    // =============================
+    // PUBLIC MODE — STATE MACHINE
+    // =============================
+    const route = getQuickReplyRoute(message);
+    if (route) {
+      applyRouteToSession(session, route);
+    }
+
+    // Greeting should never override an active flow.
+    if ((session.flow || session.step) && hasActiveFlow(session)) {
+      // If user typed a quick reply (route), respond for the newly-set step.
+      if (route) {
+        const template = getStepResponse(session.flow, session.step, session);
+        if (template) {
+          let replyText = template.reply;
+          if (template.showServices) {
+            const list = await Service.find({ active: true })
+              .sort({ createdAt: -1 })
+              .limit(8)
+              .lean();
+            const lines = (Array.isArray(list) ? list : [])
+              .map((s) => `- ${String(s?.title || "").trim()}`)
+              .filter(Boolean)
+              .join("\n");
+            if (lines) replyText = `${replyText}\n\n${lines}`;
+          }
+
+          await session.save();
+          await sessionManager.addMessage(session, "user", message);
+          await sessionManager.addMessage(session, "jarvis", replyText);
+          return res.json({
+            ok: true,
+            reply: replyText,
+            intent: "FLOW",
+            quickReplies: template.quickReplies || [],
+            suggestedActions: template.suggestedActions || [],
+          });
+        }
+      }
+
+      // Otherwise treat this message as an answer to the current step.
+      const stepBefore = String(session.step || "");
+      const answer = message;
+      if (!session.collectedData) session.collectedData = {};
+
+      if (stepBefore === "ASK_SERVICE_TYPE") {
+        session.collectedData.serviceType = answer;
+      } else if (stepBefore === "LIST_SERVICES") {
+        session.collectedData.serviceName = answer;
+      } else if (stepBefore === "ASK_PLATFORM") {
+        session.collectedData.platform = answer;
+      } else if (stepBefore === "ASK_REGION") {
+        session.collectedData.region = answer;
+      } else if (stepBefore === "ASK_URGENCY") {
+        session.collectedData.urgency = answer;
+      } else if (stepBefore === "ASK_INTERVIEW_PLATFORM") {
+        session.collectedData.platform = answer;
+      }
+
+      const progressed = advanceFlow(session, answer);
+      if (progressed?.complete) {
+        session.step = "COMPLETE";
+      } else if (progressed?.nextStep) {
+        session.step = progressed.nextStep;
+      }
+
+      await session.save();
+
+      if (session.step === "COMPLETE") {
+        const doneReply =
+          "✅ Perfect — I’ve got what I need. Tell me any extra details, and I’ll guide you to the next step.";
+        await sessionManager.addMessage(session, "user", message);
+        await sessionManager.addMessage(session, "jarvis", doneReply);
+        return res.json({
+          ok: true,
+          reply: doneReply,
+          intent: "FLOW_COMPLETE",
+          quickReplies: ["Talk to admin", "Contact support"],
+        });
+      }
+
+      const nextTemplate = getStepResponse(session.flow, session.step, session);
+      if (nextTemplate) {
+        // Optional: show services list when requested.
+        let replyText = nextTemplate.reply;
+        if (nextTemplate.showServices) {
+          const list = await Service.find({ active: true })
+            .sort({ createdAt: -1 })
+            .limit(8)
+            .lean();
+          const lines = (Array.isArray(list) ? list : [])
+            .map((s) => `- ${String(s?.title || "").trim()}`)
+            .filter(Boolean)
+            .join("\n");
+          if (lines) replyText = `${replyText}\n\n${lines}`;
+        }
+
+        await sessionManager.addMessage(session, "user", message);
+        await sessionManager.addMessage(session, "jarvis", replyText);
+        return res.json({
+          ok: true,
+          reply: replyText,
+          intent: "FLOW",
+          quickReplies: nextTemplate.quickReplies || [],
+          suggestedActions: nextTemplate.suggestedActions || [],
+        });
+      }
+    }
+
+    // Public greeting only if it's purely a greeting and there is no history.
+    if (isPureGreeting(message) && !hasHistory) {
+      const greeting = "Hi 👋 I’m JarvisX Support. Tell me what you need.";
+      await sessionManager.addMessage(session, "user", message);
+      await sessionManager.addMessage(session, "jarvis", greeting);
+      return res.json({
+        ok: true,
+        reply: greeting,
+        intent: "GREETING",
+        quickReplies: [],
+      });
+    }
 
     const intent = classifyIntent(message);
     const intentInfo = getIntentResponse(intent, isAdmin);
@@ -265,15 +579,7 @@ exports.chat = async (req, res) => {
       await session.save();
     }
 
-    let reply;
-    if (isAdmin) {
-      reply =
-        intent === "GENERAL_QUERY"
-          ? intentInfo.admin
-          : await brainV1GenerateAdminResponse(message, intent, session);
-    } else {
-      reply = intentInfo.public;
-    }
+    const reply = intentInfo.public;
 
     await sessionManager.addMessage(session, "user", message);
     await sessionManager.addMessage(session, "jarvis", reply);
@@ -349,30 +655,68 @@ exports.healthReport = async (req, res) => {
       activeServices,
       totalWorkPositions,
       activeWorkPositions,
+      totalPaymentMethods,
+      activePaymentMethods,
+      totalServiceRequests,
+      newServiceRequests,
+      draftServiceRequests,
+      paymentProofPendingCount,
     ] = await Promise.all([
       Service.countDocuments({}),
       Service.countDocuments({ active: true }),
       WorkPosition.countDocuments({}),
       WorkPosition.countDocuments({ active: true }),
+      PaymentMethod.countDocuments({}),
+      PaymentMethod.countDocuments({ active: true }),
+      ServiceRequest.countDocuments({}),
+      ServiceRequest.countDocuments({ status: "new" }),
+      ServiceRequest.countDocuments({ status: "draft" }),
+      Order.countDocuments({
+        status: { $in: ["payment_submitted", "review", "pending_review"] },
+      }),
     ]);
 
     res.set("Cache-Control", "no-store");
-    return res.json({
+    return res.status(200).json({
+      ok: true,
       generatedAt: new Date().toISOString(),
+      serverTime: new Date().toISOString(),
       llm,
-      counts: {
-        services: { total: totalServices, active: activeServices },
-        workPositions: {
-          total: totalWorkPositions,
-          active: activeWorkPositions,
-        },
+      services: {
+        total: totalServices,
+        active: activeServices,
+        missingHeroCount: 0,
       },
+      workPositions: { total: totalWorkPositions, active: activeWorkPositions },
+      paymentMethods: {
+        total: totalPaymentMethods,
+        active: activePaymentMethods,
+      },
+      serviceRequests: {
+        total: totalServiceRequests,
+        new: newServiceRequests,
+        draft: draftServiceRequests,
+      },
+      orders: { paymentProofPendingCount },
+      settings: { missingKeys: [] },
+      jarvisx: { chatTotal24h: 0, chatOk24h: 0, chatErrorRate24h: 0 },
     });
   } catch (err) {
     console.error(`[JARVISX_HEALTH_FAIL] errMessage=${err?.message}`);
-    return res
-      .status(500)
-      .json({ message: "Unable to generate health report" });
+    // Always return safe JSON to avoid admin UI crashes.
+    return res.status(200).json({
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      serverTime: new Date().toISOString(),
+      llm: getGroqStatus(),
+      services: { total: 0, active: 0, missingHeroCount: 0 },
+      workPositions: { total: 0, active: 0 },
+      paymentMethods: { total: 0, active: 0 },
+      serviceRequests: { total: 0, new: 0, draft: 0 },
+      orders: { paymentProofPendingCount: 0 },
+      settings: { missingKeys: [] },
+      jarvisx: { chatTotal24h: 0, chatOk24h: 0, chatErrorRate24h: 0 },
+    });
   }
 };
 

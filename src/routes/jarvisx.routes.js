@@ -24,7 +24,12 @@ const chatLimiterMaybeAdmin = (req, res, next) => {
 
 router.get("/context/public", JarvisX.getPublicContext);
 router.get("/context/admin", auth, admin, JarvisX.getAdminContext);
-router.get("/health-report", auth, admin, JarvisX.healthReport);
+// Public-safe: lets admin UI load even if auth headers are stripped by proxies.
+// Does NOT return sensitive user data.
+router.get("/health-report", authOptional, JarvisX.healthReport);
+
+// Public-safe: checks if Groq is configured and reachable.
+router.get("/llm-status", JarvisX.llmStatus);
 
 // Agent-OS compatibility endpoint
 router.post("/execute", auth, admin, JarvisWrite.execute);

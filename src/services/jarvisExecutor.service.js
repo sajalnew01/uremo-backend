@@ -22,6 +22,22 @@ function clampString(value, maxLen) {
   return v.length <= maxLen ? v : v.slice(0, maxLen);
 }
 
+function stringifyDetails(value, maxLen = 800) {
+  if (typeof value === "string") return clampString(value, maxLen);
+  if (value == null) return "";
+  if (typeof value === "number" || typeof value === "boolean") {
+    return clampString(String(value), maxLen);
+  }
+  if (isPlainObject(value) || Array.isArray(value)) {
+    try {
+      return clampString(JSON.stringify(value), maxLen);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 function toNumber(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
@@ -125,7 +141,9 @@ function validateActionPayload(action) {
 
     case "paymentMethod.create": {
       if (!payload.name) result.missingFields.push("name");
-      if (!payload.details) result.missingFields.push("details");
+      // details can be string or object; executor will stringify.
+      if (!stringifyDetails(payload.details))
+        result.missingFields.push("details");
       break;
     }
 
@@ -421,7 +439,7 @@ async function executeAction(action, opts) {
     // =================
     case "paymentMethod.create": {
       const name = clampString(payload.name, 80);
-      const details = clampString(payload.details, 800);
+      const details = stringifyDetails(payload.details, 800);
       const instructions = clampString(payload.instructions, 1200);
       const active = normalizeActive(payload.isActive, true);
 
