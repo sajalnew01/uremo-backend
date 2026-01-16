@@ -51,6 +51,146 @@ function normalizeActive(value, fallback) {
   return fallback;
 }
 
+/**
+ * P0 FIX: Service model required fields
+ * These are the fields required to create a valid service
+ */
+const SERVICE_REQUIRED_FIELDS = ["title", "description", "price", "category"];
+
+/**
+ * P0 FIX: Default placeholder image when heroImage is missing
+ */
+const DEFAULT_SERVICE_HERO_IMAGE =
+  "https://placehold.co/1280x720/0f172a/ffffff/png?text=UREMO+Service";
+
+/**
+ * P0 FIX: Validate proposal action payload before execution
+ * Returns { valid: boolean, missingFields: string[], errors: string[] }
+ */
+function validateActionPayload(action) {
+  const type = String(action?.type || "").trim();
+  const payload = action?.payload;
+
+  const result = { valid: true, missingFields: [], errors: [] };
+
+  if (!type) {
+    result.valid = false;
+    result.errors.push("Missing action type");
+    return result;
+  }
+
+  if (!isPlainObject(payload)) {
+    result.valid = false;
+    result.errors.push("Invalid action payload - must be an object");
+    return result;
+  }
+
+  switch (type) {
+    case "service.create": {
+      // Check required fields for service creation
+      if (!payload.title || String(payload.title).trim().length < 3) {
+        result.missingFields.push("title (min 3 chars)");
+      }
+      if (
+        !payload.description ||
+        String(payload.description).trim().length < 10
+      ) {
+        result.missingFields.push("description (min 10 chars)");
+      }
+      if (payload.price == null || isNaN(Number(payload.price))) {
+        result.missingFields.push("price (number)");
+      }
+      if (!payload.category || String(payload.category).trim().length < 2) {
+        result.missingFields.push("category");
+      }
+      break;
+    }
+
+    case "service.update": {
+      if (!payload.id) {
+        result.missingFields.push("id (service ID to update)");
+      }
+      if (!payload.patch || !isPlainObject(payload.patch)) {
+        result.missingFields.push("patch (object with fields to update)");
+      }
+      break;
+    }
+
+    case "service.delete": {
+      if (!payload.id) {
+        result.missingFields.push("id (service ID to delete)");
+      }
+      break;
+    }
+
+    case "paymentMethod.create": {
+      if (!payload.name) result.missingFields.push("name");
+      if (!payload.details) result.missingFields.push("details");
+      break;
+    }
+
+    case "workPosition.create": {
+      if (!payload.title) result.missingFields.push("title");
+      if (!payload.category) result.missingFields.push("category");
+      break;
+    }
+  }
+
+  if (result.missingFields.length > 0) {
+    result.valid = false;
+    result.errors.push(
+      `Missing required fields: ${result.missingFields.join(", ")}`
+    );
+  }
+
+  return result;
+}
+
+/**
+ * P0 FIX: Validate all actions in a proposal
+ * Returns { valid: boolean, actionErrors: Array<{ index, type, errors, missingFields }> }
+ */
+function validateProposal(actions) {
+  if (!Array.isArray(actions)) {
+    return {
+      valid: false,
+      actionErrors: [
+        { index: 0, type: "unknown", errors: ["actions must be an array"] },
+      ],
+    };
+  }
+
+  if (actions.length === 0) {
+    return {
+      valid: false,
+      actionErrors: [
+        { index: 0, type: "unknown", errors: ["No actions provided"] },
+      ],
+    };
+  }
+
+  const actionErrors = [];
+
+  for (let i = 0; i < actions.length; i++) {
+    const action = actions[i];
+    const validation = validateActionPayload(action);
+
+    if (!validation.valid) {
+      actionErrors.push({
+        index: i,
+        type: String(action?.type || "unknown"),
+        errors: validation.errors,
+        missingFields: validation.missingFields,
+      });
+    }
+  }
+
+  return {
+    valid: actionErrors.length === 0,
+    actionErrors,
+  };
+}
+
 async function executeAction(action, opts) {
   const type = String(action?.type || "").trim();
   const payload = action?.payload;
@@ -78,11 +218,21 @@ async function executeAction(action, opts) {
       const category = clampString(payload.category, 60) || "General";
       const price = toNumber(payload.price);
       const deliveryType = clampString(payload.deliveryType, 24) || "manual";
-      const imageUrl = clampString(payload.imageUrl, 500);
+      // P0 FIX: Use placeholder image if not provided
+      const imageUrl =
+        clampString(payload.imageUrl, 500) || DEFAULT_SERVICE_HERO_IMAGE;
       const active = normalizeActive(payload.isActive, true);
 
       if (!title || !description || price == null) {
-        const err = new Error("service.create missing required fields");
+        const err = new Error(
+          `service.create missing required fields: ${[
+            !title ? "title" : null,
+            !description ? "description" : null,
+            price == null ? "price" : null,
+          ]
+            .filter(Boolean)
+            .join(", ")}`
+        );
         err.status = 400;
         throw err;
       }
@@ -617,4 +767,9 @@ async function executeAction(action, opts) {
 module.exports = {
   MAX_ACTIONS_PER_PROPOSAL,
   executeAction,
+  // P0 FIX: Export validation functions
+  validateActionPayload,
+  validateProposal,
+  SERVICE_REQUIRED_FIELDS,
+  DEFAULT_SERVICE_HERO_IMAGE,
 };

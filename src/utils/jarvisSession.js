@@ -20,8 +20,9 @@ function getClientIp(req) {
 }
 
 /**
- * Generate unique session key for user
- * Uses userId if logged in, otherwise SHA256(IP + UserAgent)
+ * P0 FIX: Generate unique session key for user
+ * Uses user:<id> if logged in, else anon:<cookie jarvisx_sid>
+ * NEVER use IP+UA as primary key (causes reset loops)
  * @param {object} req - Express request
  * @returns {string} Session key
  */
@@ -29,14 +30,16 @@ function getSessionKey(req) {
   const userId = req.user?.id ? String(req.user.id) : "";
   if (userId) return `user:${userId}`;
 
-  const ip = getClientIp(req);
-  const ua = String(req.headers["user-agent"] || "").slice(0, 100);
-  const hash = crypto
-    .createHash("sha256")
-    .update(`${ip || "unknown"}::${ua}`)
-    .digest("hex")
-    .slice(0, 24);
-  return `ip:${hash}`;
+  // Use cookie-based session ID for anonymous users (stable across requests)
+  const cookieSid = req.cookies?.jarvisx_sid;
+  if (cookieSid && typeof cookieSid === "string" && cookieSid.length >= 8) {
+    return `anon:${cookieSid}`;
+  }
+
+  // Fallback: generate new UUID (controller should set cookie)
+  const newSid = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
+  req._jarvisxNewSid = newSid;
+  return `anon:${newSid}`;
 }
 
 /**

@@ -8,6 +8,9 @@ const JarvisX = require("../controllers/jarvisx.lockdown.controller");
 const {
   executeAction,
   MAX_ACTIONS_PER_PROPOSAL,
+  validateProposal,
+  SERVICE_REQUIRED_FIELDS,
+  DEFAULT_SERVICE_HERO_IMAGE,
 } = require("../services/jarvisExecutor.service");
 const { groqChatCompletion } = require("../services/jarvisxProviders");
 
@@ -233,6 +236,7 @@ exports.propose = async (req, res) => {
         previewText: `AI provider (groq) is not configured. Please set GROQ_API_KEY in environment variables.`,
       };
     } else {
+      // P0 FIX: Enhanced system prompt with required fields for service.create
       const system =
         "You are JarvisX Write Mode for UREMO (AI Operator OS). SAFETY: You must ONLY propose actions. Never execute anything.\n" +
         "Output ONLY valid JSON. No markdown. No extra keys. No comments.\n\n" +
@@ -250,6 +254,20 @@ exports.propose = async (req, res) => {
         "- workPositions.create | workPositions.update | workPositions.delete\n" +
         "- settings.update\n" +
         "- serviceRequests.create\n\n" +
+        "CRITICAL: For services.create, you MUST include ALL these fields:\n" +
+        "- title: string (required, min 3 chars)\n" +
+        "- description: string (required, min 10 chars, describe what the service does)\n" +
+        "- price: number (required, e.g. 40)\n" +
+        "- category: string (required, e.g. 'Onboarding', 'KYC', 'Interview', 'Marketing')\n" +
+        "- deliveryType: 'instant' | 'manual' | 'assisted' (default: 'manual')\n" +
+        "- imageUrl: string (use '" +
+        DEFAULT_SERVICE_HERO_IMAGE +
+        "' if no image provided)\n" +
+        "- isActive: boolean (default: true)\n\n" +
+        "Example services.create args:\n" +
+        '{"title": "Handshake AI USA Gig", "description": "Professional setup for Handshake AI platform gig verification in the USA market.", "price": 40, "category": "Onboarding", "deliveryType": "manual", "imageUrl": "' +
+        DEFAULT_SERVICE_HERO_IMAGE +
+        '", "isActive": true}\n\n' +
         "Constraints: max 10 actions. If you do not have enough info (like IDs), return actions=[] and previewText asking for clarification.\n\n" +
         `ADMIN CONTEXT JSON: ${JSON.stringify(context)}${memoryBlock}`;
 
@@ -299,14 +317,32 @@ exports.propose = async (req, res) => {
 
         const previewText = clampString(parsed.previewText, 2000);
 
-        proposal = {
-          actions: normalizedActions,
-          previewText:
-            previewText ||
-            (normalizedActions.length
-              ? "Proposal generated. Review actions before execution."
-              : buildFallbackProposal(command).previewText),
-        };
+        // P0 FIX: Validate actions before creating proposal
+        const validation = validateProposal(normalizedActions);
+
+        if (!validation.valid && normalizedActions.length > 0) {
+          // Build helpful error message for UI
+          const errorDetails = validation.actionErrors
+            .map(
+              (e) => `Action ${e.index + 1} (${e.type}): ${e.errors.join(", ")}`
+            )
+            .join("\n");
+
+          proposal = {
+            actions: normalizedActions,
+            previewText: `⚠️ Proposal has validation issues:\n${errorDetails}\n\nPlease provide more details or edit the proposal before execution.`,
+            validationErrors: validation.actionErrors,
+          };
+        } else {
+          proposal = {
+            actions: normalizedActions,
+            previewText:
+              previewText ||
+              (normalizedActions.length
+                ? "Proposal generated. Review actions before execution."
+                : buildFallbackProposal(command).previewText),
+          };
+        }
       } else {
         proposal = {
           actions: [],
@@ -333,6 +369,7 @@ exports.propose = async (req, res) => {
     status: "pending",
     actions: proposal.actions,
     previewText: proposal.previewText,
+    validationErrors: proposal.validationErrors || [],
     ip: clampString(req.ip, 80),
   });
 
@@ -340,6 +377,7 @@ exports.propose = async (req, res) => {
     proposalId: created._id,
     actions: created.actions,
     previewText: created.previewText,
+    validationErrors: created.validationErrors || [],
   });
 };
 
@@ -435,6 +473,25 @@ exports.approveAndExecute = async (req, res) => {
   const actions = Array.isArray(doc.actions) ? doc.actions : [];
   if (actions.length > MAX_ACTIONS_PER_PROPOSAL) {
     return res.status(400).json({ message: "Too many actions (max 10)" });
+  }
+
+  // P0 FIX: Validate all actions BEFORE execution
+  const validation = validateProposal(actions);
+  if (!validation.valid) {
+    const errorDetails = validation.actionErrors
+      .map(
+        (e) =>
+          `Action ${e.index + 1} (${e.type}): Missing ${e.missingFields.join(
+            ", "
+          )}`
+      )
+      .join("; ");
+
+    return res.status(400).json({
+      message: "Proposal validation failed - missing required fields",
+      validationErrors: validation.actionErrors,
+      details: errorDetails,
+    });
   }
 
   doc.status = "approved";

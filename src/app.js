@@ -2,6 +2,7 @@
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
+const cookieParser = require("cookie-parser");
 
 const app = express();
 
@@ -60,6 +61,8 @@ app.use(cors(corsOptions));
 // Preflight MUST return correctly.
 // Express 5 does not support "*" here (path-to-regexp). Use a regex that matches all.
 app.options(/.*/, cors(corsOptions));
+// P0 FIX: Parse cookies for stable session ID (jarvisx_sid)
+app.use(cookieParser());
 // Allow up to ~250KB JSON bodies so CMS raw JSON import can work, while
 // still enforcing a stricter per-endpoint max size in controllers.
 app.use(express.json({ limit: "250kb" }));

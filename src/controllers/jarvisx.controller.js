@@ -43,6 +43,17 @@ const {
   urgencyQuickReplies: getUrgencyReplies,
 } = require("../utils/jarvisIntent");
 
+// P0 FIX: State machine imports
+const {
+  getQuickReplyRoute,
+  isPureGreeting,
+  getStepResponse,
+  applyRouteToSession,
+  advanceFlow,
+  hasActiveFlow,
+  resetFlow,
+} = require("../utils/jarvisStateMachine");
+
 const JARVISX_RULES = {
   manualVerification: true,
   proofAccepted: ["image", "pdf"],
@@ -109,16 +120,24 @@ function getClientIp(req) {
   return String(ip || "").trim();
 }
 
+/**
+ * P0 FIX: STABLE SESSION KEY - Uses cookie-based session ID for anonymous users
+ * NEVER use IP+UA as primary key (causes reset loops when IP changes)
+ */
 function getSessionKey(req) {
   const userId = req.user?.id ? String(req.user.id) : "";
   if (userId) return `user:${userId}`;
-  const ip = getClientIp(req);
-  const hash = crypto
-    .createHash("sha256")
-    .update(String(ip || "unknown"))
-    .digest("hex")
-    .slice(0, 24);
-  return `ip:${hash}`;
+
+  // Use cookie-based session ID for anonymous users
+  const cookieSid = req.cookies?.jarvisx_sid;
+  if (cookieSid && typeof cookieSid === "string" && cookieSid.length >= 8) {
+    return `anon:${cookieSid}`;
+  }
+
+  // Fallback: generate new UUID and mark for cookie setting
+  const newSid = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
+  req._jarvisxNewSid = newSid;
+  return `anon:${newSid}`;
 }
 
 async function loadOrCreateSession(req) {
@@ -262,14 +281,56 @@ function tryAttachUser(req) {
 }
 
 /**
- * Build admin mode greeting/response - NO FALLBACK MESSAGES
+ * P0 FIX: Build admin mode greeting/response - NO FALLBACK for normal queries
+ * Only return greeting when message is ACTUALLY a greeting and no context exists
  */
-function buildAdminGreeting(message) {
+function buildAdminGreeting(message, session = null) {
   const msg = normalizeText(message);
-  // Greeting/test messages
-  if (!msg || /^(hi|hello|hey|test|yo|sup|sleeping|awake|there)/.test(msg)) {
+
+  // P0 FIX: If session has active flow, NEVER return greeting
+  if (session && hasActiveFlow(session)) {
+    return null;
+  }
+
+  // P0 FIX: Handle "who am i" - Admin identity question
+  if (/who\s*(am\s*i|is\s*this|are\s*you\s*talking\s*to)/i.test(msg)) {
     return {
-      reply: "Boss ✅ I'm here. What do you need me to handle?",
+      reply:
+        "You are the admin (Sajal). You control all UREMO operations, services, and user management.",
+      confidence: 0.98,
+      usedSources: ["rules"],
+      suggestedActions: [
+        { label: "Dashboard", url: "/admin" },
+        { label: "Services", url: "/admin/services" },
+      ],
+      quickReplies: ["Check orders", "Add service", "System health"],
+    };
+  }
+
+  // P0 FIX: Handle other admin identity/status questions
+  if (/what\s*(can\s*you|do\s*you)\s*(do|handle|help)/i.test(msg)) {
+    return {
+      reply:
+        "Boss, I can help you manage services, check orders, review payments, handle support requests, and more. What should I tackle?",
+      confidence: 0.95,
+      usedSources: ["rules"],
+      suggestedActions: [
+        { label: "Services", url: "/admin/services" },
+        { label: "Orders", url: "/admin/orders" },
+      ],
+      quickReplies: [
+        "Check orders",
+        "Add service",
+        "Support status",
+        "System health",
+      ],
+    };
+  }
+
+  // Only greet on ACTUAL greeting messages (not normal questions)
+  if (!msg || /^(hi|hello|hey|test|yo|sup|sleeping|awake|there)$/.test(msg)) {
+    return {
+      reply: "Yes boss ✅ I'm here. What do you need me to handle?",
       confidence: 0.95,
       usedSources: ["rules"],
       suggestedActions: [
@@ -285,13 +346,25 @@ function buildAdminGreeting(message) {
       ],
     };
   }
+
+  // P0 FIX: Return null for normal questions - let the LLM handle them
   return null;
 }
 /**
- * Build public mode greeting/response - NO FALLBACK MESSAGES
+ * P0 FIX: Build public mode greeting/response - NEVER reset if flow exists
+ * Only return greeting when:
+ * 1. Message is a pure greeting (hi/hello)
+ * 2. Session has NO active flow
  */
-function buildPublicGreeting(message) {
+function buildPublicGreeting(message, session = null) {
   const msg = normalizeText(message);
+
+  // P0 FIX: If session has active flow, NEVER return greeting (prevents reset bug)
+  if (session && hasActiveFlow(session)) {
+    return null;
+  }
+
+  // Only greet on ACTUAL greeting messages with NO context
   if (!msg || /^(hi|hello|hey|yo|sup)$/.test(msg)) {
     return {
       reply: "Hi 👋 I'm JarvisX Support. How can I help you today?",
@@ -930,6 +1003,201 @@ exports.chat = async (req, res) => {
     return res.status(400).json({ message: "Message is required" });
   }
 
+  // P0 FIX: Set session cookie for anonymous users
+  if (req._jarvisxNewSid) {
+    res.cookie("jarvisx_sid", req._jarvisxNewSid, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 30 * 60 * 1000, // 30 minutes
+    });
+  }
+
+  // Load session FIRST to check flow state
+  let session;
+  try {
+    session = await loadSessionHelper(req);
+  } catch (err) {
+    console.error(`[JARVISX_SESSION_FAIL] err=${err?.message}`);
+    session = { flow: null, step: null, collectedData: {}, askedQuestions: [] };
+  }
+
+  // P0 FIX: Check for quick reply routing BEFORE anything else
+  const quickReplyRoute = getQuickReplyRoute(message);
+  if (quickReplyRoute) {
+    applyRouteToSession(session, quickReplyRoute);
+
+    // If quick reply has escalate flag, handle differently
+    if (quickReplyRoute.escalate) {
+      const reply =
+        mode === "admin"
+          ? "You're already talking to the admin system. What do you need?"
+          : "I'll connect you with an admin. Please describe your issue or open your order to chat directly.";
+
+      appendMessage(session, "user", message);
+      appendMessage(session, "assistant", reply);
+      await saveSession(session);
+
+      return res.json(
+        withBrainEnvelope(
+          {
+            reply,
+            confidence: 0.9,
+            usedSources: ["rules"],
+            suggestedActions: [{ label: "My Orders", url: "/orders" }],
+            llm: getJarvisLlmStatus(),
+          },
+          { intent: "ESCALATE" }
+        )
+      );
+    }
+
+    // Get step-based response for the new flow
+    const stepResponse = getStepResponse(session.flow, session.step, session);
+    if (stepResponse) {
+      appendMessage(session, "user", message);
+      appendMessage(session, "assistant", stepResponse.reply);
+      await saveSession(session);
+
+      console.log(
+        `[JARVISX_CHAT_OK] key=${sessionKey.slice(0, 12)}... flow=${
+          session.flow
+        } step=${session.step} mode=quick_reply_route`
+      );
+
+      return res.json(
+        withBrainEnvelope(
+          {
+            reply: stepResponse.reply,
+            confidence: 0.95,
+            usedSources: ["rules"],
+            suggestedActions: stepResponse.suggestedActions || [],
+            llm: getJarvisLlmStatus(),
+          },
+          {
+            intent: session.flow || intent,
+            quickReplies: stepResponse.quickReplies || [],
+          }
+        )
+      );
+    }
+  }
+
+  // P0 FIX: If session has active flow, handle state machine continuation
+  if (hasActiveFlow(session)) {
+    // Extract data from user's answer
+    const detectedPlatform = extractPlatform(message);
+    const detectedUrgency = extractUrgency(message);
+
+    if (detectedPlatform) {
+      if (!session.collectedData) session.collectedData = {};
+      session.collectedData.platform = detectedPlatform;
+    }
+    if (detectedUrgency) {
+      if (!session.collectedData) session.collectedData = {};
+      session.collectedData.urgency = detectedUrgency;
+    }
+
+    // Check if user wants to cancel
+    if (wantsCancelUtil(message)) {
+      resetFlow(session);
+      appendMessage(session, "user", message);
+      const reply = "No problem, I've cancelled that. How else can I help?";
+      appendMessage(session, "assistant", reply);
+      await saveSession(session);
+
+      return res.json(
+        withBrainEnvelope(
+          {
+            reply,
+            confidence: 0.95,
+            usedSources: ["rules"],
+            suggestedActions: [
+              { label: "Browse Services", url: "/buy-service" },
+            ],
+            llm: getJarvisLlmStatus(),
+          },
+          {
+            intent: "CANCELLED",
+            quickReplies: ["Buy service", "Order status", "Interview help"],
+          }
+        )
+      );
+    }
+
+    // Advance to next step
+    const { nextStep, complete } = advanceFlow(session, message);
+    if (nextStep) {
+      session.step = nextStep;
+    }
+
+    if (complete) {
+      // Flow complete - provide final response
+      const collected = session.collectedData || {};
+      const reply = `Perfect! For ${collected.serviceType || "your"} ${
+        collected.platform || ""
+      } service with ${
+        collected.urgency || "flexible"
+      } urgency — check our services or an admin will reach out soon.`;
+
+      appendMessage(session, "user", message);
+      appendMessage(session, "assistant", reply);
+      session.step = "COMPLETE";
+      await saveSession(session);
+
+      console.log(
+        `[JARVISX_CHAT_OK] key=${sessionKey.slice(0, 12)}... flow=${
+          session.flow
+        } step=COMPLETE mode=flow_complete`
+      );
+
+      return res.json(
+        withBrainEnvelope(
+          {
+            reply,
+            confidence: 0.95,
+            usedSources: ["rules", "services"],
+            suggestedActions: [
+              { label: "Browse Services", url: "/buy-service" },
+            ],
+            llm: getJarvisLlmStatus(),
+          },
+          { intent: session.flow || intent }
+        )
+      );
+    }
+
+    // Get response for next step
+    const stepResponse = getStepResponse(session.flow, session.step, session);
+    if (stepResponse) {
+      appendMessage(session, "user", message);
+      appendMessage(session, "assistant", stepResponse.reply);
+      await saveSession(session);
+
+      console.log(
+        `[JARVISX_CHAT_OK] key=${sessionKey.slice(0, 12)}... flow=${
+          session.flow
+        } step=${session.step} mode=flow_continue`
+      );
+
+      return res.json(
+        withBrainEnvelope(
+          {
+            reply: stepResponse.reply,
+            confidence: 0.92,
+            usedSources: ["rules"],
+            suggestedActions: stepResponse.suggestedActions || [],
+            llm: getJarvisLlmStatus(),
+          },
+          {
+            intent: session.flow || intent,
+            quickReplies: stepResponse.quickReplies || [],
+          }
+        )
+      );
+    }
+  }
+
   if (mode === "admin") {
     if (!req.user?.id) {
       return res.status(401).json({ message: "Authentication required" });
@@ -938,9 +1206,13 @@ exports.chat = async (req, res) => {
       return res.status(403).json({ message: "Admin access required" });
     }
 
-    // Check for admin greeting/test message FIRST
-    const adminGreeting = buildAdminGreeting(message);
+    // P0 FIX: Check for admin greeting/test message - pass session to check flow
+    const adminGreeting = buildAdminGreeting(message, session);
     if (adminGreeting) {
+      appendMessage(session, "user", message);
+      appendMessage(session, "assistant", adminGreeting.reply);
+      await saveSession(session);
+
       console.log(
         `[JARVISX_CHAT_OK] key=${sessionKey.slice(
           0,
@@ -950,14 +1222,18 @@ exports.chat = async (req, res) => {
       return res.json(
         withBrainEnvelope(
           { ...adminGreeting, llm: getJarvisLlmStatus() },
-          { intent: "GREETING" }
+          { intent: "GREETING", quickReplies: adminGreeting.quickReplies }
         )
       );
     }
   } else {
-    // Public mode greeting check
-    const publicGreeting = buildPublicGreeting(message);
+    // P0 FIX: Public mode greeting check - pass session to check flow
+    const publicGreeting = buildPublicGreeting(message, session);
     if (publicGreeting) {
+      appendMessage(session, "user", message);
+      appendMessage(session, "assistant", publicGreeting.reply);
+      await saveSession(session);
+
       console.log(
         `[JARVISX_CHAT_OK] key=${sessionKey.slice(
           0,
@@ -967,7 +1243,7 @@ exports.chat = async (req, res) => {
       return res.json(
         withBrainEnvelope(
           { ...publicGreeting, llm: getJarvisLlmStatus() },
-          { intent: "GREETING" }
+          { intent: "GREETING", quickReplies: publicGreeting.quickReplies }
         )
       );
     }
@@ -991,8 +1267,7 @@ exports.chat = async (req, res) => {
   const pendingRequestId = clampString(leadCaptureMeta?.requestId, 64);
 
   try {
-    const session = await loadSessionHelper(req);
-
+    // P0 FIX: Session already loaded above, reuse it (don't load again)
     // Extract any platform/urgency from user message for session memory
     const detectedPlatform = extractPlatform(message);
     const detectedUrgency = extractUrgency(message);
