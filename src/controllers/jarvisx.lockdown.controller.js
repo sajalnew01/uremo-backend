@@ -124,6 +124,12 @@ exports.health = async (req, res) => {
   }
 };
 
+// PATCH_10: Always-JSON ping endpoint.
+exports.ping = async (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  return res.status(200).json({ ok: true, message: "pong", at: Date.now() });
+};
+
 exports.llmStatus = async (req, res) => {
   const model = String(process.env.JARVISX_MODEL || "llama-3.3-70b-versatile")
     .trim()
@@ -394,7 +400,10 @@ exports.chat = async (req, res) => {
     return res.status(400).json({ message: "Message is required" });
   }
 
-  const wantsAdmin = req.body?.mode === "admin" || req.body?.isAdmin === true;
+  const mode = String(req.body?.mode || "public")
+    .trim()
+    .toLowerCase();
+  const wantsAdmin = mode === "admin" || req.body?.isAdmin === true;
   const isAdmin = isAdminUser(req);
 
   if (wantsAdmin) {
@@ -407,7 +416,10 @@ exports.chat = async (req, res) => {
   }
 
   try {
-    const session = await sessionManager.getOrCreateSession(req);
+    const session = await sessionManager.getOrCreateSession(
+      req,
+      wantsAdmin ? "admin" : "public"
+    );
     session.collectedData = session.collectedData || {};
 
     // Ensure stable session cookie is set (anonymous users).
@@ -420,6 +432,86 @@ exports.chat = async (req, res) => {
     // ADMIN MODE — ALWAYS CALL GROQ
     // =============================
     if (wantsAdmin) {
+      // PATCH_10: Capture explicit admin identity details from messages (no hallucination).
+      // This enables persistence even when JWT doesn't include email/name.
+      try {
+        const lower = String(message || "").toLowerCase();
+        const emailMatch = lower.match(
+          /\b([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\b/i
+        );
+        const nameMatch = String(message || "").match(
+          /\bmy\s+name\s+is\s+([a-z][a-z\s'.-]{1,40})\b/i
+        );
+
+        if (!session.metadata || typeof session.metadata !== "object") {
+          session.metadata = {};
+        }
+        if (!session.metadata.adminIdentity) {
+          session.metadata.adminIdentity = {};
+        }
+
+        if (emailMatch?.[1]) {
+          session.metadata.adminIdentity.email = String(emailMatch[1]).trim();
+        }
+        if (nameMatch?.[1]) {
+          session.metadata.adminIdentity.name = String(nameMatch[1]).trim();
+        }
+
+        if (typeof session.save === "function") {
+          await session.save();
+        }
+      } catch {
+        // ignore
+      }
+
+      // PATCH_10: Admin identity queries must be answered from metadata only.
+      const normalized = String(message || "")
+        .toLowerCase()
+        .trim();
+      const isIdentityQuery =
+        normalized.includes("who am i") ||
+        normalized.includes("what's my name") ||
+        normalized.includes("what is my name") ||
+        normalized.includes("so what's my name") ||
+        normalized.includes("so whats my name") ||
+        normalized.includes("do you recognize me") ||
+        normalized.includes("identify me") ||
+        (normalized.includes("my name") && normalized.includes("what"));
+
+      if (isIdentityQuery) {
+        const adminIdentity = sessionManager.getAdminIdentity(session);
+        if (adminIdentity) {
+          const name = String(adminIdentity.name || "Admin").trim() || "Admin";
+          const email = String(adminIdentity.email || "").trim();
+          const role = String(adminIdentity.role || "admin").trim() || "admin";
+          const out = email
+            ? `You are ${name} (${email}) — ${role} of UREMO.`
+            : `You are ${name} — ${role} of UREMO.`;
+
+          await sessionManager.addMessage(session, "user", message);
+          await sessionManager.addMessage(session, "jarvis", out);
+          return res.json({
+            ok: true,
+            reply: out,
+            intent: "ADMIN_IDENTITY",
+            quickReplies: ["System health", "Orders", "Create service"],
+            sessionId: session.sessionKey,
+          });
+        }
+
+        const out =
+          "I can't see your admin identity because auth/session isn't attached. Please login again.";
+        await sessionManager.addMessage(session, "user", message);
+        await sessionManager.addMessage(session, "jarvis", out);
+        return res.json({
+          ok: true,
+          reply: out,
+          intent: "ADMIN_IDENTITY",
+          quickReplies: ["Re-login", "Try again"],
+          sessionId: session.sessionKey,
+        });
+      }
+
       // Greeting fallback ONLY if it's a greeting AND there is no session history.
       if (brainV1IsGreeting(message) && !hasHistory) {
         await sessionManager.addMessage(session, "user", message);
@@ -443,7 +535,6 @@ exports.chat = async (req, res) => {
         "Rules:\n" +
         "- Be concise, action-oriented, and accurate.\n" +
         "- Never loop on greetings.\n" +
-        "- If user asks 'who am i', reply with their email/role if available.\n" +
         "- If you cannot do something, ask ONE clarifying question.\n\n" +
         `ADMIN CONTEXT JSON: ${JSON.stringify(context)}\n` +
         `SESSION DATA JSON: ${JSON.stringify(session.collectedData || {})}`;
@@ -457,24 +548,6 @@ exports.chat = async (req, res) => {
           content: String(m.content || ""),
         }))
         .filter((m) => m.content.trim());
-
-      // Special-case: who am i?
-      if (/^who\s+am\s+i\??$/i.test(message.trim())) {
-        const email = String(req.user?.email || "").trim();
-        const role = String(req.user?.role || "").trim();
-        const out =
-          email || role
-            ? `You are ${email || ""} (${role || ""})`.trim()
-            : "You're logged in as an admin user.";
-        await sessionManager.addMessage(session, "user", message);
-        await sessionManager.addMessage(session, "jarvis", out);
-        return res.json({
-          ok: true,
-          reply: out,
-          intent: "WHO_AM_I",
-          quickReplies: [],
-        });
-      }
 
       try {
         const completion = await groqChatCompletion(

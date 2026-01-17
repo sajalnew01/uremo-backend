@@ -127,6 +127,12 @@ const JarvisSessionSchema = new mongoose.Schema(
       },
     ],
 
+    // PATCH_10: Persist metadata (admin identity memory, etc.)
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+
     // TTL: Auto-delete after 30 minutes of inactivity
     expiresAt: {
       type: Date,

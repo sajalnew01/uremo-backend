@@ -22,10 +22,24 @@ const chatLimiterMaybeAdmin = (req, res, next) => {
   return chatLimiter(req, res, next);
 };
 
+const authByMode = (req, res, next) => {
+  const mode = String(req.body?.mode || "")
+    .trim()
+    .toLowerCase();
+  if (mode === "admin") {
+    return auth(req, res, (err) => {
+      if (err) return next(err);
+      return admin(req, res, next);
+    });
+  }
+  return authOptional(req, res, next);
+};
+
 router.get("/context/public", JarvisX.getPublicContext);
 router.get("/context/admin", auth, admin, JarvisX.getAdminContext);
 // PATCH_08: Monitoring endpoint (must never crash)
 router.get("/health", JarvisX.health);
+router.get("/ping", JarvisX.ping);
 // Public-safe: lets admin UI load even if auth headers are stripped by proxies.
 // Does NOT return sensitive user data.
 router.get("/health-report", authOptional, JarvisX.healthReport);
@@ -37,7 +51,7 @@ router.get("/llm-status", JarvisX.llmStatus);
 router.post("/execute", auth, admin, JarvisWrite.execute);
 
 // Auth optional; admin-mode enforcement happens inside controller.
-router.post("/chat", authOptional, chatLimiterMaybeAdmin, JarvisX.chat);
+router.post("/chat", authByMode, chatLimiterMaybeAdmin, JarvisX.chat);
 
 // Public: create a service request (auth optional)
 router.post(

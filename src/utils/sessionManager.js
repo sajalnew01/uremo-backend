@@ -1,4 +1,5 @@
 const JarvisSession = require("../models/JarvisSession");
+const User = require("../models/User");
 
 function wrapNonThrowingSave(session) {
   if (!session || typeof session.save !== "function") return session;
@@ -26,8 +27,33 @@ class SessionManager {
   /**
    * Get or create session for request
    */
-  async getOrCreateSession(req) {
-    const sessionKey = JarvisSession.generateSessionKey(req);
+  async getOrCreateSession(req, mode = "public") {
+    const wantsAdmin = mode === "admin" || req.user?.role === "admin";
+
+    let sessionKey = null;
+    if (wantsAdmin) {
+      const adminId = req?.user?._id || req?.user?.id;
+      if (!adminId) {
+        console.error(
+          "[JarvisX] ADMIN mode called without req.user — auth middleware missing!"
+        );
+        sessionKey = "admin:missing";
+      } else {
+        sessionKey = `admin:${adminId}`;
+      }
+    } else {
+      // Public mode: prefer provided sessionId, else stable cookie session key.
+      const provided =
+        typeof req?.body?.sessionId === "string" && req.body.sessionId.trim()
+          ? String(req.body.sessionId).trim()
+          : null;
+
+      if (provided) {
+        sessionKey = `public:${provided}`;
+      } else {
+        sessionKey = JarvisSession.generateSessionKey(req);
+      }
+    }
 
     let session = null;
     try {
@@ -56,10 +82,11 @@ class SessionManager {
       session = new JarvisSession({
         sessionKey,
         userId: req.user?._id || req.user?.id || null,
-        isAdmin: req.user?.role === "admin",
+        isAdmin: wantsAdmin,
         askedQuestions: [],
         collectedData: {},
         conversation: [],
+        metadata: {},
       });
     }
 
@@ -68,12 +95,70 @@ class SessionManager {
 
     // Keep identity/admin flag fresh (in case role/login changes)
     session.userId = req.user?._id || req.user?.id || session.userId || null;
-    session.isAdmin = req.user?.role === "admin";
+    session.isAdmin = wantsAdmin;
+
+    // Persist admin identity for deterministic admin memory.
+    if (wantsAdmin) {
+      if (!session.metadata || typeof session.metadata !== "object") {
+        session.metadata = {};
+      }
+
+      const name = String(
+        req.user?.name || req.user?.fullName || "Admin"
+      ).trim();
+      const email = String(req.user?.email || "").trim();
+      const role = String(req.user?.role || "admin").trim() || "admin";
+      const uid = String(req.user?._id || req.user?.id || "").trim();
+
+      session.metadata.adminIdentity = {
+        userId: uid,
+        email,
+        name: name || "Admin",
+        role,
+      };
+
+      // If token doesn't include email/name, best-effort hydrate from DB.
+      if ((!email || !name) && uid) {
+        try {
+          const doc = await User.findById(uid).select("name email role").lean();
+          if (doc) {
+            const dbName = String(doc?.name || "").trim();
+            const dbEmail = String(doc?.email || "").trim();
+            const dbRole = String(doc?.role || "").trim();
+
+            if (dbEmail && !session.metadata.adminIdentity.email) {
+              session.metadata.adminIdentity.email = dbEmail;
+            }
+            if (
+              dbName &&
+              (!session.metadata.adminIdentity.name ||
+                session.metadata.adminIdentity.name === "Admin")
+            ) {
+              session.metadata.adminIdentity.name = dbName;
+            }
+            if (dbRole && !session.metadata.adminIdentity.role) {
+              session.metadata.adminIdentity.role = dbRole;
+            }
+          }
+        } catch {
+          // ignore (DB may be down); keep safe behavior
+        }
+      }
+    }
 
     // Reset TTL on activity
-    session.expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    session.expiresAt = wantsAdmin
+      ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      : new Date(Date.now() + 30 * 60 * 1000);
 
     return session;
+  }
+
+  getAdminIdentity(session) {
+    const meta = session?.metadata;
+    const adminIdentity = meta?.adminIdentity;
+    if (!adminIdentity || typeof adminIdentity !== "object") return null;
+    return adminIdentity;
   }
 
   /**
