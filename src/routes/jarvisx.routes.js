@@ -47,4 +47,12 @@ router.post(
   JarvisX.requestService
 );
 
+// Public: create a custom request (auth optional)
+router.post(
+  "/custom-request",
+  authOptional,
+  chatLimiterMaybeAdmin,
+  JarvisX.customRequest
+);
+
 module.exports = router;

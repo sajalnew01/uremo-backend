@@ -9,6 +9,7 @@ const mongoose = require("mongoose");
 const sessionManager = require("../utils/sessionManager");
 const {
   classifyIntent,
+  classifyIntentDetailed,
   getIntentResponse,
 } = require("../utils/intentClassifier");
 const {
@@ -257,6 +258,40 @@ function isIdentityQuestion(text) {
   );
 }
 
+function buildAssistantIdentityReply() {
+  return "I’m JarvisX, UREMO’s Support assistant ✅ I can help with services, orders, and support.";
+}
+
+function buildUserIdentityReply(req) {
+  const user = req?.user || null;
+  const name = String(user?.name || user?.fullName || "").trim();
+  const email = String(user?.email || "").trim();
+  const id = String(user?.id || user?._id || "").trim();
+
+  // Optional-auth token payloads often only include id.
+  if (email || name) {
+    const parts = [name || null, email ? `<${email}>` : null].filter(Boolean);
+    return `You’re logged in ✅ ${parts.join(" ")}`;
+  }
+
+  if (id) {
+    return "You look logged in ✅ (I can only see limited identity details from your token).";
+  }
+
+  return "I can’t identify you unless you’re logged in. If you log in, I can show basic account info.";
+}
+
+function escapeRegex(str) {
+  return String(str || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizePlatform(p) {
+  const v = String(p || "")
+    .trim()
+    .toLowerCase();
+  return v || "";
+}
+
 function buildPublicMenuReply(session) {
   const hasFlow = !!(session?.flow && hasActiveFlow(session));
   return {
@@ -495,18 +530,67 @@ exports.chat = async (req, res) => {
       applyRouteToSession(session, route);
     }
 
+    const classified = classifyIntentDetailed(message);
+    const classifiedIntent = String(classified?.intent || "GENERAL_CHAT");
+    const classifiedEntities = classified?.entities || {};
+
+    // DIAG: confirm intent routing in logs (prod-safe; no PII)
+    try {
+      const snippet = String(message || "")
+        .slice(0, 140)
+        .replace(/\s+/g, " ");
+      console.log(
+        `[JARVISX_INTENT] intent=${classifiedIntent} platform=${String(
+          classifiedEntities?.platform || ""
+        )} msg="${snippet}"`
+      );
+    } catch {
+      // ignore
+    }
+
     // Identity questions should NOT hijack flows.
     // If user is mid-flow, answer identity and keep the flow intact.
-    if (!route && hasActiveFlow(session) && isIdentityQuestion(message)) {
+    if (
+      !route &&
+      hasActiveFlow(session) &&
+      (classifiedIntent === "ASSISTANT_IDENTITY" ||
+        classifiedIntent === "USER_IDENTITY_QUERY")
+    ) {
       const out =
-        "I’m JarvisX Support ✅ UREMO’s assistant. I help customers with buying services, order updates, and support.";
+        classifiedIntent === "USER_IDENTITY_QUERY"
+          ? buildUserIdentityReply(req)
+          : buildAssistantIdentityReply();
       await sessionManager.addMessage(session, "user", message);
       await sessionManager.addMessage(session, "jarvis", out);
       return res.json({
         ok: true,
         reply: out,
-        intent: "IDENTITY",
-        quickReplies: ["Continue", "Menu"],
+        intent: classifiedIntent,
+        quickReplies: ["Continue"],
+      });
+    }
+
+    // List services (explicit)
+    if (!route && classifiedIntent === "LIST_SERVICES") {
+      const list = await Service.find({ active: true })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean();
+      const lines = (Array.isArray(list) ? list : [])
+        .map((s) => `- ${String(s?.title || "").trim()}`)
+        .filter(Boolean)
+        .join("\n");
+      const out = lines
+        ? `Here are our current services:\n${lines}\n\nWhich one do you want?`
+        : "No services are listed right now. Tell me what you need and I can create a custom request.";
+
+      await sessionManager.addMessage(session, "user", message);
+      await sessionManager.addMessage(session, "jarvis", out);
+      return res.json({
+        ok: true,
+        reply: out,
+        intent: "LIST_SERVICES",
+        quickReplies: [],
       });
     }
 
@@ -529,17 +613,23 @@ exports.chat = async (req, res) => {
       });
     }
 
-    // Identity questions (general) — respond directly (NO menu)
-    if (!route && isIdentityQuestion(message)) {
+    // Identity questions — respond directly (NO menu)
+    if (
+      !route &&
+      (classifiedIntent === "ASSISTANT_IDENTITY" ||
+        classifiedIntent === "USER_IDENTITY_QUERY")
+    ) {
       const out =
-        "I’m JarvisX Support ✅ UREMO’s assistant. I help customers with buying services, order updates, and support.";
+        classifiedIntent === "USER_IDENTITY_QUERY"
+          ? buildUserIdentityReply(req)
+          : buildAssistantIdentityReply();
       await sessionManager.addMessage(session, "user", message);
       await sessionManager.addMessage(session, "jarvis", out);
       return res.json({
         ok: true,
         reply: out,
-        intent: "IDENTITY",
-        quickReplies: ["Buy service", "Order status", "Interview help", "Menu"],
+        intent: classifiedIntent,
+        quickReplies: ["Buy service", "Order status", "Interview help"],
       });
     }
 
@@ -657,7 +747,73 @@ exports.chat = async (req, res) => {
       });
     }
 
-    const intent = classifyIntent(message);
+    const intent = classifiedIntent || classifyIntent(message);
+
+    // Specific platform purchase request: suggest matching services or start custom request collection.
+    if (intent === "SERVICE_PURCHASE_REQUEST") {
+      const platform = normalizePlatform(classifiedEntities?.platform);
+      const unitPrice = classifiedEntities?.unitPrice;
+      const quantity = classifiedEntities?.quantity;
+
+      // Try to match existing services first.
+      const rx = platform ? new RegExp(escapeRegex(platform), "i") : null;
+      const matches = rx
+        ? await Service.find({
+            active: true,
+            $or: [{ title: rx }, { description: rx }, { category: rx }],
+          })
+            .sort({ createdAt: -1 })
+            .limit(6)
+            .lean()
+        : [];
+
+      if (Array.isArray(matches) && matches.length > 0) {
+        const lines = matches
+          .map((s) => `- ${String(s?.title || "").trim()}`)
+          .filter(Boolean)
+          .join("\n");
+        const out = `I found services related to ${
+          platform || "that platform"
+        }:\n${lines}\n\nWhich one should I open for you?`;
+        await sessionManager.addMessage(session, "user", message);
+        await sessionManager.addMessage(session, "jarvis", out);
+        return res.json({
+          ok: true,
+          reply: out,
+          intent: "SERVICE_PURCHASE_REQUEST",
+          quickReplies: [],
+        });
+      }
+
+      // Not listed: start a minimal custom request flow.
+      const out =
+        `We don’t have ${
+          platform || "that"
+        } listed yet, but I can send a custom request to admin ✅\n` +
+        `Is this for KYC or a ready account? Also: quantity and your target price per account.`;
+
+      await sessionManager.addMessage(session, "user", message);
+      await sessionManager.addMessage(session, "jarvis", out);
+
+      return res.json({
+        ok: true,
+        reply: out,
+        intent: "SERVICE_PURCHASE_REQUEST",
+        quickReplies: ["KYC", "Ready account"],
+        customRequestDraft: {
+          sessionId: String(session?.sessionKey || ""),
+          platform: platform || undefined,
+          requestType: undefined,
+          quantity:
+            Number.isFinite(quantity) && quantity > 0 ? quantity : undefined,
+          unitPrice:
+            Number.isFinite(unitPrice) && unitPrice >= 0
+              ? unitPrice
+              : undefined,
+          notes: "",
+        },
+      });
+    }
 
     // PATCH_07: GENERAL_CHAT must always call Groq (real assistant behavior)
     if (intent === "GENERAL_CHAT") {
@@ -724,16 +880,14 @@ exports.chat = async (req, res) => {
           `[JarvisX] Intent: GENERAL_CHAT, Provider: groq, Time: ${responseTime}ms`
         );
 
+        const showMenu = isExplicitMenuRequest(message);
         return res.json({
           ok: true,
           reply: out,
           intent: "GENERAL_CHAT",
-          quickReplies: [
-            "Buy service",
-            "Order status",
-            "Interview help",
-            "Menu",
-          ],
+          quickReplies: showMenu
+            ? ["Buy service", "Order status", "Interview help", "Menu"]
+            : [],
         });
       } catch (err) {
         console.error(`[JARVISX_PUBLIC_LLM_FAIL] errMessage=${err?.message}`);
@@ -877,6 +1031,63 @@ exports.requestService = async (req, res) => {
     return res
       .status(200)
       .json({ success: false, message: "Unable to create request" });
+  }
+};
+
+exports.customRequest = async (req, res) => {
+  try {
+    const CustomRequest = require("../models/CustomRequest");
+    const JarvisSession = require("../models/JarvisSession");
+
+    const sessionId = clampString(req.body?.sessionId, 120);
+    const platform = clampString(req.body?.platform, 60);
+    const requestType = clampString(req.body?.requestType, 20);
+    const notes = clampString(req.body?.notes, 2000);
+
+    const rawQty = req.body?.quantity;
+    const rawUnit = req.body?.unitPrice;
+    const quantity = Number.isFinite(Number(rawQty)) ? Number(rawQty) : 1;
+    const unitPrice =
+      rawUnit === null || rawUnit === undefined || rawUnit === ""
+        ? null
+        : Number.isFinite(Number(rawUnit))
+        ? Number(rawUnit)
+        : null;
+
+    if (!platform) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "platform is required" });
+    }
+
+    const normalizedType = ["KYC", "ACCOUNT", "OTHER"].includes(
+      String(requestType || "").toUpperCase()
+    )
+      ? String(requestType || "").toUpperCase()
+      : "OTHER";
+
+    const doc = await CustomRequest.create({
+      sessionId: sessionId || JarvisSession.generateSessionKey(req),
+      userId: req.user?.id || req.user?._id || undefined,
+      platform: platform.toLowerCase(),
+      requestType: normalizedType,
+      quantity: quantity > 0 ? quantity : 1,
+      unitPrice: unitPrice != null && unitPrice >= 0 ? unitPrice : undefined,
+      notes: notes || "",
+      status: "pending",
+    });
+
+    return res.status(200).json({
+      ok: true,
+      message: "Request sent to admin ✅",
+      requestId: String(doc._id),
+    });
+  } catch (err) {
+    console.error(`[JARVISX_CUSTOM_REQUEST_FAIL] errMessage=${err?.message}`);
+    return res.status(200).json({
+      ok: false,
+      message: "Unable to send request right now. Please try again.",
+    });
   }
 };
 
