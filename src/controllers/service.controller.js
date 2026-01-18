@@ -64,7 +64,30 @@ exports.createService = async (req, res) => {
 exports.getActiveServices = async (req, res) => {
   try {
     setNoCache(res);
-    const services = await Service.find({ active: true });
+    const statusRaw = String(req.query?.status || "")
+      .toLowerCase()
+      .trim();
+    const activeRaw = String(req.query?.active ?? req.query?.isActive ?? "")
+      .toLowerCase()
+      .trim();
+
+    // Default: active-only. Allow debug/admin clients to request all.
+    const includeInactive =
+      statusRaw === "all" ||
+      statusRaw === "inactive" ||
+      activeRaw === "0" ||
+      activeRaw === "false";
+
+    const filter = includeInactive ? {} : { active: true };
+    const services = await Service.find(filter);
+
+    if (process.env.DEBUG_REQUESTS === "1") {
+      console.log("[SERVICES_LIST]", {
+        path: req.originalUrl,
+        includeInactive,
+        count: Array.isArray(services) ? services.length : 0,
+      });
+    }
     res.json(services);
   } catch (err) {
     res.status(500).json({ message: err.message });

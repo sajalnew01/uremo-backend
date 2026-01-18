@@ -43,6 +43,8 @@ exports.createDraftService = async (req, res) => {
       active,
     } = req.body || {};
 
+    const resolvedActive = typeof active === "boolean" ? active : true;
+
     if (!title || typeof title !== "string") {
       return res.status(400).json({
         success: false,
@@ -76,7 +78,7 @@ exports.createDraftService = async (req, res) => {
       price: numericPrice,
       currency: (currency || "USD").trim(),
       deliveryType: (deliveryType || "manual").trim(),
-      active: Boolean(active) || false,
+      active: resolvedActive,
       createdBy: req.user._id,
     });
 
@@ -129,7 +131,8 @@ exports.activateService = async (req, res) => {
 // NOTE: Service schema uses `active` boolean (no `status`).
 exports.createService = async (req, res) => {
   try {
-    const { title, price, description, category, tags } = req.body || {};
+    const { title, price, description, category, tags, active, isActive } =
+      req.body || {};
 
     if (!title || price === undefined) {
       return res
@@ -148,6 +151,13 @@ exports.createService = async (req, res) => {
     const baseSlug = slugify(safeTitle);
     const slug = await ensureUniqueSlug(baseSlug || `service-${Date.now()}`);
 
+    const resolvedActive =
+      typeof active === "boolean"
+        ? active
+        : typeof isActive === "boolean"
+          ? isActive
+          : true;
+
     const service = await Service.create({
       title: safeTitle,
       slug,
@@ -156,7 +166,7 @@ exports.createService = async (req, res) => {
       price: numericPrice,
       currency: "USD",
       deliveryType: "manual",
-      active: false,
+      active: resolvedActive,
       createdBy: req.user?._id || req.user?.id || null,
       // tags ignored unless schema adds it later
       _tags: Array.isArray(tags) ? tags : undefined,

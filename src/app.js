@@ -37,6 +37,7 @@ const settingsRoutes = require("./routes/settings.routes");
 const jarvisxRoutes = require("./routes/jarvisx.routes");
 const jarvisxWriteRoutes = require("./routes/jarvisx.write.routes");
 const serviceRequestRoutes = require("./routes/serviceRequest.routes");
+const healthRoutes = require("./routes/health.routes");
 const debugRoutes = require("./routes/debug.routes");
 const adminServicesRoutes = require("./routes/adminServices");
 
@@ -155,10 +156,11 @@ app.use("/api/jarvisx", jarvisxRoutes);
 app.use("/api/jarvisx/write", jarvisxWriteRoutes);
 app.use("/api/service-requests", serviceRequestRoutes);
 app.use("/api/admin", adminServicesRoutes);
+app.use("/api/health", healthRoutes);
 app.use("/api/debug", debugRoutes);
 
-// TEMP: Debug endpoint to list mounted routes
-app.get("/api/__routes", (req, res) => {
+// TEMP: Debug endpoint to list mounted routes (admin-only)
+app.get("/api/__routes", auth, admin, (req, res) => {
   const routes = new Set();
 
   const stack =
