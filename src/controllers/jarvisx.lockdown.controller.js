@@ -583,6 +583,19 @@ exports.chat = async (req, res) => {
         });
       }
 
+      // PATCH_14: Extract and remember service IDs from URLs mentioned in message
+      // e.g., "https://www.uremo.online/services/696ccf0118331ac9398714f8"
+      {
+        const serviceUrlMatch = String(message || "").match(
+          /\/services\/([a-f0-9]{24})\b/i,
+        );
+        if (serviceUrlMatch?.[1]) {
+          session.collectedData = session.collectedData || {};
+          session.collectedData.lastMentionedServiceId = serviceUrlMatch[1];
+          if (typeof session.save === "function") await session.save();
+        }
+      }
+
       // PATCH_11: Admin actions MUST be real (DB write) — never claim success otherwise.
       // We handle common service actions here to keep admin LLM honest.
       // PATCH_13: Extended to include delete and list services for admin
@@ -590,7 +603,8 @@ exports.chat = async (req, res) => {
         const lower = String(message || "").toLowerCase();
         const wantsEditService =
           /^(edit|update)\b/.test(lower) ||
-          /\b(change|modify)\s+service\b/.test(lower);
+          /\b(change|modify)\s+service\b/.test(lower) ||
+          /\b(rename|edit\s+the\s+name)\b/.test(lower);
         const wantsCreateService = /(create|add|new)\s+(a\s+)?service\b/.test(
           lower,
         );
@@ -716,23 +730,48 @@ exports.chat = async (req, res) => {
           }
         }
 
-        // Edit/update service by name (real DB write)
-        // Example: "Edit HFM Japan -> becomes HFM Global KYC and add Mexico"
+        // Edit/update service by name or ID (real DB write)
+        // PATCH_14: Enhanced to support ID from context, URL, or natural language "edit the name to X"
+        // Examples:
+        //   "Edit HFM Japan -> becomes HFM Global KYC and add Mexico"
+        //   "edit the name to airtm crypto gateway" (uses context service ID)
+        //   "edit service 696ccf0118331ac9398714f8 title to New Name"
         if (wantsEditService) {
           try {
-            const fromMatch = String(message || "").match(
-              /(?:edit|update)\s+(.+?)(?:->|\s+to\s+|$)/i,
-            );
-            const becomesMatch = String(message || "").match(
-              /becomes\s+(.+?)(?:\s+and|$)/i,
-            );
-            const addCountriesMatch = String(message || "").match(
-              /\badd\s+([A-Za-z\s,]+)\b/i,
-            );
+            let service = null;
 
-            if (!fromMatch?.[1]) {
+            // PATCH_14: First try to find service by ID if provided in message or recent context
+            if (targetServiceId) {
+              service = await Service.findById(targetServiceId);
+            }
+
+            // PATCH_14: Check if user mentioned a service URL in recent conversation
+            if (!service && session?.collectedData?.lastMentionedServiceId) {
+              service = await Service.findById(
+                session.collectedData.lastMentionedServiceId,
+              );
+            }
+
+            // PATCH_14: Fallback - try to extract service name from message
+            if (!service) {
+              const fromMatch = String(message || "").match(
+                /(?:edit|update)\s+(?:service\s+)?(.+?)(?:->|\s+to\s+|$)/i,
+              );
+              if (fromMatch?.[1]) {
+                const fromName = String(fromMatch[1])
+                  .replace(/^the\s+(name|title|service)\s*/i, "")
+                  .trim();
+                if (fromName && fromName.length > 2) {
+                  service = await Service.findOne({
+                    title: { $regex: escapeRegex(fromName), $options: "i" },
+                  });
+                }
+              }
+            }
+
+            if (!service) {
               const reply =
-                "Please specify the service name to edit. Example: Edit HFM Japan -> becomes HFM Global KYC and add Mexico";
+                "Which service do you want to edit? Please provide the service ID, name, or URL.";
               await sessionManager.addMessage(session, "user", message);
               await sessionManager.addMessage(session, "jarvis", reply);
               return res.json({
@@ -744,26 +783,24 @@ exports.chat = async (req, res) => {
               });
             }
 
-            const fromName = String(fromMatch[1]).trim();
-            const service = await Service.findOne({
-              title: { $regex: fromName, $options: "i" },
-            });
+            // PATCH_14: Extract new title from various patterns
+            const becomesMatch = String(message || "").match(
+              /becomes\s+(.+?)(?:\s+and|$)/i,
+            );
+            const toMatch = String(message || "").match(
+              /(?:name|title)(?:\s+in\s+real\s+time)?\s+to\s+(.+?)(?:\s+and|$)/i,
+            );
+            const renameMatch = String(message || "").match(
+              /rename\s+(?:to\s+)?(.+?)(?:\s+and|$)/i,
+            );
+            const addCountriesMatch = String(message || "").match(
+              /\badd\s+([A-Za-z\s,]+)\b/i,
+            );
 
-            if (!service) {
-              const reply = `Service not found: "${fromName}"`;
-              await sessionManager.addMessage(session, "user", message);
-              await sessionManager.addMessage(session, "jarvis", reply);
-              return res.json({
-                ok: false,
-                reply,
-                intent: "ADMIN_SERVICE_UPDATE_NOT_FOUND",
-                quickReplies: ["List services", "Cancel"],
-                sessionId: session.sessionKey,
-              });
-            }
-
-            if (becomesMatch?.[1]) {
-              service.title = String(becomesMatch[1]).trim().slice(0, 140);
+            const newTitle =
+              becomesMatch?.[1] || toMatch?.[1] || renameMatch?.[1];
+            if (newTitle) {
+              service.title = String(newTitle).trim().slice(0, 140);
               service.slug = slugify(service.title);
             }
 
@@ -783,8 +820,35 @@ exports.chat = async (req, res) => {
               }
             }
 
+            // If nothing to update, ask for clarification
+            if (!newTitle && !addCountriesMatch?.[1]) {
+              const reply = `I found "${service.title}". What changes do you want to make? Example: rename to New Name, add Mexico`;
+              session.collectedData = session.collectedData || {};
+              session.collectedData.lastMentionedServiceId = String(
+                service._id,
+              );
+              if (typeof session.save === "function") await session.save();
+
+              await sessionManager.addMessage(session, "user", message);
+              await sessionManager.addMessage(session, "jarvis", reply);
+              return res.json({
+                ok: true,
+                reply,
+                intent: "ADMIN_SERVICE_UPDATE_WAITING",
+                quickReplies: ["Rename to...", "Update price", "Cancel"],
+                serviceId: String(service._id),
+                sessionId: session.sessionKey,
+              });
+            }
+
             service.updatedAt = new Date();
             await service.save();
+
+            // Clear context
+            if (session?.collectedData?.lastMentionedServiceId) {
+              delete session.collectedData.lastMentionedServiceId;
+              if (typeof session.save === "function") await session.save();
+            }
 
             const reply = `✅ Service updated successfully: "${service.title}" (ID: ${service._id})`;
             await sessionManager.addMessage(session, "user", message);
