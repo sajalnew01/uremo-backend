@@ -1,5 +1,14 @@
 const Service = require("../models/Service");
 
+function setNoCache(res) {
+  res.set(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, proxy-revalidate"
+  );
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+}
+
 const slugify = (str) => {
   return str
     .toLowerCase()
@@ -53,6 +62,7 @@ exports.createService = async (req, res) => {
 
 exports.getActiveServices = async (req, res) => {
   try {
+    setNoCache(res);
     const services = await Service.find({ active: true });
     res.json(services);
   } catch (err) {
@@ -62,6 +72,7 @@ exports.getActiveServices = async (req, res) => {
 
 exports.getServiceById = async (req, res) => {
   try {
+    setNoCache(res);
     const { id } = req.params;
     const service = await Service.findById(id);
 
@@ -77,6 +88,7 @@ exports.getServiceById = async (req, res) => {
 
 exports.getAllServices = async (req, res) => {
   try {
+    setNoCache(res);
     const services = await Service.find().sort({ createdAt: -1 });
     res.json(services);
   } catch (err) {

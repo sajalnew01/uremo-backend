@@ -33,6 +33,40 @@ function clampString(value, maxLen) {
   return v.length <= maxLen ? v : v.slice(0, maxLen);
 }
 
+function slugify(input) {
+  return String(input || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+async function ensureUniqueServiceSlug(baseSlug) {
+  let candidate = baseSlug;
+  let suffix = 1;
+  while (await Service.exists({ slug: candidate })) {
+    suffix += 1;
+    candidate = `${baseSlug}-${suffix}`;
+  }
+  return candidate;
+}
+
+function parsePriceFromText(text) {
+  const match = String(text || "").match(
+    /\$\s*(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s*(usd|dollars?)\b/i
+  );
+  if (!match) return null;
+  const value = Number(match[1] || match[2]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function extractMongoId(text) {
+  const match = String(text || "").match(/\b[0-9a-f]{24}\b/i);
+  return match ? match[0] : null;
+}
+
 function isAdminUser(req) {
   return req.user?.role === "admin";
 }
@@ -510,6 +544,194 @@ exports.chat = async (req, res) => {
           quickReplies: ["Re-login", "Try again"],
           sessionId: session.sessionKey,
         });
+      }
+
+      // PATCH_11: Admin actions MUST be real (DB write) — never claim success otherwise.
+      // We handle common service actions here to keep admin LLM honest.
+      {
+        const lower = String(message || "").toLowerCase();
+        const wantsCreateService = /(create|add|new)\s+(a\s+)?service\b/.test(
+          lower
+        );
+        const wantsActivateService =
+          /(activate|publish)\s+(a\s+)?service\b/.test(lower);
+        const targetServiceId = extractMongoId(message);
+
+        // Activate service by id
+        if (wantsActivateService && targetServiceId) {
+          try {
+            const updated = await Service.findByIdAndUpdate(
+              targetServiceId,
+              { active: true },
+              { new: true }
+            );
+
+            const reply = updated
+              ? `Activated: ${updated.title} ($${updated.price}).`
+              : "I couldn't find that service id to activate.";
+
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", reply);
+            return res.json({
+              ok: !!updated,
+              reply,
+              intent: updated
+                ? "ADMIN_SERVICE_ACTIVATE"
+                : "ADMIN_SERVICE_ACTIVATE_FAIL",
+              quickReplies: updated
+                ? ["Create service", "Orders"]
+                : ["Try again"],
+              sessionId: session.sessionKey,
+            });
+          } catch (err) {
+            const reply = "Activation failed due to a database error.";
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", reply);
+            return res.json({
+              ok: false,
+              reply,
+              intent: "ADMIN_SERVICE_ACTIVATE_ERROR",
+              quickReplies: ["Try again"],
+              sessionId: session.sessionKey,
+            });
+          }
+        }
+
+        // If we previously asked for missing price, accept price and create
+        if (session?.metadata?.pendingService && !wantsCreateService) {
+          const price = parsePriceFromText(message);
+          if (price !== null) {
+            const pending = session.metadata.pendingService;
+            try {
+              const baseSlug = slugify(pending.title);
+              const slug = await ensureUniqueServiceSlug(
+                baseSlug || `service-${Date.now()}`
+              );
+
+              const created = await Service.create({
+                title: pending.title,
+                slug,
+                category: pending.category || "general",
+                description: pending.description || "Service created by admin",
+                price,
+                currency: pending.currency || "USD",
+                deliveryType: pending.deliveryType || "manual",
+                active: true,
+                createdBy: req.user?._id || req.user?.id,
+              });
+
+              delete session.metadata.pendingService;
+              if (typeof session.save === "function") {
+                await session.save();
+              }
+
+              const reply = `Created service: ${created.title} ($${created.price}).`;
+              await sessionManager.addMessage(session, "user", message);
+              await sessionManager.addMessage(session, "jarvis", reply);
+              return res.json({
+                ok: true,
+                reply,
+                intent: "ADMIN_SERVICE_CREATE",
+                quickReplies: ["Create service", "Orders"],
+                sessionId: session.sessionKey,
+              });
+            } catch (err) {
+              const reply =
+                "I tried to create the service, but the database write failed.";
+              await sessionManager.addMessage(session, "user", message);
+              await sessionManager.addMessage(session, "jarvis", reply);
+              return res.json({
+                ok: false,
+                reply,
+                intent: "ADMIN_SERVICE_CREATE_ERROR",
+                quickReplies: ["Try again"],
+                sessionId: session.sessionKey,
+              });
+            }
+          }
+        }
+
+        // Create service
+        if (wantsCreateService) {
+          const price = parsePriceFromText(message);
+
+          const titleMatch = String(message || "")
+            .replace(/\s+/g, " ")
+            .match(/service\s*(?:called|named)?\s*[:\-]?\s*"?([^"\n]+)"?/i);
+          const title = (titleMatch ? titleMatch[1] : "New Service")
+            .trim()
+            .slice(0, 120);
+
+          if (price === null) {
+            session.metadata =
+              session.metadata && typeof session.metadata === "object"
+                ? session.metadata
+                : {};
+            session.metadata.pendingService = {
+              title,
+              category: "general",
+              description: "Service created by admin",
+              currency: "USD",
+              deliveryType: "manual",
+            };
+            if (typeof session.save === "function") {
+              await session.save();
+            }
+
+            const reply = `Got it. What's the price for "${title}"? (e.g. "$49" or "49 USD")`;
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", reply);
+            return res.json({
+              ok: true,
+              reply,
+              intent: "ADMIN_SERVICE_CREATE_NEEDS_PRICE",
+              quickReplies: [],
+              sessionId: session.sessionKey,
+            });
+          }
+
+          try {
+            const baseSlug = slugify(title);
+            const slug = await ensureUniqueServiceSlug(
+              baseSlug || `service-${Date.now()}`
+            );
+
+            const created = await Service.create({
+              title,
+              slug,
+              category: "general",
+              description: "Service created by admin",
+              price,
+              currency: "USD",
+              deliveryType: "manual",
+              active: true,
+              createdBy: req.user?._id || req.user?.id,
+            });
+
+            const reply = `Created service: ${created.title} ($${created.price}).`;
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", reply);
+            return res.json({
+              ok: true,
+              reply,
+              intent: "ADMIN_SERVICE_CREATE",
+              quickReplies: ["Create service", "Orders"],
+              sessionId: session.sessionKey,
+            });
+          } catch (err) {
+            const reply =
+              "I couldn't create the service because the database write failed.";
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", reply);
+            return res.json({
+              ok: false,
+              reply,
+              intent: "ADMIN_SERVICE_CREATE_ERROR",
+              quickReplies: ["Try again"],
+              sessionId: session.sessionKey,
+            });
+          }
+        }
       }
 
       // Greeting fallback ONLY if it's a greeting AND there is no session history.
