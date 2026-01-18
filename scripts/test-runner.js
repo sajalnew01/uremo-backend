@@ -21,6 +21,56 @@ const DEFAULT_CANDIDATES = [
   "https://uremo-backend.onrender.com",
 ];
 
+function isInteractiveTty() {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
+
+function promptLine(question) {
+  return new Promise((resolve) => {
+    process.stdout.write(question);
+    const chunks = [];
+    process.stdin.setEncoding("utf8");
+    process.stdin.once("data", (data) => {
+      chunks.push(String(data));
+      resolve(chunks.join("").trim());
+    });
+  });
+}
+
+function promptHidden(question) {
+  return new Promise((resolve) => {
+    // Some VS Code terminals don't handle stdin raw-mode reliably.
+    // Use readline + a Writable that conditionally mutes output.
+    const readline = require("readline");
+    const { Writable } = require("stream");
+
+    let muted = false;
+    const mutableStdout = new Writable({
+      write(chunk, encoding, callback) {
+        if (!muted) {
+          process.stdout.write(chunk, encoding);
+        }
+        callback();
+      },
+    });
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: mutableStdout,
+      terminal: true,
+    });
+
+    rl.question(question, (answer) => {
+      muted = false;
+      rl.close();
+      resolve(String(answer || ""));
+    });
+
+    // After printing the prompt, mute subsequent keystrokes.
+    muted = true;
+  });
+}
+
 function parseArgs(argv) {
   const out = { base: null, auth: false, email: null, password: null };
   for (const raw of argv.slice(2)) {
@@ -45,7 +95,7 @@ function withTimeout(promise, timeoutMs, label) {
   });
 
   return Promise.race([promise, timeout]).finally(() =>
-    clearTimeout(timeoutId)
+    clearTimeout(timeoutId),
   );
 }
 
@@ -73,7 +123,7 @@ async function canReach(base) {
         method: "GET",
         headers: { Accept: "application/json" },
       },
-      2500
+      2500,
     );
 
     return res.ok && typeof body === "object";
@@ -118,7 +168,7 @@ async function testHealth(base) {
   const { res, body, text } = await fetchJson(
     `${base}/api/health`,
     { method: "GET" },
-    8000
+    8000,
   );
   if (!res.ok) {
     fail(`/api/health returned HTTP ${res.status}`, text);
@@ -135,7 +185,7 @@ async function testServices(base) {
   const { res, body, text } = await fetchJson(
     `${base}/api/services`,
     { method: "GET" },
-    12000
+    12000,
   );
   if (!res.ok) {
     fail(`/api/services returned HTTP ${res.status}`, text);
@@ -149,12 +199,23 @@ async function testServices(base) {
 }
 
 async function testAuthOrdersMy(base, creds) {
-  const email = String(creds?.email || process.env.TEST_EMAIL || "").trim();
-  const password = String(creds?.password || process.env.TEST_PASSWORD || "");
+  let email = String(creds?.email || process.env.TEST_EMAIL || "").trim();
+  let password = String(creds?.password || process.env.TEST_PASSWORD || "");
+
+  if ((!email || !password) && isInteractiveTty()) {
+    if (!email) {
+      // eslint-disable-next-line no-await-in-loop
+      email = String((await promptLine("Enter admin email: ")) || "").trim();
+    }
+    if (!password) {
+      // eslint-disable-next-line no-await-in-loop
+      password = String((await promptHidden("Enter admin password: ")) || "");
+    }
+  }
 
   if (!email || !password) {
     fail(
-      "--auth requires credentials via --email/--password or TEST_EMAIL/TEST_PASSWORD env vars"
+      "--auth requires credentials via --email/--password or TEST_EMAIL/TEST_PASSWORD env vars",
     );
     return;
   }
@@ -171,7 +232,7 @@ async function testAuthOrdersMy(base, creds) {
       headers: { "Content-Type": "application/json" },
       body: loginPayload,
     },
-    12000
+    12000,
   );
 
   if (!loginRes.ok) {
@@ -196,7 +257,7 @@ async function testAuthOrdersMy(base, creds) {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
     },
-    12000
+    12000,
   );
 
   if (!ordersRes.ok) {
@@ -210,6 +271,112 @@ async function testAuthOrdersMy(base, creds) {
   }
 
   pass(`/api/orders/my ok (${ordersBody.length} orders)`);
+
+  // PATCH_11: Validate JarvisX admin service activation path does real DB update
+  try {
+    const {
+      res: servicesRes,
+      body: servicesBody,
+      text: servicesText,
+    } = await fetchJson(`${base}/api/services`, { method: "GET" }, 12000);
+    if (!servicesRes.ok || !Array.isArray(servicesBody) || !servicesBody[0]) {
+      fail("Could not fetch services for JarvisX admin test", servicesText);
+      return;
+    }
+
+    const serviceId = servicesBody[0]._id;
+    if (!serviceId || typeof serviceId !== "string") {
+      fail("Service item missing _id for JarvisX admin test");
+      return;
+    }
+
+    const activatePayload = JSON.stringify({
+      mode: "admin",
+      message: `activate service ${serviceId}`,
+    });
+
+    const {
+      res: jarvisRes,
+      body: jarvisBody,
+      text: jarvisText,
+    } = await fetchJson(
+      `${base}/api/jarvisx/chat`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: activatePayload,
+      },
+      20000,
+    );
+
+    if (!jarvisRes.ok) {
+      fail(
+        `/api/jarvisx/chat (admin) returned HTTP ${jarvisRes.status}`,
+        jarvisText,
+      );
+      return;
+    }
+    if (!jarvisBody || typeof jarvisBody !== "object") {
+      fail("/api/jarvisx/chat (admin) did not return JSON", jarvisText);
+      return;
+    }
+    if (jarvisBody.ok !== true) {
+      fail("JarvisX admin activation did not succeed", jarvisText);
+      return;
+    }
+
+    pass("JarvisX admin activation ok (real DB write path)");
+
+    const badIdPayload = JSON.stringify({
+      mode: "admin",
+      message: "activate service 000000000000000000000000",
+    });
+    const {
+      res: jarvisBadRes,
+      body: jarvisBadBody,
+      text: jarvisBadText,
+    } = await fetchJson(
+      `${base}/api/jarvisx/chat`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: badIdPayload,
+      },
+      20000,
+    );
+
+    if (!jarvisBadRes.ok) {
+      fail(
+        `/api/jarvisx/chat (admin bad id) returned HTTP ${jarvisBadRes.status}`,
+        jarvisBadText,
+      );
+      return;
+    }
+    if (!jarvisBadBody || typeof jarvisBadBody !== "object") {
+      fail(
+        "/api/jarvisx/chat (admin bad id) did not return JSON",
+        jarvisBadText,
+      );
+      return;
+    }
+    if (jarvisBadBody.ok !== false) {
+      fail("JarvisX admin bad-id should return ok:false", jarvisBadText);
+      return;
+    }
+
+    pass("JarvisX admin bad-id correctly returns ok:false");
+  } catch (err) {
+    fail(
+      "JarvisX admin service action smoke test threw",
+      err?.stack || String(err),
+    );
+  }
 }
 
 async function main() {
@@ -225,7 +392,7 @@ async function main() {
   if (!reachable) {
     fail(
       `Backend not reachable at ${normalizedBase}. Set UREMO_API_BASE or run the server locally.`,
-      `Tried: ${DEFAULT_CANDIDATES.join(", ")}`
+      `Tried: ${DEFAULT_CANDIDATES.join(", ")}`,
     );
     return;
   }
@@ -240,7 +407,7 @@ async function main() {
     });
   } else {
     console.log(
-      "ℹ️  Auth test skipped (run with --auth + TEST_EMAIL/TEST_PASSWORD). "
+      "ℹ️  Auth test skipped (run with --auth + TEST_EMAIL/TEST_PASSWORD). ",
     );
   }
 
