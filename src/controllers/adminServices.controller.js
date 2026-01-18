@@ -270,3 +270,31 @@ exports.updateService = async (req, res) => {
     });
   }
 };
+
+// PATCH_13: Delete service endpoint
+exports.deleteService = async (req, res) => {
+  try {
+    const serviceId = req.params?.id || req.body?.serviceId;
+    if (!serviceId) {
+      return res.status(400).json({ ok: false, message: "serviceId required" });
+    }
+
+    const service = await Service.findByIdAndDelete(serviceId);
+    if (!service) {
+      return res.status(404).json({ ok: false, message: "Service not found" });
+    }
+
+    return res.json({
+      ok: true,
+      message: "Service deleted",
+      serviceId: service._id,
+    });
+  } catch (err) {
+    console.error("[Admin] deleteService error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to delete service",
+      error: err?.message,
+    });
+  }
+};

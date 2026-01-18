@@ -585,6 +585,7 @@ exports.chat = async (req, res) => {
 
       // PATCH_11: Admin actions MUST be real (DB write) — never claim success otherwise.
       // We handle common service actions here to keep admin LLM honest.
+      // PATCH_13: Extended to include delete and list services for admin
       {
         const lower = String(message || "").toLowerCase();
         const wantsEditService =
@@ -595,7 +596,125 @@ exports.chat = async (req, res) => {
         );
         const wantsActivateService =
           /(activate|publish)\s+(a\s+)?service\b/.test(lower);
+        const wantsDeleteService = /(delete|remove)\s+(a\s+)?service\b/.test(
+          lower,
+        );
+        const wantsListServices =
+          /(list|show|view)\s+(all\s+)?services?\b/.test(lower);
         const targetServiceId = extractMongoId(message);
+
+        // PATCH_13: List services for admin
+        if (wantsListServices) {
+          try {
+            const services = await Service.find({})
+              .sort({ createdAt: -1 })
+              .limit(20)
+              .lean();
+
+            if (!services.length) {
+              const reply = "No services found in the database.";
+              await sessionManager.addMessage(session, "user", message);
+              await sessionManager.addMessage(session, "jarvis", reply);
+              return res.json({
+                ok: true,
+                reply,
+                intent: "ADMIN_SERVICE_LIST",
+                quickReplies: ["Create service"],
+                sessionId: session.sessionKey,
+              });
+            }
+
+            const lines = services.map(
+              (s) =>
+                `• ${s.title} - $${s.price} (${s.active ? "active" : "inactive"}) [${s._id}]`,
+            );
+            const reply = `Services (${services.length}):\n${lines.join("\n")}`;
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", reply);
+            return res.json({
+              ok: true,
+              reply,
+              intent: "ADMIN_SERVICE_LIST",
+              quickReplies: ["Create service", "Edit service"],
+              sessionId: session.sessionKey,
+            });
+          } catch (err) {
+            const reply = `❌ Failed to list services: ${err?.message || "Unknown error"}`;
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", reply);
+            return res.json({
+              ok: false,
+              reply,
+              intent: "ADMIN_SERVICE_LIST_ERROR",
+              quickReplies: ["Try again"],
+              sessionId: session.sessionKey,
+            });
+          }
+        }
+
+        // PATCH_13: Delete service by ID or name
+        if (wantsDeleteService) {
+          try {
+            let service = null;
+
+            if (targetServiceId) {
+              service = await Service.findById(targetServiceId);
+            } else {
+              // Try to find by name
+              const nameMatch = String(message || "").match(
+                /(?:delete|remove)\s+(?:service\s+)?(.+)/i,
+              );
+              if (nameMatch?.[1]) {
+                const searchName = String(nameMatch[1]).trim();
+                service = await Service.findOne({
+                  title: { $regex: searchName, $options: "i" },
+                });
+              }
+            }
+
+            if (!service) {
+              const reply =
+                "Please specify the service ID or name to delete. Example: Delete service Airtm Payment";
+              await sessionManager.addMessage(session, "user", message);
+              await sessionManager.addMessage(session, "jarvis", reply);
+              return res.json({
+                ok: false,
+                reply,
+                intent: "ADMIN_SERVICE_DELETE_NEEDS_TARGET",
+                quickReplies: ["List services", "Cancel"],
+                sessionId: session.sessionKey,
+              });
+            }
+
+            const deletedTitle = service.title;
+            const deletedId = service._id;
+            await Service.findByIdAndDelete(service._id);
+
+            const reply = `✅ Service deleted: "${deletedTitle}" (ID: ${deletedId})`;
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", reply);
+            return res.json({
+              ok: true,
+              reply,
+              intent: "ADMIN_SERVICE_DELETE",
+              quickReplies: ["List services", "Create service"],
+              serviceId: String(deletedId),
+              sessionId: session.sessionKey,
+              realAction: true,
+            });
+          } catch (err) {
+            const reply = `❌ Failed to delete service: ${err?.message || "Unknown error"}`;
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", reply);
+            return res.json({
+              ok: false,
+              reply,
+              intent: "ADMIN_SERVICE_DELETE_ERROR",
+              quickReplies: ["Try again", "Cancel"],
+              sessionId: session.sessionKey,
+            });
+          }
+        }
 
         // Edit/update service by name (real DB write)
         // Example: "Edit HFM Japan -> becomes HFM Global KYC and add Mexico"

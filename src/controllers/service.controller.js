@@ -79,7 +79,17 @@ exports.getActiveServices = async (req, res) => {
       activeRaw === "false";
 
     const filter = includeInactive ? {} : { active: true };
-    const services = await Service.find(filter);
+
+    // PATCH_13: Support category filter
+    const categoryRaw = String(req.query?.category || "").trim();
+    if (categoryRaw && categoryRaw !== "all") {
+      filter.category = categoryRaw;
+    }
+
+    const services = await Service.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean();
 
     if (process.env.DEBUG_REQUESTS === "1") {
       console.log("[SERVICES_LIST]", {
@@ -88,9 +98,21 @@ exports.getActiveServices = async (req, res) => {
         count: Array.isArray(services) ? services.length : 0,
       });
     }
-    res.json(services);
+
+    // PATCH_13: Return consistent response with ok flag and services array
+    return res.json({
+      ok: true,
+      services: Array.isArray(services) ? services : [],
+      count: services.length,
+      ts: new Date().toISOString(),
+    });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("[Services] GET error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to load services",
+      error: err.message,
+    });
   }
 };
 

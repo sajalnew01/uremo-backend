@@ -179,8 +179,8 @@ function normalizeActionItem(input) {
   const payload = isPlainObject(input.payload)
     ? input.payload
     : isPlainObject(input.args)
-    ? input.args
-    : null;
+      ? input.args
+      : null;
   if (!isPlainObject(payload)) return null;
 
   const note = clampString(input.note, 400);
@@ -236,19 +236,21 @@ exports.propose = async (req, res) => {
           .map(
             (m) =>
               `- [${String(m.source)}|c=${Number(m.confidence).toFixed(
-                2
+                2,
               )}] trigger: ${clampString(
                 m.triggerText,
-                160
-              )} | response: ${clampString(m.correctResponse, 220)}`
+                160,
+              )} | response: ${clampString(m.correctResponse, 220)}`,
           )
           .join("\n")}`
       : "";
 
     if (!config.configured) {
+      // PATCH_13: Return graceful fallback when GROQ key missing
       proposal = {
         actions: [],
         previewText: `AI provider (groq) is not configured. Please set GROQ_API_KEY in environment variables.`,
+        fallback: true,
       };
     } else {
       // P0 FIX: Enhanced system prompt with required fields for service.create
@@ -310,7 +312,7 @@ exports.propose = async (req, res) => {
           { role: "system", content: system },
           { role: "user", content: user },
         ],
-        { temperature: 0.1, max_tokens: 1200 }
+        { temperature: 0.1, max_tokens: 1200 },
       );
 
       const firstText = String(first?.choices?.[0]?.message?.content || "");
@@ -329,7 +331,7 @@ exports.propose = async (req, res) => {
                 "Your response was not valid JSON. Please return ONLY valid JSON with no markdown, no code fences, no extra text. Start with { and end with }",
             },
           ],
-          { temperature: 0.1, max_tokens: 1200 }
+          { temperature: 0.1, max_tokens: 1200 },
         );
 
         const retryText = String(retry?.choices?.[0]?.message?.content || "");
@@ -356,7 +358,8 @@ exports.propose = async (req, res) => {
           // Build helpful error message for UI
           const errorDetails = validation.actionErrors
             .map(
-              (e) => `Action ${e.index + 1} (${e.type}): ${e.errors.join(", ")}`
+              (e) =>
+                `Action ${e.index + 1} (${e.type}): ${e.errors.join(", ")}`,
             )
             .join("\n");
 
@@ -410,6 +413,7 @@ exports.propose = async (req, res) => {
     actions: created.actions,
     previewText: created.previewText,
     validationErrors: created.validationErrors || [],
+    fallback: proposal.fallback || false,
   });
 };
 
@@ -514,11 +518,11 @@ exports.approveAndExecute = async (req, res) => {
       new Set(
         validation.actionErrors
           .flatMap((e) =>
-            Array.isArray(e.missingFields) ? e.missingFields : []
+            Array.isArray(e.missingFields) ? e.missingFields : [],
           )
           .map((f) => String(f || "").trim())
-          .filter(Boolean)
-      )
+          .filter(Boolean),
+      ),
     );
 
     // Return a structured, non-throwing response so the frontend can show EDIT_REQUIRED.
@@ -582,7 +586,7 @@ exports.approveAndExecute = async (req, res) => {
           actions: doc.actions || [],
         },
         null,
-        2
+        2,
       ),
       tags: extractTagsFromActions(doc.actions),
       confidence: 0.8,
@@ -651,7 +655,7 @@ exports.listMemory = async (req, res) => {
   if (
     source &&
     ["admin_correction", "approval", "rejection", "system_outcome"].includes(
-      source
+      source,
     )
   ) {
     filter.source = source;
