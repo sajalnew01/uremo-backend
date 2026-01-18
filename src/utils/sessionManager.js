@@ -13,7 +13,7 @@ function wrapNonThrowingSave(session) {
       console.error(
         `[JARVISX_SESSION_SAVE_FAIL] errMessage=${err?.message}\n${
           err?.stack || ""
-        }`
+        }`,
       );
       return session;
     }
@@ -35,9 +35,9 @@ class SessionManager {
       const adminId = req?.user?._id || req?.user?.id;
       if (!adminId) {
         console.error(
-          "[JarvisX] ADMIN mode called without req.user — auth middleware missing!"
+          "[JarvisX] ADMIN mode called without req.user — auth middleware missing!",
         );
-        sessionKey = "admin:missing";
+        sessionKey = "admin:unknown";
       } else {
         sessionKey = `admin:${adminId}`;
       }
@@ -62,7 +62,7 @@ class SessionManager {
       console.error(
         `[JARVISX_SESSION_FIND_FAIL] errMessage=${err?.message}\n${
           err?.stack || ""
-        }`
+        }`,
       );
       // Mongo down / buffering timeout: return volatile in-memory session.
       return {
@@ -104,7 +104,7 @@ class SessionManager {
       }
 
       const name = String(
-        req.user?.name || req.user?.fullName || "Admin"
+        req.user?.name || req.user?.fullName || "Admin",
       ).trim();
       const email = String(req.user?.email || "").trim();
       const role = String(req.user?.role || "admin").trim() || "admin";
@@ -115,6 +115,7 @@ class SessionManager {
         email,
         name: name || "Admin",
         role,
+        identifiedAt: new Date(),
       };
 
       // If token doesn't include email/name, best-effort hydrate from DB.
@@ -198,7 +199,7 @@ class SessionManager {
     ];
 
     const isConfused = confusionPatterns.some((pattern) =>
-      pattern.test(String(currentUserText || ""))
+      pattern.test(String(currentUserText || "")),
     );
 
     return isConfused && this.hasAsked(session, currentQuestionKey);
@@ -230,7 +231,7 @@ class SessionManager {
       console.error(
         `[JARVISX_SESSION_WRITE_FAIL] errMessage=${err?.message}\n${
           err?.stack || ""
-        }`
+        }`,
       );
     }
   }

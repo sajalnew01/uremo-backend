@@ -3,10 +3,11 @@ const Service = require("../models/Service");
 function setNoCache(res) {
   res.set(
     "Cache-Control",
-    "no-store, no-cache, must-revalidate, proxy-revalidate"
+    "no-store, no-cache, must-revalidate, proxy-revalidate",
   );
   res.set("Pragma", "no-cache");
   res.set("Expires", "0");
+  res.set("Surrogate-Control", "no-store");
 }
 
 const slugify = (str) => {
@@ -135,16 +136,16 @@ exports.updateService = async (req, res) => {
       typeof deliveryType === "string"
         ? deliveryType
         : typeof type === "string"
-        ? type
-        : undefined;
+          ? type
+          : undefined;
     if (resolvedDeliveryType) payload.deliveryType = resolvedDeliveryType;
 
     const resolvedActive =
       typeof active === "boolean"
         ? active
         : typeof isActive === "boolean"
-        ? isActive
-        : undefined;
+          ? isActive
+          : undefined;
     if (resolvedActive !== undefined) payload.active = resolvedActive;
 
     const service = await Service.findByIdAndUpdate(id, payload, {

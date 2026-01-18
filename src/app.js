@@ -38,7 +38,7 @@ const jarvisxRoutes = require("./routes/jarvisx.routes");
 const jarvisxWriteRoutes = require("./routes/jarvisx.write.routes");
 const serviceRequestRoutes = require("./routes/serviceRequest.routes");
 const debugRoutes = require("./routes/debug.routes");
-const adminServicesRoutes = require("./routes/admin.services.routes");
+const adminServicesRoutes = require("./routes/adminServices");
 
 const auth = require("./middlewares/auth.middleware");
 const admin = require("./middlewares/admin.middleware");
@@ -128,7 +128,7 @@ app.get("/api/debug/chat-health", auth, admin, async (req, res) => {
     });
   } catch (err) {
     console.error(
-      `[DEBUG_CHAT_HEALTH_FAIL] orderId=${orderId} errMessage=${err?.message}`
+      `[DEBUG_CHAT_HEALTH_FAIL] orderId=${orderId} errMessage=${err?.message}`,
     );
     return res.status(500).json({ message: "Debug endpoint error" });
   }

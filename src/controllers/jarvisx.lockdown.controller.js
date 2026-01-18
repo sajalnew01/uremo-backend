@@ -55,7 +55,7 @@ async function ensureUniqueServiceSlug(baseSlug) {
 
 function parsePriceFromText(text) {
   const match = String(text || "").match(
-    /\$\s*(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s*(usd|dollars?)\b/i
+    /\$\s*(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s*(usd|dollars?)\b/i,
   );
   if (!match) return null;
   const value = Number(match[1] || match[2]);
@@ -69,6 +69,29 @@ function extractMongoId(text) {
 
 function isAdminUser(req) {
   return req.user?.role === "admin";
+}
+
+function scrubAdminUnsafePhrases(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return raw;
+
+  const lower = raw.toLowerCase();
+
+  // Never allow LLM disclaimers / credential fishing in admin UI.
+  if (lower.includes("large language model") || lower.includes("as an ai")) {
+    return "I can help with UREMO admin status and actions. Tell me what to check or change.";
+  }
+
+  // If the model asks for secrets/credentials, replace with a safe guidance.
+  if (
+    /(password|api key|secret key|jwt secret|access token|refresh token|credentials)/i.test(
+      raw,
+    )
+  ) {
+    return "For security, I can’t request or process credentials here. Use the Admin panel or environment variables already configured.";
+  }
+
+  return raw;
 }
 
 function getGroqStatus() {
@@ -189,7 +212,7 @@ exports.llmStatus = async (req, res) => {
           content: "Reply with the single word 'ok'. Do not add punctuation.",
         },
       ],
-      { temperature: 0, max_tokens: 5, model }
+      { temperature: 0, max_tokens: 5, model },
     );
 
     const text = String(completion?.choices?.[0]?.message?.content || "")
@@ -226,7 +249,7 @@ async function getPublicContextObject() {
         .sort({ createdAt: -1 })
         .limit(50)
         .lean(),
-    ]
+    ],
   );
 
   return {
@@ -384,13 +407,13 @@ function brainV1GetNextStep(session, intent) {
 
 async function brainV1GenerateAdminResponse(message, intent, session) {
   const prompt = `You are JarvisX, the AI twin for UREMO admin.\nCurrent intent: ${intent}\nSession context: ${JSON.stringify(
-    session?.collectedData || {}
+    session?.collectedData || {},
   )}\nUser message: ${message}\n\nRespond as the admin's assistant. Be concise, helpful, and action-oriented.\nNEVER say \"contact admin\" or \"I'm not sure\".\nFormat: \"Yes boss ✅ [action/response]\"`;
 
   try {
     const completion = await groqChatCompletion(
       [{ role: "user", content: prompt }],
-      { temperature: 0.3, max_tokens: 150 }
+      { temperature: 0.3, max_tokens: 150 },
     );
 
     const text = completion?.choices?.[0]?.message?.content;
@@ -442,17 +465,27 @@ exports.chat = async (req, res) => {
 
   if (wantsAdmin) {
     if (!req.user?.id && !req.user?._id) {
-      return res.status(401).json({ message: "Authentication required" });
+      return res.status(200).json({
+        ok: false,
+        reply: "Admin mode requires admin login. Please login as admin again.",
+        intent: "AUTH_REQUIRED",
+        quickReplies: ["Re-login"],
+      });
     }
     if (!isAdmin) {
-      return res.status(403).json({ message: "Admin access required" });
+      return res.status(200).json({
+        ok: false,
+        reply: "Admin mode requires admin login. Please login as admin again.",
+        intent: "ADMIN_REQUIRED",
+        quickReplies: ["Re-login"],
+      });
     }
   }
 
   try {
     const session = await sessionManager.getOrCreateSession(
       req,
-      wantsAdmin ? "admin" : "public"
+      wantsAdmin ? "admin" : "public",
     );
     session.collectedData = session.collectedData || {};
 
@@ -471,10 +504,10 @@ exports.chat = async (req, res) => {
       try {
         const lower = String(message || "").toLowerCase();
         const emailMatch = lower.match(
-          /\b([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\b/i
+          /\b([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\b/i,
         );
         const nameMatch = String(message || "").match(
-          /\bmy\s+name\s+is\s+([a-z][a-z\s'.-]{1,40})\b/i
+          /\bmy\s+name\s+is\s+([a-z][a-z\s'.-]{1,40})\b/i,
         );
 
         if (!session.metadata || typeof session.metadata !== "object") {
@@ -508,6 +541,10 @@ exports.chat = async (req, res) => {
         normalized.includes("what is my name") ||
         normalized.includes("so what's my name") ||
         normalized.includes("so whats my name") ||
+        normalized.includes("whats my name") ||
+        normalized.includes("tell me my name") ||
+        normalized.includes("my email") ||
+        normalized.includes("do you remember me") ||
         normalized.includes("do you recognize me") ||
         normalized.includes("identify me") ||
         (normalized.includes("my name") && normalized.includes("what"));
@@ -550,12 +587,111 @@ exports.chat = async (req, res) => {
       // We handle common service actions here to keep admin LLM honest.
       {
         const lower = String(message || "").toLowerCase();
+        const wantsEditService =
+          /^(edit|update)\b/.test(lower) ||
+          /\b(change|modify)\s+service\b/.test(lower);
         const wantsCreateService = /(create|add|new)\s+(a\s+)?service\b/.test(
-          lower
+          lower,
         );
         const wantsActivateService =
           /(activate|publish)\s+(a\s+)?service\b/.test(lower);
         const targetServiceId = extractMongoId(message);
+
+        // Edit/update service by name (real DB write)
+        // Example: "Edit HFM Japan -> becomes HFM Global KYC and add Mexico"
+        if (wantsEditService) {
+          try {
+            const fromMatch = String(message || "").match(
+              /(?:edit|update)\s+(.+?)(?:->|\s+to\s+|$)/i,
+            );
+            const becomesMatch = String(message || "").match(
+              /becomes\s+(.+?)(?:\s+and|$)/i,
+            );
+            const addCountriesMatch = String(message || "").match(
+              /\badd\s+([A-Za-z\s,]+)\b/i,
+            );
+
+            if (!fromMatch?.[1]) {
+              const reply =
+                "Please specify the service name to edit. Example: Edit HFM Japan -> becomes HFM Global KYC and add Mexico";
+              await sessionManager.addMessage(session, "user", message);
+              await sessionManager.addMessage(session, "jarvis", reply);
+              return res.json({
+                ok: false,
+                reply,
+                intent: "ADMIN_SERVICE_UPDATE_NEEDS_TARGET",
+                quickReplies: ["List services", "Cancel"],
+                sessionId: session.sessionKey,
+              });
+            }
+
+            const fromName = String(fromMatch[1]).trim();
+            const service = await Service.findOne({
+              title: { $regex: fromName, $options: "i" },
+            });
+
+            if (!service) {
+              const reply = `Service not found: "${fromName}"`;
+              await sessionManager.addMessage(session, "user", message);
+              await sessionManager.addMessage(session, "jarvis", reply);
+              return res.json({
+                ok: false,
+                reply,
+                intent: "ADMIN_SERVICE_UPDATE_NOT_FOUND",
+                quickReplies: ["List services", "Cancel"],
+                sessionId: session.sessionKey,
+              });
+            }
+
+            if (becomesMatch?.[1]) {
+              service.title = String(becomesMatch[1]).trim().slice(0, 140);
+              service.slug = slugify(service.title);
+            }
+
+            if (addCountriesMatch?.[1]) {
+              const list = String(addCountriesMatch[1])
+                .split(/,\s*/)
+                .map((x) => x.trim())
+                .filter(Boolean);
+
+              // Schema does not include countries, so append safely.
+              if (list.length > 0) {
+                const current = String(service.description || "").trim();
+                const suffix = `Available countries: ${list.join(", ")}`;
+                service.description = current
+                  ? `${current}\n${suffix}`
+                  : suffix;
+              }
+            }
+
+            service.updatedAt = new Date();
+            await service.save();
+
+            const reply = `✅ Service updated successfully: "${service.title}" (ID: ${service._id})`;
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", reply);
+            return res.json({
+              ok: true,
+              reply,
+              intent: "ADMIN_SERVICE_UPDATE",
+              quickReplies: ["Edit another", "Done"],
+              serviceId: String(service._id),
+              sessionId: session.sessionKey,
+              realAction: true,
+            });
+          } catch (err) {
+            const reply = `❌ Failed to update service: ${err?.message || "Unknown error"}`;
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", reply);
+            return res.json({
+              ok: false,
+              reply,
+              intent: "ADMIN_SERVICE_UPDATE_ERROR",
+              quickReplies: ["Try again", "Cancel"],
+              sessionId: session.sessionKey,
+            });
+          }
+        }
 
         // Activate service by id
         if (wantsActivateService && targetServiceId) {
@@ -563,7 +699,7 @@ exports.chat = async (req, res) => {
             const updated = await Service.findByIdAndUpdate(
               targetServiceId,
               { active: true },
-              { new: true }
+              { new: true },
             );
 
             const reply = updated
@@ -605,7 +741,7 @@ exports.chat = async (req, res) => {
             try {
               const baseSlug = slugify(pending.title);
               const slug = await ensureUniqueServiceSlug(
-                baseSlug || `service-${Date.now()}`
+                baseSlug || `service-${Date.now()}`,
               );
 
               const created = await Service.create({
@@ -693,7 +829,7 @@ exports.chat = async (req, res) => {
           try {
             const baseSlug = slugify(title);
             const slug = await ensureUniqueServiceSlug(
-              baseSlug || `service-${Date.now()}`
+              baseSlug || `service-${Date.now()}`,
             );
 
             const created = await Service.create({
@@ -740,7 +876,7 @@ exports.chat = async (req, res) => {
         await sessionManager.addMessage(
           session,
           "jarvis",
-          "Yes boss ✅ I'm here. What should I handle?"
+          "Yes boss ✅ I'm here. What should I handle?",
         );
         return res.json({
           ok: true,
@@ -757,6 +893,9 @@ exports.chat = async (req, res) => {
         "Rules:\n" +
         "- Be concise, action-oriented, and accurate.\n" +
         "- Never loop on greetings.\n" +
+        "- Never claim you created/updated/edited/activated/deleted anything unless the server explicitly performed a database write in this request.\n" +
+        "- Never ask for passwords, API keys, JWT secrets, or credentials.\n" +
+        "- Never say you are a large language model.\n" +
         "- If you cannot do something, ask ONE clarifying question.\n\n" +
         `ADMIN CONTEXT JSON: ${JSON.stringify(context)}\n` +
         `SESSION DATA JSON: ${JSON.stringify(session.collectedData || {})}`;
@@ -782,11 +921,13 @@ exports.chat = async (req, res) => {
             temperature: 0.2,
             max_tokens: 350,
             model: String(process.env.JARVISX_MODEL || "").trim(),
-          }
+          },
         );
 
         const text = completion?.choices?.[0]?.message?.content;
-        const out = typeof text === "string" ? text.trim() : "";
+        const out = scrubAdminUnsafePhrases(
+          typeof text === "string" ? text.trim() : "",
+        );
         if (!out) {
           throw new Error("Empty LLM response");
         }
@@ -796,7 +937,7 @@ exports.chat = async (req, res) => {
 
         const responseTime = Date.now() - startTime;
         console.log(
-          `[JarvisX] Intent: ADMIN_LLM, Provider: groq, Time: ${responseTime}ms`
+          `[JarvisX] Intent: ADMIN_LLM, Provider: groq, Time: ${responseTime}ms`,
         );
 
         return res.json({
@@ -836,8 +977,8 @@ exports.chat = async (req, res) => {
         .replace(/\s+/g, " ");
       console.log(
         `[JARVISX_INTENT] intent=${classifiedIntent} platform=${String(
-          classifiedEntities?.platform || ""
-        )} msg="${snippet}"`
+          classifiedEntities?.platform || "",
+        )} msg="${snippet}"`,
       );
     } catch {
       // ignore
@@ -1157,7 +1298,7 @@ exports.chat = async (req, res) => {
             max_tokens: 220,
             model: String(process.env.JARVISX_MODEL || "").trim(),
             timeoutMs: 10000,
-          }
+          },
         );
 
         const text = completion?.choices?.[0]?.message?.content;
@@ -1172,7 +1313,7 @@ exports.chat = async (req, res) => {
 
         const responseTime = Date.now() - startTime;
         console.log(
-          `[JarvisX] Intent: GENERAL_CHAT, Provider: groq, Time: ${responseTime}ms`
+          `[JarvisX] Intent: GENERAL_CHAT, Provider: groq, Time: ${responseTime}ms`,
         );
 
         const showMenu = isExplicitMenuRequest(message);
@@ -1216,7 +1357,7 @@ exports.chat = async (req, res) => {
 
       const responseTime = Date.now() - startTime;
       console.log(
-        `[JarvisX] Intent: ${intent}, Provider: groq, Time: ${responseTime}ms`
+        `[JarvisX] Intent: ${intent}, Provider: groq, Time: ${responseTime}ms`,
       );
 
       return res.json({
@@ -1237,7 +1378,7 @@ exports.chat = async (req, res) => {
 
       const responseTime = Date.now() - startTime;
       console.log(
-        `[JarvisX] Intent: ${intent}, Provider: groq, Time: ${responseTime}ms`
+        `[JarvisX] Intent: ${intent}, Provider: groq, Time: ${responseTime}ms`,
       );
 
       return res.json({
@@ -1261,7 +1402,7 @@ exports.chat = async (req, res) => {
 
     const responseTime = Date.now() - startTime;
     console.log(
-      `[JarvisX] Intent: ${intent}, Provider: groq, Time: ${responseTime}ms`
+      `[JarvisX] Intent: ${intent}, Provider: groq, Time: ${responseTime}ms`,
     );
 
     return res.json({
@@ -1346,8 +1487,8 @@ exports.customRequest = async (req, res) => {
       rawUnit === null || rawUnit === undefined || rawUnit === ""
         ? null
         : Number.isFinite(Number(rawUnit))
-        ? Number(rawUnit)
-        : null;
+          ? Number(rawUnit)
+          : null;
 
     if (!platform) {
       return res
@@ -1356,7 +1497,7 @@ exports.customRequest = async (req, res) => {
     }
 
     const normalizedType = ["KYC", "ACCOUNT", "OTHER"].includes(
-      String(requestType || "").toUpperCase()
+      String(requestType || "").toUpperCase(),
     )
       ? String(requestType || "").toUpperCase()
       : "OTHER";
