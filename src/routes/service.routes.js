@@ -14,11 +14,14 @@ const router = express.Router();
 
 // Public routes
 router.get("/", getActiveServices);
-router.get("/:id", getServiceById);
 
 // Admin routes
-router.post("/", auth, admin, createService);
+// IMPORTANT: keep static admin paths above '/:id' to avoid being captured as an id.
 router.get("/admin/all", auth, admin, getAllServices);
+
+router.get("/:id", getServiceById);
+
+router.post("/", auth, admin, createService);
 router.put("/:id", auth, admin, updateService);
 router.delete("/:id", auth, admin, deleteService);
 

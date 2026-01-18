@@ -56,7 +56,16 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "x-admin-setup-secret"],
+  // NOTE: Browsers may include Cache-Control/Pragma in preflight (e.g., Next.js fetch defaults).
+  // If they're missing here, the preflight fails with:
+  // "Request header field cache-control is not allowed by Access-Control-Allow-Headers".
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "x-admin-setup-secret",
+    "Cache-Control",
+    "Pragma",
+  ],
 };
 
 app.use(cors(corsOptions));
