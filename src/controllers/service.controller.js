@@ -19,6 +19,28 @@ const slugify = (str) => {
     .replace(/-+/g, "-");
 };
 
+// PATCH_15: Normalize category for vision-aligned filtering
+function normalizeCategory(input) {
+  if (!input) return null;
+  const v = String(input).toLowerCase();
+  if (v.includes("micro")) return "microjobs";
+  if (v.includes("forex") || v.includes("crypto")) return "forex_crypto";
+  if (v.includes("bank") || v.includes("gateway") || v.includes("wallet"))
+    return "banks_gateways_wallets";
+  return input;
+}
+
+// PATCH_15: Normalize serviceType for vision-aligned filtering
+function normalizeServiceType(input) {
+  if (!input) return null;
+  const v = String(input).toLowerCase();
+  if (v.includes("fresh")) return "fresh_profile";
+  if (v.includes("already")) return "already_onboarded";
+  if (v.includes("process")) return "interview_process";
+  if (v.includes("passed")) return "interview_passed";
+  return input;
+}
+
 exports.createService = async (req, res) => {
   try {
     const {
@@ -64,6 +86,19 @@ exports.createService = async (req, res) => {
 exports.getActiveServices = async (req, res) => {
   try {
     setNoCache(res);
+
+    // PATCH_15: Enhanced filtering with vision-aligned parameters
+    const {
+      status = "active",
+      category = "all",
+      country = "all",
+      serviceType = "all",
+      limit = 100,
+      page = 1,
+      sort = "createdAt",
+    } = req.query;
+
+    // Legacy active/status handling for backward compatibility
     const statusRaw = String(req.query?.status || "")
       .toLowerCase()
       .trim();
@@ -71,40 +106,101 @@ exports.getActiveServices = async (req, res) => {
       .toLowerCase()
       .trim();
 
-    // Default: active-only. Allow debug/admin clients to request all.
-    const includeInactive =
+    const filter = {};
+
+    // PATCH_15: Support both status-based and active-based filtering
+    if (status && status !== "all") {
+      if (status === "active") {
+        // Active can mean status='active' OR legacy active=true
+        filter.$or = [
+          { status: "active" },
+          { active: true, status: { $exists: false } },
+        ];
+      } else if (status === "draft" || status === "archived") {
+        filter.status = status;
+      }
+    } else if (
       statusRaw === "all" ||
       statusRaw === "inactive" ||
       activeRaw === "0" ||
-      activeRaw === "false";
-
-    const filter = includeInactive ? {} : { active: true };
-
-    // PATCH_13: Support category filter
-    const categoryRaw = String(req.query?.category || "").trim();
-    if (categoryRaw && categoryRaw !== "all") {
-      filter.category = categoryRaw;
+      activeRaw === "false"
+    ) {
+      // Include all when explicitly requested
+    } else {
+      // Default: active only
+      filter.$or = [{ status: "active" }, { active: true }];
     }
 
+    // PATCH_15: Category filter (vision-aligned)
+    const categoryRaw = String(category || req.query?.category || "").trim();
+    if (categoryRaw && categoryRaw !== "all") {
+      const normalizedCat = normalizeCategory(categoryRaw);
+      filter.category = normalizedCat || categoryRaw;
+    }
+
+    // PATCH_15: ServiceType filter
+    const serviceTypeRaw = String(serviceType || "").trim();
+    if (serviceTypeRaw && serviceTypeRaw !== "all") {
+      const normalizedType = normalizeServiceType(serviceTypeRaw);
+      filter.serviceType = normalizedType || serviceTypeRaw;
+    }
+
+    // PATCH_15: Country filter (match includes OR Global fallback)
+    const countryRaw = String(country || "").trim();
+    if (countryRaw && countryRaw !== "all") {
+      filter.countries = { $in: [countryRaw, "Global"] };
+    }
+
+    const take = Math.min(parseInt(limit) || 100, 200);
+    const skip = (parseInt(page) - 1) * take;
+
+    // PATCH_15: Sort mapping
+    let sortOption = { createdAt: -1 };
+    if (sort === "topViewed") sortOption = { viewCount: -1, createdAt: -1 };
+    if (sort === "priceLow") sortOption = { price: 1 };
+    if (sort === "priceHigh") sortOption = { price: -1 };
+
     const services = await Service.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(200)
+      .sort(sortOption)
+      .skip(skip)
+      .limit(take)
       .lean();
+
+    const total = await Service.countDocuments(filter);
+
+    // PATCH_15: Provide available filters dynamically (active only)
+    const activeFilter = { $or: [{ status: "active" }, { active: true }] };
+    const [cats, types, cntries] = await Promise.all([
+      Service.distinct("category", activeFilter),
+      Service.distinct("serviceType", activeFilter),
+      Service.distinct("countries", activeFilter),
+    ]);
 
     if (process.env.DEBUG_REQUESTS === "1") {
       console.log("[SERVICES_LIST]", {
         path: req.originalUrl,
-        includeInactive,
+        filter: JSON.stringify(filter),
         count: Array.isArray(services) ? services.length : 0,
       });
     }
 
-    // PATCH_13: Return consistent response with ok flag and services array
+    // PATCH_15: Return enhanced response with filters and pagination
     return res.json({
       ok: true,
       services: Array.isArray(services) ? services : [],
-      count: services.length,
-      ts: new Date().toISOString(),
+      filters: {
+        availableCategories: cats.filter(Boolean),
+        availableServiceTypes: types.filter(Boolean),
+        availableCountries: cntries.flat().filter(Boolean),
+      },
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: take,
+        pages: Math.ceil(total / take),
+      },
+      source: "mongodb",
+      timestamp: new Date().toISOString(),
     });
   } catch (err) {
     console.error("[Services] GET error:", err);

@@ -10,6 +10,7 @@ const {
   createService,
   activateServiceByBody,
   updateService,
+  listServices,
 } = require("../controllers/adminServices.controller");
 
 const router = express.Router();
@@ -21,5 +22,8 @@ router.use(existing);
 router.post("/services/create", auth, admin, createService);
 router.post("/services/activate", auth, admin, activateServiceByBody);
 router.post("/services/update", auth, admin, updateService);
+
+// PATCH_15: List all services endpoint for admin
+router.get("/services/list", auth, admin, listServices);
 
 module.exports = router;

@@ -20,6 +20,7 @@ const serviceSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      index: true,
     },
 
     description: {
@@ -30,6 +31,7 @@ const serviceSchema = new mongoose.Schema(
     price: {
       type: Number,
       required: true,
+      min: 0,
     },
 
     currency: {
@@ -58,6 +60,39 @@ const serviceSchema = new mongoose.Schema(
       type: String,
     },
 
+    // PATCH_15: Product vision fields - safe strings with defaults
+    // Expected category values: microjobs | forex_crypto | banks_gateways_wallets | general
+    serviceType: {
+      type: String,
+      default: "general",
+      index: true,
+    },
+    // Expected serviceType values: fresh_profile | already_onboarded | interview_process | interview_passed | general
+
+    countries: {
+      type: [String],
+      default: ["Global"],
+      index: true,
+    },
+
+    status: {
+      type: String,
+      enum: ["draft", "active", "archived"],
+      default: "draft",
+      index: true,
+    },
+
+    tags: {
+      type: [String],
+      default: [],
+    },
+
+    features: {
+      type: [String],
+      default: [],
+    },
+
+    // Legacy active field - kept for backward compatibility
     active: {
       type: Boolean,
       default: true,
@@ -67,8 +102,24 @@ const serviceSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+
+    viewCount: {
+      type: Number,
+      default: 0,
+    },
+
+    purchaseCount: {
+      type: Number,
+      default: 0,
+    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
+
+// PATCH_15: Compound indexes for efficient filtering
+serviceSchema.index({ status: 1, category: 1, serviceType: 1 });
+serviceSchema.index({ status: 1, countries: 1 });
+serviceSchema.index({ status: 1, category: 1, countries: 1, serviceType: 1 });
+serviceSchema.index({ active: 1, category: 1 });
 
 module.exports = mongoose.model("Service", serviceSchema);

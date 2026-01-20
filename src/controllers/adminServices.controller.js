@@ -129,10 +129,22 @@ exports.activateService = async (req, res) => {
 
 // PATCH_12: Real admin create/activate/update helpers for JarvisX tools.
 // NOTE: Service schema uses `active` boolean (no `status`).
+// PATCH_15: Enhanced with vision-aligned fields (category, serviceType, countries, status)
 exports.createService = async (req, res) => {
   try {
-    const { title, price, description, category, tags, active, isActive } =
-      req.body || {};
+    const {
+      title,
+      price,
+      description,
+      category,
+      serviceType,
+      countries,
+      status,
+      tags,
+      features,
+      active,
+      isActive,
+    } = req.body || {};
 
     if (!title || price === undefined) {
       return res
@@ -158,18 +170,28 @@ exports.createService = async (req, res) => {
           ? isActive
           : true;
 
+    // PATCH_15: Normalize countries to array
+    const resolvedCountries = countries
+      ? Array.isArray(countries)
+        ? countries
+        : [countries]
+      : ["Global"];
+
     const service = await Service.create({
       title: safeTitle,
       slug,
       category: String(category || "general").trim() || "general",
+      serviceType: String(serviceType || "general").trim() || "general",
+      countries: resolvedCountries,
+      status: status || (resolvedActive ? "active" : "draft"),
       description: String(description || "").trim() || "Draft service",
       price: numericPrice,
       currency: "USD",
       deliveryType: "manual",
       active: resolvedActive,
+      tags: Array.isArray(tags) ? tags : [],
+      features: Array.isArray(features) ? features : [],
       createdBy: req.user?._id || req.user?.id || null,
-      // tags ignored unless schema adds it later
-      _tags: Array.isArray(tags) ? tags : undefined,
     });
 
     return res.status(201).json({
@@ -216,8 +238,19 @@ exports.activateServiceByBody = async (req, res) => {
 
 exports.updateService = async (req, res) => {
   try {
-    const { serviceId, title, description, price, countries, active } =
-      req.body || {};
+    const {
+      serviceId,
+      title,
+      description,
+      price,
+      category,
+      serviceType,
+      countries,
+      status,
+      tags,
+      features,
+      active,
+    } = req.body || {};
     if (!serviceId) {
       return res.status(400).json({ ok: false, message: "serviceId required" });
     }
@@ -236,27 +269,31 @@ exports.updateService = async (req, res) => {
       const numeric = parseNumber(price);
       if (numeric !== null) service.price = numeric;
     }
-    if (typeof active === "boolean") service.active = active;
+    if (typeof active === "boolean") {
+      service.active = active;
+      // Also sync status with active
+      if (active && (!service.status || service.status === "draft")) {
+        service.status = "active";
+      }
+    }
 
-    // countries: only if schema supports it, otherwise append to description.
+    // PATCH_15: Vision-aligned field updates
+    if (category) service.category = String(category).trim();
+    if (serviceType) service.serviceType = String(serviceType).trim();
+    if (status) service.status = String(status).trim();
+    if (Array.isArray(tags)) service.tags = tags;
+    if (Array.isArray(features)) service.features = features;
+
+    // PATCH_15: Countries array support
     if (countries) {
       const list = Array.isArray(countries)
         ? countries
         : String(countries).split(/,\s*/).filter(Boolean);
 
-      if (
-        service &&
-        Object.prototype.hasOwnProperty.call(service.toObject(), "countries")
-      ) {
-        // @ts-ignore
-        service.countries = Array.from(
-          new Set([...(service.countries || []), ...list]),
-        );
-      } else {
-        const current = service.description || "";
-        service.description =
-          `${current}\nAvailable countries: ${list.join(", ")}`.trim();
-      }
+      // Merge with existing countries
+      service.countries = Array.from(
+        new Set([...(service.countries || []), ...list]),
+      );
     }
 
     await service.save();
@@ -294,6 +331,30 @@ exports.deleteService = async (req, res) => {
     return res.status(500).json({
       ok: false,
       message: "Failed to delete service",
+      error: err?.message,
+    });
+  }
+};
+
+// PATCH_15: List all services for admin (includes all statuses)
+exports.listServices = async (req, res) => {
+  try {
+    const services = await Service.find({})
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean();
+
+    return res.json({
+      ok: true,
+      services,
+      count: services.length,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("[Admin] listServices error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to list services",
       error: err?.message,
     });
   }

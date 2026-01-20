@@ -62,6 +62,78 @@ function parsePriceFromText(text) {
   return Number.isFinite(value) ? value : null;
 }
 
+// PATCH_15: Extract category from natural language
+function parseCategoryFromText(text) {
+  const lower = String(text || "").toLowerCase();
+  if (lower.includes("micro")) return "microjobs";
+  if (lower.includes("forex") || lower.includes("crypto"))
+    return "forex_crypto";
+  if (
+    lower.includes("bank") ||
+    lower.includes("gateway") ||
+    lower.includes("wallet")
+  )
+    return "banks_gateways_wallets";
+  return "general";
+}
+
+// PATCH_15: Extract serviceType from natural language
+function parseServiceTypeFromText(text) {
+  const lower = String(text || "").toLowerCase();
+  if (lower.includes("fresh") && lower.includes("profile"))
+    return "fresh_profile";
+  if (lower.includes("already") && lower.includes("onboard"))
+    return "already_onboarded";
+  if (lower.includes("interview") && lower.includes("process"))
+    return "interview_process";
+  if (lower.includes("interview") && lower.includes("passed"))
+    return "interview_passed";
+  return "general";
+}
+
+// PATCH_15: Extract countries from natural language
+function parseCountriesFromText(text) {
+  const lower = String(text || "").toLowerCase();
+  const countries = [];
+
+  // Common country patterns
+  const countryPatterns = [
+    { pattern: /\bindia\b/i, name: "India" },
+    { pattern: /\bmexico\b/i, name: "Mexico" },
+    { pattern: /\busa\b|\bunited\s+states\b/i, name: "USA" },
+    { pattern: /\buk\b|\bunited\s+kingdom\b/i, name: "UK" },
+    { pattern: /\bcanada\b/i, name: "Canada" },
+    { pattern: /\bgermany\b/i, name: "Germany" },
+    { pattern: /\bfrance\b/i, name: "France" },
+    { pattern: /\bjapan\b/i, name: "Japan" },
+    { pattern: /\baustralia\b/i, name: "Australia" },
+    { pattern: /\bbrazil\b/i, name: "Brazil" },
+    { pattern: /\bpakistan\b/i, name: "Pakistan" },
+    { pattern: /\bphilippines\b/i, name: "Philippines" },
+    { pattern: /\bnigeria\b/i, name: "Nigeria" },
+    { pattern: /\bkenya\b/i, name: "Kenya" },
+    { pattern: /\bglobal\b/i, name: "Global" },
+  ];
+
+  for (const { pattern, name } of countryPatterns) {
+    if (pattern.test(text)) {
+      countries.push(name);
+    }
+  }
+
+  return countries.length > 0 ? countries : ["Global"];
+}
+
+// PATCH_15: Check if message wants to activate the service
+function wantsActivate(text) {
+  const lower = String(text || "").toLowerCase();
+  return (
+    lower.includes("activate") ||
+    lower.includes("publish") ||
+    lower.includes("make active")
+  );
+}
+
 function extractMongoId(text) {
   const match = String(text || "").match(/\b[0-9a-f]{24}\b/i);
   return match ? match[0] : null;
@@ -917,6 +989,7 @@ exports.chat = async (req, res) => {
         }
 
         // If we previously asked for missing price, accept price and create
+        // PATCH_15: Enhanced with vision-aligned fields
         if (session?.metadata?.pendingService && !wantsCreateService) {
           const price = parsePriceFromText(message);
           if (price !== null) {
@@ -927,15 +1000,20 @@ exports.chat = async (req, res) => {
                 baseSlug || `service-${Date.now()}`,
               );
 
+              const shouldActivate = pending.shouldActivate !== false;
+
               const created = await Service.create({
                 title: pending.title,
                 slug,
                 category: pending.category || "general",
+                serviceType: pending.serviceType || "general",
+                countries: pending.countries || ["Global"],
+                status: shouldActivate ? "active" : "draft",
                 description: pending.description || "Service created by admin",
                 price,
                 currency: pending.currency || "USD",
                 deliveryType: pending.deliveryType || "manual",
-                active: true,
+                active: shouldActivate,
                 createdBy: req.user?._id || req.user?.id,
               });
 
@@ -971,15 +1049,33 @@ exports.chat = async (req, res) => {
         }
 
         // Create service
+        // PATCH_15: Enhanced with vision-aligned fields (category, serviceType, countries)
         if (wantsCreateService) {
           const price = parsePriceFromText(message);
 
-          const titleMatch = String(message || "")
-            .replace(/\s+/g, " ")
-            .match(/service\s*(?:called|named)?\s*[:\-]?\s*"?([^"\n]+)"?/i);
-          const title = (titleMatch ? titleMatch[1] : "New Service")
-            .trim()
-            .slice(0, 120);
+          // PATCH_15: Better title extraction - handle patterns like "Create service Airtm - receive payments..."
+          const titlePatterns = [
+            /service\s+(?:called|named)?\s*[:\-]?\s*"?([^"$\n]+?)(?:\s+(?:for|at|category|type|country|\$)|"|\s*$)/i,
+            /create\s+(?:a\s+)?service\s+"?([^"$\n]+?)(?:\s+(?:for|at|category|type|country|\$)|"|\s*$)/i,
+            /add\s+(?:a\s+)?service\s+"?([^"$\n]+?)(?:\s+(?:for|at|category|type|country|\$)|"|\s*$)/i,
+          ];
+
+          let title = "New Service";
+          for (const pattern of titlePatterns) {
+            const match = String(message || "")
+              .replace(/\s+/g, " ")
+              .match(pattern);
+            if (match?.[1]) {
+              title = match[1].trim().slice(0, 120);
+              break;
+            }
+          }
+
+          // PATCH_15: Extract vision-aligned fields from message
+          const category = parseCategoryFromText(message);
+          const serviceType = parseServiceTypeFromText(message);
+          const countries = parseCountriesFromText(message);
+          const shouldActivate = wantsActivate(message);
 
           if (price === null) {
             session.metadata =
@@ -988,10 +1084,13 @@ exports.chat = async (req, res) => {
                 : {};
             session.metadata.pendingService = {
               title,
-              category: "general",
+              category,
+              serviceType,
+              countries,
               description: "Service created by admin",
               currency: "USD",
               deliveryType: "manual",
+              shouldActivate,
             };
             if (typeof session.save === "function") {
               await session.save();
@@ -1018,28 +1117,44 @@ exports.chat = async (req, res) => {
             const created = await Service.create({
               title,
               slug,
-              category: "general",
+              category,
+              serviceType,
+              countries,
+              status: shouldActivate ? "active" : "draft",
               description: "Service created by admin",
               price,
               currency: "USD",
               deliveryType: "manual",
-              active: true,
+              active: shouldActivate,
               createdBy: req.user?._id || req.user?.id,
             });
 
-            const reply = `Created service: ${created.title} ($${created.price}).`;
+            const activateNote = shouldActivate ? " (activated)" : " (draft)";
+            const countryNote =
+              countries.length > 0 ? ` for ${countries.join(", ")}` : "";
+            const reply = `✅ Created service: "${created.title}" $${created.price}${countryNote}${activateNote}. ID: ${created._id}`;
             await sessionManager.addMessage(session, "user", message);
             await sessionManager.addMessage(session, "jarvis", reply);
             return res.json({
               ok: true,
               reply,
               intent: "ADMIN_SERVICE_CREATE",
-              quickReplies: ["Create service", "Orders"],
+              quickReplies: ["Create service", "List services", "Orders"],
+              serviceId: String(created._id),
               sessionId: session.sessionKey,
+              realAction: true,
             });
           } catch (err) {
-            const reply =
-              "I couldn't create the service because the database write failed.";
+            const reply = `❌ Failed to create service: ${err?.message || "Database write failed"}`;
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", reply);
+            return res.json({
+              ok: false,
+              reply,
+              intent: "ADMIN_SERVICE_CREATE_ERROR",
+              quickReplies: ["Try again"],
+              sessionId: session.sessionKey,
+            });
             await sessionManager.addMessage(session, "user", message);
             await sessionManager.addMessage(session, "jarvis", reply);
             return res.json({
