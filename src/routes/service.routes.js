@@ -10,12 +10,10 @@ const {
   deleteService,
 } = require("../controllers/service.controller");
 
-const { getServices } = require("../controllers/services.controller");
-
 const router = express.Router();
 
 // Public routes
-router.get("/", getServices);
+router.get("/", getActiveServices);
 
 // Admin routes
 // IMPORTANT: keep static admin paths above '/:id' to avoid being captured as an id.

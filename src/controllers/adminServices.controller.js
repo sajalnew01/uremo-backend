@@ -102,7 +102,7 @@ exports.activateService = async (req, res) => {
 
     const service = await Service.findByIdAndUpdate(
       id,
-      { active: true, status: "active" },
+      { active: true },
       { new: true },
     );
 
@@ -223,7 +223,6 @@ exports.activateServiceByBody = async (req, res) => {
     }
 
     service.active = true;
-    service.status = "active";
     await service.save();
 
     return res.json({ ok: true, message: "Service activated", service });

@@ -54,50 +54,6 @@ function slugify(str) {
     .replace(/-+/g, "-");
 }
 
-async function ensureUniqueServiceSlug(baseSlug) {
-  const clean = String(baseSlug || "")
-    .trim()
-    .toLowerCase();
-  let candidate = clean || `service-${Date.now()}`;
-  let suffix = 1;
-  while (await Service.exists({ slug: candidate })) {
-    suffix += 1;
-    candidate = `${clean}-${suffix}`;
-  }
-  return candidate;
-}
-
-function canonCategory(v) {
-  const s = String(v || "").toLowerCase();
-  if (s.includes("micro")) return "microjobs";
-  if (s.includes("forex") || s.includes("crypto")) return "forex_crypto";
-  if (s.includes("bank") || s.includes("gateway") || s.includes("wallet")) {
-    return "banks_gateways_wallets";
-  }
-  return "general";
-}
-
-function canonType(v) {
-  const s = String(v || "").toLowerCase();
-  if (s.includes("fresh")) return "fresh_profile";
-  if (s.includes("already")) return "already_onboarded";
-  if (s.includes("process")) return "interview_process";
-  if (s.includes("passed")) return "interview_passed";
-  return "general";
-}
-
-function canonCountry(v) {
-  if (!v) return "Global";
-  const s = String(v || "").trim();
-  const x = s.toLowerCase();
-  if (x === "in" || x === "india") return "India";
-  if (x === "uae") return "UAE";
-  if (x === "us" || x === "usa") return "USA";
-  if (x === "uk" || x === "united kingdom") return "UK";
-  if (x === "global" || x === "worldwide") return "Global";
-  return s;
-}
-
 function assertObjectId(id, name = "id") {
   const v = String(id || "").trim();
   if (!mongoose.Types.ObjectId.isValid(v)) {
@@ -329,14 +285,7 @@ async function executeAction(action, opts) {
     case "service.create": {
       const title = clampString(payload.title, 120);
       const description = clampString(payload.description, 5000);
-      const category = canonCategory(clampString(payload.category, 60));
-      const serviceType = canonType(clampString(payload.serviceType, 60));
-      const countriesRaw = Array.isArray(payload.countries)
-        ? payload.countries
-        : payload.countries
-          ? [payload.countries]
-          : ["Global"];
-      const countries = countriesRaw.map(canonCountry).filter(Boolean);
+      const category = clampString(payload.category, 60) || "General";
       const price = toNumber(payload.price);
       const deliveryType = clampString(payload.deliveryType, 24) || "manual";
       // P0 FIX: Use placeholder image if not provided
@@ -360,16 +309,13 @@ async function executeAction(action, opts) {
 
       const created = await Service.create({
         title,
-        slug: await ensureUniqueServiceSlug(slugify(title)),
+        slug: slugify(title),
         category,
-        serviceType,
-        countries: countries.length ? countries : ["Global"],
         description,
         price,
         deliveryType,
         imageUrl,
         active,
-        status: active ? "active" : "draft",
         createdBy: actorAdminId || undefined,
       });
 

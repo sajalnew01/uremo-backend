@@ -19,26 +19,75 @@ const slugify = (str) => {
     .replace(/-+/g, "-");
 };
 
-// PATCH_15: Normalize category for vision-aligned filtering
+// PATCH_16: Canonical filter definitions (matches user's handwritten vision)
+const CANON_CATEGORIES = [
+  { id: "microjobs", label: "Microjobs" },
+  { id: "forex_crypto", label: "Forex / Crypto" },
+  { id: "banks_gateways_wallets", label: "Banks / Gateways / Wallets" },
+  { id: "general", label: "General" },
+];
+
+const CANON_SERVICE_TYPES = [
+  { id: "all", label: "All types" },
+  { id: "fresh_profile", label: "Apply Fresh / KYC" },
+  { id: "already_onboarded", label: "Already Onboarded" },
+  { id: "interview_process", label: "Interview Process" },
+  { id: "interview_passed", label: "Interview Passed" },
+  { id: "general", label: "General" },
+];
+
+// PATCH_16: Normalize category for vision-aligned filtering (canon mapping)
 function normalizeCategory(input) {
-  if (!input) return null;
+  if (!input) return "general";
   const v = String(input).toLowerCase();
   if (v.includes("micro")) return "microjobs";
   if (v.includes("forex") || v.includes("crypto")) return "forex_crypto";
   if (v.includes("bank") || v.includes("gateway") || v.includes("wallet"))
     return "banks_gateways_wallets";
-  return input;
+  // Return as-is if already a valid category id
+  if (
+    ["microjobs", "forex_crypto", "banks_gateways_wallets", "general"].includes(
+      v,
+    )
+  )
+    return v;
+  return "general";
 }
 
-// PATCH_15: Normalize serviceType for vision-aligned filtering
+// PATCH_16: Normalize serviceType for vision-aligned filtering
 function normalizeServiceType(input) {
-  if (!input) return null;
+  if (!input) return "general";
   const v = String(input).toLowerCase();
   if (v.includes("fresh")) return "fresh_profile";
   if (v.includes("already")) return "already_onboarded";
   if (v.includes("process")) return "interview_process";
   if (v.includes("passed")) return "interview_passed";
-  return input;
+  // Return as-is if already a valid type id
+  if (
+    [
+      "fresh_profile",
+      "already_onboarded",
+      "interview_process",
+      "interview_passed",
+      "general",
+    ].includes(v)
+  )
+    return v;
+  return "general";
+}
+
+// PATCH_16: Normalize country names for consistent display
+function normalizeCountry(input) {
+  if (!input) return "Global";
+  const v = String(input).trim();
+  const lower = v.toLowerCase();
+  if (lower === "in" || lower === "india") return "India";
+  if (lower === "uae") return "UAE";
+  if (lower === "us" || lower === "usa") return "USA";
+  if (lower === "uk" || lower === "united kingdom") return "UK";
+  if (lower === "global") return "Global";
+  // Capitalize first letter for other countries
+  return v.charAt(0).toUpperCase() + v.slice(1);
 }
 
 exports.createService = async (req, res) => {
@@ -87,7 +136,7 @@ exports.getActiveServices = async (req, res) => {
   try {
     setNoCache(res);
 
-    // PATCH_15: Enhanced filtering with vision-aligned parameters
+    // PATCH_16: Enhanced filtering with vision-aligned parameters
     const {
       status = "active",
       category = "all",
@@ -108,7 +157,7 @@ exports.getActiveServices = async (req, res) => {
 
     const filter = {};
 
-    // PATCH_15: Support both status-based and active-based filtering
+    // PATCH_16: Support both status-based and active-based filtering
     if (status && status !== "all") {
       if (status === "active") {
         // Active can mean status='active' OR legacy active=true
@@ -131,21 +180,21 @@ exports.getActiveServices = async (req, res) => {
       filter.$or = [{ status: "active" }, { active: true }];
     }
 
-    // PATCH_15: Category filter (vision-aligned)
+    // PATCH_16: Category filter (vision-aligned)
     const categoryRaw = String(category || req.query?.category || "").trim();
     if (categoryRaw && categoryRaw !== "all") {
       const normalizedCat = normalizeCategory(categoryRaw);
-      filter.category = normalizedCat || categoryRaw;
+      filter.category = normalizedCat;
     }
 
-    // PATCH_15: ServiceType filter
+    // PATCH_16: ServiceType filter
     const serviceTypeRaw = String(serviceType || "").trim();
     if (serviceTypeRaw && serviceTypeRaw !== "all") {
       const normalizedType = normalizeServiceType(serviceTypeRaw);
-      filter.serviceType = normalizedType || serviceTypeRaw;
+      filter.serviceType = normalizedType;
     }
 
-    // PATCH_15: Country filter (match includes OR Global fallback)
+    // PATCH_16: Country filter (match includes OR Global fallback)
     const countryRaw = String(country || "").trim();
     if (countryRaw && countryRaw !== "all") {
       filter.countries = { $in: [countryRaw, "Global"] };
@@ -154,27 +203,45 @@ exports.getActiveServices = async (req, res) => {
     const take = Math.min(parseInt(limit) || 100, 200);
     const skip = (parseInt(page) - 1) * take;
 
-    // PATCH_15: Sort mapping
-    let sortOption = { createdAt: -1 };
+    // PATCH_16: Sort mapping
+    let sortOption = { createdAt: -1, _id: -1 };
     if (sort === "topViewed") sortOption = { viewCount: -1, createdAt: -1 };
-    if (sort === "priceLow") sortOption = { price: 1 };
-    if (sort === "priceHigh") sortOption = { price: -1 };
+    if (sort === "priceLow") sortOption = { price: 1, createdAt: -1 };
+    if (sort === "priceHigh") sortOption = { price: -1, createdAt: -1 };
 
-    const services = await Service.find(filter)
+    const rawServices = await Service.find(filter)
       .sort(sortOption)
       .skip(skip)
       .limit(take)
       .lean();
 
+    // PATCH_16: Normalize service data on response (fix old inconsistent DB values)
+    const services = rawServices.map((s) => ({
+      ...s,
+      category: normalizeCategory(s.category),
+      serviceType: normalizeServiceType(s.serviceType),
+      countries: (s.countries && s.countries.length
+        ? s.countries
+        : ["Global"]
+      ).map(normalizeCountry),
+    }));
+
     const total = await Service.countDocuments(filter);
 
-    // PATCH_15: Provide available filters dynamically (active only)
+    // PATCH_16: Get raw country values from DB and normalize
     const activeFilter = { $or: [{ status: "active" }, { active: true }] };
-    const [cats, types, cntries] = await Promise.all([
-      Service.distinct("category", activeFilter),
-      Service.distinct("serviceType", activeFilter),
-      Service.distinct("countries", activeFilter),
-    ]);
+    const countriesRaw = await Service.distinct("countries", activeFilter);
+    const flatCountries = Array.isArray(countriesRaw)
+      ? countriesRaw.flat()
+      : [];
+    const normalizedCountries = [
+      ...new Set(flatCountries.map(normalizeCountry)),
+    ].filter(Boolean);
+    // Ensure "Global" is always first
+    const sortedCountries = [
+      "Global",
+      ...normalizedCountries.filter((c) => c !== "Global"),
+    ];
 
     if (process.env.DEBUG_REQUESTS === "1") {
       console.log("[SERVICES_LIST]", {
@@ -184,14 +251,23 @@ exports.getActiveServices = async (req, res) => {
       });
     }
 
-    // PATCH_15: Return enhanced response with filters and pagination
+    // PATCH_16: Return enhanced response with canonical filter config
     return res.json({
       ok: true,
       services: Array.isArray(services) ? services : [],
       filters: {
-        availableCategories: cats.filter(Boolean),
-        availableServiceTypes: types.filter(Boolean),
-        availableCountries: cntries.flat().filter(Boolean),
+        // PATCH_16: Canonical categories with id/label (vision-aligned order)
+        categories: CANON_CATEGORIES,
+        // PATCH_16: Canonical service types with id/label
+        serviceTypes: CANON_SERVICE_TYPES,
+        // PATCH_16: Countries from DB (normalized + Global first)
+        countries: sortedCountries,
+        // Legacy keys for backward compatibility
+        availableCategories: CANON_CATEGORIES.map((c) => c.id),
+        availableServiceTypes: CANON_SERVICE_TYPES.filter(
+          (t) => t.id !== "all",
+        ).map((t) => t.id),
+        availableCountries: sortedCountries,
       },
       pagination: {
         total,

@@ -5,84 +5,126 @@ const admin = require("../middlewares/admin.middleware");
 const JarvisWrite = require("../controllers/jarvisxWrite.controller");
 const Service = require("../models/Service");
 
-const {
-  canonCategory,
-  canonType,
-  canonCountry,
-} = require("../controllers/services.controller");
-
 const router = express.Router();
 
-async function ensureUniqueSlug(baseSlug) {
-  const cleanBase = String(baseSlug || "service")
+// PATCH_16: Helper to slugify titles
+function slugify(str) {
+  return String(str || "")
+    .toLowerCase()
     .trim()
-    .toLowerCase();
-  let candidate = cleanBase || `service-${Date.now()}`;
-  let suffix = 1;
-  // slug is unique in schema
-  while (await Service.exists({ slug: candidate })) {
-    suffix += 1;
-    candidate = `${cleanBase}-${suffix}`;
-  }
-  return candidate;
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
 }
 
-// PATCH_16: REAL DB publish endpoint (admin-only)
-// NOTE: Works even if GROQ_API_KEY is missing; this is not an AI operation.
+// PATCH_16: Normalize category to canonical value
+function normalizeCategory(input) {
+  if (!input) return "general";
+  const v = String(input).toLowerCase();
+  if (v.includes("micro")) return "microjobs";
+  if (v.includes("forex") || v.includes("crypto")) return "forex_crypto";
+  if (v.includes("bank") || v.includes("gateway") || v.includes("wallet"))
+    return "banks_gateways_wallets";
+  if (
+    ["microjobs", "forex_crypto", "banks_gateways_wallets", "general"].includes(
+      v,
+    )
+  )
+    return v;
+  return "general";
+}
+
+// PATCH_16: Normalize service type to canonical value
+function normalizeServiceType(input) {
+  if (!input) return "general";
+  const v = String(input).toLowerCase();
+  if (v.includes("fresh")) return "fresh_profile";
+  if (v.includes("already")) return "already_onboarded";
+  if (v.includes("process")) return "interview_process";
+  if (v.includes("passed")) return "interview_passed";
+  if (
+    [
+      "fresh_profile",
+      "already_onboarded",
+      "interview_process",
+      "interview_passed",
+      "general",
+    ].includes(v)
+  )
+    return v;
+  return "general";
+}
+
+// PATCH_16: Real-time service creation endpoint for JarvisX Write
+// This writes DIRECTLY to MongoDB, no proposal required
 router.post("/execute", auth, admin, async (req, res) => {
   try {
-    const { title, price, description, category, serviceType, countries } =
-      req.body || {};
+    const {
+      title,
+      price,
+      description,
+      category,
+      serviceType,
+      countries,
+      imageUrl,
+    } = req.body;
 
-    if (!title || price === undefined || price === null) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "title & price required" });
-    }
-
-    const numericPrice = Number(price);
-    if (!Number.isFinite(numericPrice)) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "price must be a number" });
+    if (!title || price === undefined) {
+      return res.status(400).json({
+        ok: false,
+        message: "title & price are required",
+        realAction: false,
+      });
     }
 
     const safeTitle = String(title).trim();
-    if (!safeTitle) {
-      return res.status(400).json({ ok: false, message: "title required" });
+    const numericPrice = parseFloat(price);
+
+    if (!safeTitle || !Number.isFinite(numericPrice)) {
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid title or price",
+        realAction: false,
+      });
     }
 
-    const resolvedCountriesRaw = Array.isArray(countries)
-      ? countries
-      : countries
-        ? [countries]
-        : ["Global"];
+    // Generate unique slug
+    const baseSlug = slugify(safeTitle);
+    let slug = baseSlug || `service-${Date.now()}`;
+    let suffix = 1;
+    while (await Service.exists({ slug })) {
+      suffix++;
+      slug = `${baseSlug}-${suffix}`;
+    }
 
-    const resolvedCountries = resolvedCountriesRaw
-      .map(canonCountry)
-      .filter(Boolean);
+    // Normalize fields to canonical values
+    const normalizedCategory = normalizeCategory(category);
+    const normalizedServiceType = normalizeServiceType(serviceType);
+    const normalizedCountries =
+      Array.isArray(countries) && countries.length > 0
+        ? countries.map((c) => String(c).trim()).filter(Boolean)
+        : ["Global"];
 
     const service = await Service.create({
       title: safeTitle,
-      slug: await ensureUniqueSlug(
-        safeTitle
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9\s-]/g, "")
-          .replace(/\s+/g, "-")
-          .replace(/-+/g, "-"),
-      ),
+      slug,
+      description: String(description || "Service created via JarvisX").trim(),
       price: numericPrice,
-      description: String(description || "").trim(),
-      category: canonCategory(category),
-      serviceType: canonType(serviceType),
-      countries: resolvedCountries.length ? resolvedCountries : ["Global"],
+      currency: "USD",
+      category: normalizedCategory,
+      serviceType: normalizedServiceType,
+      countries: normalizedCountries,
       status: "active",
       active: true,
-      createdBy: req.user?._id || req.user?.id,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      deliveryType: "manual",
+      imageUrl: imageUrl || "",
+      images: [],
+      createdBy: req.user?._id || req.user?.id || null,
     });
+
+    console.log(
+      `[JARVISX_WRITE_EXECUTE] Service created: ${service._id} "${safeTitle}"`,
+    );
 
     return res.json({
       ok: true,
@@ -91,11 +133,14 @@ router.post("/execute", auth, admin, async (req, res) => {
       service,
       realAction: true,
     });
-  } catch (e) {
-    console.error("[JarvisX Write Execute] error:", e);
-    return res
-      .status(500)
-      .json({ ok: false, message: "DB write failed", error: e.message });
+  } catch (err) {
+    console.error("[JARVISX_WRITE_EXECUTE] error:", err);
+    return res.status(500).json({
+      ok: false,
+      message: "DB write failed",
+      error: err?.message,
+      realAction: false,
+    });
   }
 });
 
