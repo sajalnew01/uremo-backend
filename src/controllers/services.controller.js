@@ -58,107 +58,6 @@ function setNoCache(res) {
   res.set("Surrogate-Control", "no-store");
 }
 
-function buildStatusFilter(status) {
-  const s = String(status || "")
-    .trim()
-    .toLowerCase();
-  if (!s || s === "all") return {};
-
-  // For backward compatibility: treat active services as status='active' OR legacy active=true
-  if (s === "active") {
-    return {
-      $or: [{ status: "active" }, { active: true, status: { $exists: false } }],
-    };
-  }
-
-  if (s === "draft" || s === "archived") return { status: s };
-  return {};
-}
-
-function buildCategoryFilter(category) {
-  const c = String(category || "").trim();
-  if (!c || c === "all") return {};
-
-  const canon = canonCategory(c);
-
-  // Match canonical stored values AND legacy/free-text values via regex heuristics.
-  if (canon === "microjobs") {
-    return { $or: [{ category: "microjobs" }, { category: /micro/i }] };
-  }
-  if (canon === "forex_crypto") {
-    return {
-      $or: [
-        { category: "forex_crypto" },
-        { category: /forex/i },
-        { category: /crypto/i },
-      ],
-    };
-  }
-  if (canon === "banks_gateways_wallets") {
-    return {
-      $or: [
-        { category: "banks_gateways_wallets" },
-        { category: /bank/i },
-        { category: /gateway/i },
-        { category: /wallet/i },
-      ],
-    };
-  }
-
-  return { category: canon };
-}
-
-function buildTypeFilter(serviceType) {
-  const t = String(serviceType || "").trim();
-  if (!t || t === "all") return {};
-
-  const canon = canonType(t);
-
-  if (canon === "fresh_profile") {
-    return {
-      $or: [{ serviceType: "fresh_profile" }, { serviceType: /fresh/i }],
-    };
-  }
-  if (canon === "already_onboarded") {
-    return {
-      $or: [
-        { serviceType: "already_onboarded" },
-        { serviceType: /already/i },
-        { serviceType: /onboard/i },
-      ],
-    };
-  }
-  if (canon === "interview_process") {
-    return {
-      $or: [
-        { serviceType: "interview_process" },
-        { serviceType: /interview/i },
-        { serviceType: /process/i },
-      ],
-    };
-  }
-  if (canon === "interview_passed") {
-    return {
-      $or: [
-        { serviceType: "interview_passed" },
-        { serviceType: /interview/i },
-        { serviceType: /passed/i },
-      ],
-    };
-  }
-
-  return { serviceType: canon };
-}
-
-function buildCountryFilter(country) {
-  const c = String(country || "").trim();
-  if (!c || c === "all") return {};
-  const canon = canonCountry(c);
-
-  // Keep Global fallback for services not tied to a specific country.
-  return { countries: { $in: [canon, "Global"] } };
-}
-
 exports.getServices = async (req, res) => {
   try {
     setNoCache(res);
@@ -173,23 +72,20 @@ exports.getServices = async (req, res) => {
       page = 1,
     } = req.query;
 
-    const filter = {
-      ...buildStatusFilter(status),
-      ...buildCountryFilter(country),
-    };
+    // PATCH_16_FIX: Simple filter approach - fetch ALL active, then filter in JS
+    // This avoids complex $or/$and MongoDB conflicts with legacy data
+    const baseFilter = {};
 
-    const categoryFilter = buildCategoryFilter(category);
-    const typeFilter = buildTypeFilter(serviceType);
-
-    // Merge possible $or blocks carefully
-    if (categoryFilter.$or && typeFilter.$or) {
-      filter.$and = [{ $or: categoryFilter.$or }, { $or: typeFilter.$or }];
-    } else if (categoryFilter.$or) {
-      filter.$or = categoryFilter.$or;
-    } else if (typeFilter.$or) {
-      filter.$or = typeFilter.$or;
-    } else {
-      Object.assign(filter, categoryFilter, typeFilter);
+    // Status filter (active by default)
+    const statusVal = String(status || "active").toLowerCase();
+    if (statusVal === "active") {
+      // Match either status='active' OR legacy active=true
+      baseFilter.$or = [
+        { status: "active" },
+        { active: true },
+      ];
+    } else if (statusVal === "draft" || statusVal === "archived") {
+      baseFilter.status = statusVal;
     }
 
     let sortOption = { createdAt: -1, _id: -1 };
@@ -200,13 +96,13 @@ exports.getServices = async (req, res) => {
     const take = Math.min(parseInt(limit) || 100, 200);
     const skip = (parseInt(page) - 1) * take;
 
-    const raw = await Service.find(filter)
+    // Fetch from DB with only status filter
+    const raw = await Service.find(baseFilter)
       .sort(sortOption)
-      .skip(skip)
-      .limit(take)
       .lean();
 
-    const services = (Array.isArray(raw) ? raw : []).map((s) => ({
+    // Normalize all services first
+    const allNormalized = (Array.isArray(raw) ? raw : []).map((s) => ({
       ...s,
       category: canonCategory(s.category),
       serviceType: canonType(s.serviceType),
@@ -216,22 +112,49 @@ exports.getServices = async (req, res) => {
       ).map(canonCountry),
     }));
 
-    // Stable countries list for dropdown
-    const activeFilter = buildStatusFilter("active");
-    const countriesRaw = await Service.distinct("countries", activeFilter);
-    const flatCountries = Array.isArray(countriesRaw)
-      ? countriesRaw.flat?.() || countriesRaw
-      : [];
-    const countries = [...new Set(flatCountries.map(canonCountry))]
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
+    // Apply category/serviceType/country filters in JS on normalized data
+    const categoryFilter = String(category || "all").toLowerCase();
+    const typeFilter = String(serviceType || "all").toLowerCase();
+    const countryFilter = String(country || "all");
+
+    const filtered = allNormalized.filter((s) => {
+      // Category filter
+      if (categoryFilter !== "all" && s.category !== categoryFilter) {
+        return false;
+      }
+
+      // Service type filter
+      if (typeFilter !== "all" && typeFilter !== "general" && s.serviceType !== typeFilter) {
+        return false;
+      }
+
+      // Country filter (match if service has the country OR is Global)
+      if (countryFilter !== "all") {
+        const canonC = canonCountry(countryFilter);
+        const hasCountry = s.countries.includes(canonC) || s.countries.includes("Global");
+        if (!hasCountry) return false;
+      }
+
+      return true;
+    });
+
+    // Paginate
+    const paginated = filtered.slice(skip, skip + take);
+
+    // Build countries list from all active services
+    const allCountries = new Set();
+    allNormalized.forEach((s) => {
+      (s.countries || []).forEach((c) => allCountries.add(c));
+    });
+    const countriesList = [...allCountries].filter(Boolean).sort((a, b) => a.localeCompare(b));
 
     return res.json({
       ok: true,
-      services,
+      services: paginated,
+      total: filtered.length,
       filters: {
         categories: CANON_CATEGORIES,
-        countries: ["Global", ...countries.filter((c) => c !== "Global")],
+        countries: ["Global", ...countriesList.filter((c) => c !== "Global")],
         serviceTypes: CANON_TYPES,
       },
       timestamp: new Date().toISOString(),
