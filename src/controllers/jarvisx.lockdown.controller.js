@@ -642,6 +642,30 @@ exports.chat = async (req, res) => {
           });
         }
 
+        // PATCH_16: Fall back to authenticated req.user when available.
+        const fallbackEmail = String(req.user?.email || "").trim();
+        const fallbackName = String(
+          req.user?.name || req.user?.fullName || "",
+        ).trim();
+        if (fallbackEmail || fallbackName) {
+          const who = [
+            fallbackName || "Admin",
+            fallbackEmail ? `<${fallbackEmail}>` : null,
+          ]
+            .filter(Boolean)
+            .join(" ");
+          const out = `You are ${who} — admin of UREMO.`;
+          await sessionManager.addMessage(session, "user", message);
+          await sessionManager.addMessage(session, "jarvis", out);
+          return res.json({
+            ok: true,
+            reply: out,
+            intent: "ADMIN_IDENTITY",
+            quickReplies: ["System health", "Orders", "Create service"],
+            sessionId: session.sessionKey,
+          });
+        }
+
         const out =
           "I can't see your admin identity because auth/session isn't attached. Please login again.";
         await sessionManager.addMessage(session, "user", message);

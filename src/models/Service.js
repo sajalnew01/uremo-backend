@@ -20,6 +20,7 @@ const serviceSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      default: "general",
       index: true,
     },
 
@@ -121,5 +122,10 @@ serviceSchema.index({ status: 1, category: 1, serviceType: 1 });
 serviceSchema.index({ status: 1, countries: 1 });
 serviceSchema.index({ status: 1, category: 1, countries: 1, serviceType: 1 });
 serviceSchema.index({ active: 1, category: 1 });
+
+// PATCH_16: Additional index orderings for common filter patterns
+serviceSchema.index({ category: 1, serviceType: 1, status: 1 });
+serviceSchema.index({ countries: 1, status: 1 });
+serviceSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model("Service", serviceSchema);
