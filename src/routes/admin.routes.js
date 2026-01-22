@@ -20,12 +20,17 @@ const {
   listEmailCampaigns,
 } = require("../controllers/admin.emailCampaign.controller");
 const { userExists } = require("../controllers/admin.debug.controller");
+// PATCH_18: Use adminServices controller for full CMS support
 const {
-  getAllServices,
+  listServices,
+  getService,
   createService,
   updateService,
+  activateService,
+  deactivateService,
+  archiveService,
   deleteService,
-} = require("../controllers/service.controller");
+} = require("../controllers/adminServices.controller");
 const upload = require("../middlewares/upload.middleware");
 const { uploadImages } = require("../controllers/upload.controller");
 const {
@@ -48,7 +53,7 @@ router.put(
   "/orders/:id/unarchive-rejected",
   auth,
   admin,
-  unarchiveRejectedOrder
+  unarchiveRejectedOrder,
 );
 router.post("/orders/:id/note", auth, admin, addOrderNote);
 router.post("/orders/:id/reply", auth, admin, adminReplyToOrder);
@@ -64,10 +69,14 @@ router.get("/debug/user-exists", auth, admin, userExists);
 router.post("/email-campaigns", auth, admin, createEmailCampaign);
 router.get("/email-campaigns", auth, admin, listEmailCampaigns);
 
-// Service management
-router.get("/services", auth, admin, getAllServices);
+// PATCH_18: Full Admin CMS for services
+router.get("/services", auth, admin, listServices);
+router.get("/services/:id", auth, admin, getService);
 router.post("/services", auth, admin, createService);
 router.put("/services/:id", auth, admin, updateService);
+router.put("/services/:id/activate", auth, admin, activateService);
+router.put("/services/:id/deactivate", auth, admin, deactivateService);
+router.put("/services/:id/archive", auth, admin, archiveService);
 router.delete("/services/:id", auth, admin, deleteService);
 
 router.post(
@@ -75,7 +84,7 @@ router.post(
   auth,
   admin,
   upload.array("images", 5),
-  uploadImages
+  uploadImages,
 );
 
 // CMS / Settings (admin-only)

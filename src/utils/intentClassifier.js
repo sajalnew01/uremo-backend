@@ -20,7 +20,7 @@ function parseQuantity(text) {
 
   // e.g. "10 accounts", "2 kyc", "x5"
   const m1 = t.match(
-    /\b(?:x\s*)?(\d{1,4})\s*(?:accounts?|kyc|accs?|pcs?|pieces?)\b/i
+    /\b(?:x\s*)?(\d{1,4})\s*(?:accounts?|kyc|accs?|pcs?|pieces?)\b/i,
   );
   if (m1?.[1]) {
     const n = Number(m1[1]);
@@ -61,7 +61,7 @@ function parseUnitPrice(text) {
 
   // "at 8 per" (only if anchored by per/account)
   const m4 = raw.match(
-    /\b(?:at|for)\s*(\d{1,6}(?:\.\d{1,2})?)\s*(?:per\s*(?:account|acc|kyc)|\/\s*(?:account|acc|kyc))\b/i
+    /\b(?:at|for)\s*(\d{1,6}(?:\.\d{1,2})?)\s*(?:per\s*(?:account|acc|kyc)|\/\s*(?:account|acc|kyc))\b/i,
   );
   if (m4?.[1]) {
     const n = Number(m4[1]);
@@ -85,9 +85,9 @@ const PAYMENT_PAT =
 const CUSTOM_SERVICE_PAT =
   /(\bcustom\b|\bnot\s+listed\b|\bspecial\s+request\b|\badd\s+service\b|\bnot\s+available\b)/i;
 
-// Dedicated intents (PATCH_09)
+// Dedicated intents (PATCH_09, expanded PATCH_19)
 const LIST_SERVICES_PAT =
-  /(\bshow\s+services\b|\bservices\s+list\b|\blist\s+services\b|\bavailable\s+services\b|\bwhat\s+services\b)/i;
+  /(\bshow\s+(?:me\s+)?services\b|\bservices\s+list\b|\blist\s+(?:of\s+)?services\b|\bavailable\s+services\b|\bwhat\s+services\b|\bwhich\s+(?:services|accounts|microjobs?)\s+(?:are\s+)?available\b|\bwhat\s+(?:can\s+i\s+(?:buy|purchase|order)|is\s+available)\b|\bservice\s+catalog\b|\bshow\s+(?:me\s+)?(?:microjobs?|accounts?|platforms?)\b|\bavailable\s+(?:to\s+(?:buy|purchase|order)|microjobs?|accounts?)\b)/i;
 
 // User identity (who am I?)
 const USER_IDENTITY_PAT =
@@ -180,7 +180,7 @@ function classifyIntentDetailed(text) {
   // If platform isn't a known keyword, try a very light heuristic (only when purchase verb present)
   if (!platform && PURCHASE_VERB_PAT.test(String(text || ""))) {
     const m = String(text || "").match(
-      /\b(?:buy|need|want|get|purchase)\s+([a-z0-9_-]{3,20})\b/i
+      /\b(?:buy|need|want|get|purchase)\s+([a-z0-9_-]{3,20})\b/i,
     );
     if (m?.[1]) platform = String(m[1]).toLowerCase();
   }

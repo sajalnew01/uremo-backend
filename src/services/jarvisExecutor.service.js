@@ -293,6 +293,22 @@ async function executeAction(action, opts) {
         clampString(payload.imageUrl, 500) || DEFAULT_SERVICE_HERO_IMAGE;
       const active = normalizeActive(payload.isActive, true);
 
+      // PATCH_17: New vision-aligned fields
+      const listingType = clampString(payload.listingType, 30) || "general";
+      const platform = clampString(payload.platform, 60) || "";
+      const subject = clampString(payload.subject, 60) || "";
+      const projectName = clampString(payload.projectName, 60) || "";
+      const payRate = toNumber(payload.payRate) || 0;
+      const instantDelivery = payload.instantDelivery === true;
+
+      // PATCH_17: Countries array
+      const countriesRaw = payload.countries;
+      const countries = Array.isArray(countriesRaw)
+        ? countriesRaw.map((c) => clampString(c, 40)).filter(Boolean)
+        : typeof countriesRaw === "string" && countriesRaw.trim()
+          ? [clampString(countriesRaw, 40)]
+          : ["Global"];
+
       if (!title || !description || price == null) {
         const err = new Error(
           `service.create missing required fields: ${[
@@ -311,11 +327,19 @@ async function executeAction(action, opts) {
         title,
         slug: slugify(title),
         category,
+        listingType,
+        countries,
+        platform,
+        subject,
+        projectName,
+        payRate,
+        instantDelivery,
         description,
         price,
         deliveryType,
         imageUrl,
         active,
+        status: active ? "active" : "draft",
         createdBy: actorAdminId || undefined,
       });
 
