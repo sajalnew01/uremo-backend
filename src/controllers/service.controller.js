@@ -184,11 +184,14 @@ exports.getActiveServices = async (req, res) => {
       sort = "createdAt",
     } = req.query;
 
-    // PATCH_18: Build base filter - only active services
-    const baseFilter = {
+    // PATCH_20: Build base filter using $and for proper combination
+    // Active services filter (status=active OR legacy active=true)
+    const statusFilter = {
       $or: [{ status: "active" }, { active: true, status: { $exists: false } }],
     };
 
+    // We'll build conditions and combine them with $and at the end
+    const conditions = [statusFilter];
     const appliedFilters = {};
     const ignoredFilters = [];
 
@@ -196,16 +199,18 @@ exports.getActiveServices = async (req, res) => {
     const categoryVal = String(category || "").trim();
     if (categoryVal && categoryVal !== "all") {
       const normalizedCat = normalizeCategory(categoryVal);
-      // Also match services with "general" category or missing category
+      // Also match services with "general" category or missing category for microjobs
       if (normalizedCat === "microjobs") {
-        baseFilter.$or = [
-          { category: "microjobs" },
-          { category: "general" },
-          { category: { $exists: false } },
-          { category: "" },
-        ];
+        conditions.push({
+          $or: [
+            { category: "microjobs" },
+            { category: "general" },
+            { category: { $exists: false } },
+            { category: "" },
+          ],
+        });
       } else {
-        baseFilter.category = normalizedCat;
+        conditions.push({ category: normalizedCat });
       }
       appliedFilters.category = normalizedCat;
     }
@@ -214,11 +219,9 @@ exports.getActiveServices = async (req, res) => {
     const subcategoryVal = String(subcategory || "").trim();
     if (subcategoryVal && subcategoryVal !== "all") {
       // Match either subcategory OR listingType (for legacy services)
-      baseFilter.$or = baseFilter.$or || [];
-      baseFilter.$or.push(
-        { subcategory: subcategoryVal },
-        { listingType: subcategoryVal },
-      );
+      conditions.push({
+        $or: [{ subcategory: subcategoryVal }, { listingType: subcategoryVal }],
+      });
       appliedFilters.subcategory = subcategoryVal;
     }
 
@@ -231,11 +234,12 @@ exports.getActiveServices = async (req, res) => {
 
     if (normalizedListingType) {
       // Also check subcategory for legacy support
-      baseFilter.$or = baseFilter.$or || [];
-      baseFilter.$or.push(
-        { listingType: normalizedListingType },
-        { subcategory: normalizedListingType },
-      );
+      conditions.push({
+        $or: [
+          { listingType: normalizedListingType },
+          { subcategory: normalizedListingType },
+        ],
+      });
       appliedFilters.listingType = normalizedListingType;
     }
 
@@ -243,8 +247,7 @@ exports.getActiveServices = async (req, res) => {
     const searchVal = String(search || "").trim();
     if (searchVal) {
       const searchRegex = new RegExp(searchVal, "i");
-      baseFilter.$and = baseFilter.$and || [];
-      baseFilter.$and.push({
+      conditions.push({
         $or: [
           { title: searchRegex },
           { description: searchRegex },
@@ -257,26 +260,34 @@ exports.getActiveServices = async (req, res) => {
     // Country filter
     const countryVal = String(country || "").trim();
     if (countryVal && countryVal !== "all") {
-      baseFilter.countries = { $in: [countryVal, "Global"] };
+      conditions.push({ countries: { $in: [countryVal, "Global"] } });
       appliedFilters.country = countryVal;
     }
 
     // Platform filter
     const platformVal = String(platform || "").trim();
     if (platformVal && platformVal !== "all") {
-      baseFilter.platform = { $regex: new RegExp(`^${platformVal}$`, "i") };
+      conditions.push({
+        platform: { $regex: new RegExp(`^${platformVal}$`, "i") },
+      });
       appliedFilters.platform = platformVal;
     }
 
     // PATCH_18: Context-aware filter application
-    const isFreshAccount = normalizedListingType === "fresh_account";
-    const isAlreadyOnboarded = normalizedListingType === "already_onboarded";
+    const isFreshAccount =
+      subcategoryVal === "fresh_account" ||
+      normalizedListingType === "fresh_account";
+    const isAlreadyOnboarded =
+      subcategoryVal === "already_onboarded" ||
+      normalizedListingType === "already_onboarded";
 
     // Subject filter (only for fresh_account)
     const subjectVal = String(subject || "").trim();
     if (subjectVal && subjectVal !== "all") {
       if (isFreshAccount) {
-        baseFilter.subject = { $regex: new RegExp(`^${subjectVal}$`, "i") };
+        conditions.push({
+          subject: { $regex: new RegExp(`^${subjectVal}$`, "i") },
+        });
         appliedFilters.subject = subjectVal;
       } else {
         ignoredFilters.push({
@@ -290,7 +301,9 @@ exports.getActiveServices = async (req, res) => {
     const projectVal = String(projectName || "").trim();
     if (projectVal && projectVal !== "all") {
       if (isAlreadyOnboarded) {
-        baseFilter.projectName = { $regex: new RegExp(`^${projectVal}$`, "i") };
+        conditions.push({
+          projectName: { $regex: new RegExp(`^${projectVal}$`, "i") },
+        });
         appliedFilters.projectName = projectVal;
       } else {
         ignoredFilters.push({
@@ -304,7 +317,7 @@ exports.getActiveServices = async (req, res) => {
     const minPayRateVal = parseFloat(minPayRate);
     if (Number.isFinite(minPayRateVal) && minPayRateVal > 0) {
       if (isAlreadyOnboarded) {
-        baseFilter.payRate = { $gte: minPayRateVal };
+        conditions.push({ payRate: { $gte: minPayRateVal } });
         appliedFilters.minPayRate = minPayRateVal;
       } else {
         ignoredFilters.push({
@@ -313,6 +326,10 @@ exports.getActiveServices = async (req, res) => {
         });
       }
     }
+
+    // PATCH_20: Build final filter by combining all conditions with $and
+    const baseFilter =
+      conditions.length === 1 ? conditions[0] : { $and: conditions };
 
     // Pagination
     const take = Math.min(parseInt(limit) || 100, 200);
