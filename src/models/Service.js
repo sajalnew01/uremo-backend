@@ -1,36 +1,19 @@
 const mongoose = require("mongoose");
 
-// PATCH_19: Canonical enums - subcategories vary by category
-const VALID_CATEGORIES = [
-  "microjobs",
-  "forex_crypto",
-  "banks_gateways_wallets",
-];
+// PATCH_19: Category and Subcategory enums for 3-tier service organization
+const CATEGORY_ENUM = ["microjobs", "forex_crypto", "banks_gateways_wallets"];
 
-// PATCH_19: Subcategories per category type
-const SUBCATEGORIES_BY_CATEGORY = {
+// PATCH_19: Subcategory mapped by category
+const SUBCATEGORY_BY_CATEGORY = {
   microjobs: ["fresh_account", "already_onboarded"],
   forex_crypto: ["forex_platform_creation", "crypto_platform_creation"],
   banks_gateways_wallets: ["banks", "payment_gateways", "wallets"],
 };
 
-// All valid subcategory values (flattened for schema validation)
-const ALL_SUBCATEGORIES = [
-  // microjobs
-  "fresh_account",
-  "already_onboarded",
-  // forex_crypto
-  "forex_platform_creation",
-  "crypto_platform_creation",
-  // banks_gateways_wallets
-  "banks",
-  "payment_gateways",
-  "wallets",
-  // legacy fallback
-  "general",
-];
+// PATCH_19: Flat list of all subcategories for schema validation
+const ALL_SUBCATEGORIES = Object.values(SUBCATEGORY_BY_CATEGORY).flat();
 
-// PATCH_19: Enhanced schema with proper category + subcategory system
+// PATCH_18: Enhanced schema with all fields for Admin CMS control
 const serviceSchema = new mongoose.Schema(
   {
     title: {
@@ -47,21 +30,27 @@ const serviceSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // PATCH_19: Category with strict enum
+    // PATCH_19: Strict category enum with 3 main categories
     category: {
       type: String,
-      enum: [...VALID_CATEGORIES, "general"], // allow legacy "general"
-      default: "microjobs",
+      required: true,
       trim: true,
+      enum: {
+        values: CATEGORY_ENUM,
+        message:
+          "Category must be one of: microjobs, forex_crypto, banks_gateways_wallets",
+      },
       index: true,
     },
 
-    // PATCH_19: Subcategory - varies by category, validated in pre-save
+    // PATCH_19: Subcategory field with validation
     subcategory: {
       type: String,
-      enum: ALL_SUBCATEGORIES,
-      default: "fresh_account",
       trim: true,
+      enum: {
+        values: ALL_SUBCATEGORIES,
+        message: "Invalid subcategory for the selected category",
+      },
       index: true,
     },
 
@@ -108,7 +97,7 @@ const serviceSchema = new mongoose.Schema(
       default: "",
     },
 
-    // PATCH_19: Legacy listingType kept for backward compatibility (maps to subcategory)
+    // PATCH_18: listingType enum for two-path UX
     listingType: {
       type: String,
       enum: ["fresh_account", "already_onboarded", "general"],
@@ -209,42 +198,51 @@ const serviceSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-// PATCH_19: Pre-save hook to validate subcategory matches category and set defaults
-serviceSchema.pre("save", function (next) {
-  // Map legacy listingType to subcategory if subcategory not set
-  if (!this.subcategory && this.listingType && this.listingType !== "general") {
-    this.subcategory = this.listingType;
-  }
+// PATCH_19: Compound indexes with subcategory
+serviceSchema.index({ category: 1, subcategory: 1, status: 1 });
+serviceSchema.index({ countries: 1, category: 1, subcategory: 1, status: 1 });
+serviceSchema.index({ platform: 1, subject: 1, projectName: 1 });
+serviceSchema.index({ status: 1, category: 1, listingType: 1 }); // Legacy support
+serviceSchema.index({ status: 1, countries: 1 });
+serviceSchema.index({ active: 1, category: 1 });
 
-  // Set category default if missing
-  if (!this.category || this.category === "general") {
+// PATCH_19: Pre-save hook to set defaults and validate subcategory
+serviceSchema.pre("save", function (next) {
+  // Default category if not set
+  if (!this.category) {
     this.category = "microjobs";
   }
 
+  // Default subcategory based on category if not set
+  if (!this.subcategory) {
+    const defaults = {
+      microjobs: "fresh_account",
+      forex_crypto: "forex_platform_creation",
+      banks_gateways_wallets: "banks",
+    };
+    this.subcategory = defaults[this.category] || "fresh_account";
+  }
+
   // Validate subcategory matches category
-  const validSubcats = SUBCATEGORIES_BY_CATEGORY[this.category];
+  const validSubcats = SUBCATEGORY_BY_CATEGORY[this.category];
   if (validSubcats && !validSubcats.includes(this.subcategory)) {
-    // Auto-fix: set to first valid subcategory for this category
+    // Auto-correct to first valid subcategory
     this.subcategory = validSubcats[0];
   }
 
-  // Keep listingType in sync for backward compatibility
-  if (this.category === "microjobs") {
+  // Sync listingType with subcategory for backwards compatibility
+  if (
+    this.subcategory === "fresh_account" ||
+    this.subcategory === "already_onboarded"
+  ) {
     this.listingType = this.subcategory;
   }
 
   next();
 });
 
-// PATCH_19: Compound indexes for efficient filtering
-serviceSchema.index({ status: 1, category: 1, subcategory: 1 });
-serviceSchema.index({ status: 1, countries: 1 });
-serviceSchema.index({ status: 1, platform: 1, subject: 1, projectName: 1 });
-serviceSchema.index({ active: 1, category: 1, subcategory: 1 });
-
 // PATCH_19: Export enums for use in controllers
-serviceSchema.statics.VALID_CATEGORIES = VALID_CATEGORIES;
-serviceSchema.statics.SUBCATEGORIES_BY_CATEGORY = SUBCATEGORIES_BY_CATEGORY;
-serviceSchema.statics.ALL_SUBCATEGORIES = ALL_SUBCATEGORIES;
-
 module.exports = mongoose.model("Service", serviceSchema);
+module.exports.CATEGORY_ENUM = CATEGORY_ENUM;
+module.exports.SUBCATEGORY_BY_CATEGORY = SUBCATEGORY_BY_CATEGORY;
+module.exports.ALL_SUBCATEGORIES = ALL_SUBCATEGORIES;

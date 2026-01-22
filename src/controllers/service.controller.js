@@ -1,4 +1,9 @@
 const Service = require("../models/Service");
+const {
+  CATEGORY_ENUM,
+  SUBCATEGORY_BY_CATEGORY,
+  ALL_SUBCATEGORIES,
+} = require("../models/Service");
 
 function setNoCache(res) {
   res.set(
@@ -166,12 +171,14 @@ exports.getActiveServices = async (req, res) => {
     // Extract query params
     const {
       category,
+      subcategory, // PATCH_19
       listingType,
       country,
       platform,
       subject,
       projectName,
       minPayRate,
+      search, // PATCH_19
       limit = 100,
       page = 1,
       sort = "createdAt",
@@ -192,16 +199,42 @@ exports.getActiveServices = async (req, res) => {
       appliedFilters.category = baseFilter.category;
     }
 
-    // ListingType filter
+    // PATCH_19: Subcategory filter (preferred over listingType)
+    const subcategoryVal = String(subcategory || "").trim();
+    if (subcategoryVal && subcategoryVal !== "all") {
+      baseFilter.subcategory = subcategoryVal;
+      appliedFilters.subcategory = subcategoryVal;
+    }
+
+    // ListingType filter (legacy support - only if subcategory not provided)
     const listingTypeVal = String(listingType || "").trim();
     const normalizedListingType =
-      listingTypeVal && listingTypeVal !== "all"
+      !subcategoryVal && listingTypeVal && listingTypeVal !== "all"
         ? normalizeListingType(listingTypeVal)
         : null;
 
     if (normalizedListingType) {
-      baseFilter.listingType = normalizedListingType;
+      // Also check subcategory for legacy support
+      baseFilter.$or = [
+        { listingType: normalizedListingType },
+        { subcategory: normalizedListingType },
+      ];
       appliedFilters.listingType = normalizedListingType;
+    }
+
+    // PATCH_19: Text search
+    const searchVal = String(search || "").trim();
+    if (searchVal) {
+      const searchRegex = new RegExp(searchVal, "i");
+      baseFilter.$and = baseFilter.$and || [];
+      baseFilter.$and.push({
+        $or: [
+          { title: searchRegex },
+          { description: searchRegex },
+          { platform: searchRegex },
+        ],
+      });
+      appliedFilters.search = searchVal;
     }
 
     // Country filter
@@ -282,10 +315,11 @@ exports.getActiveServices = async (req, res) => {
       .limit(take)
       .lean();
 
-    // PATCH_18: Normalize service data and auto-fill missing defaults
+    // PATCH_18/19: Normalize service data and auto-fill missing defaults
     const services = rawServices.map((s) => ({
       ...s,
-      category: s.category || "general",
+      category: s.category || "microjobs",
+      subcategory: s.subcategory || s.listingType || "fresh_account", // PATCH_19
       listingType: s.listingType || "general",
       countries:
         Array.isArray(s.countries) && s.countries.length > 0
@@ -400,6 +434,22 @@ exports.getActiveServices = async (req, res) => {
       listingTypes: CANON_LISTING_TYPES.filter(
         (lt) => listingTypesFromDb.includes(lt.id) || lt.id === "general",
       ),
+      // PATCH_19: Include subcategory mappings for frontend
+      subcategoriesByCategory: {
+        microjobs: [
+          { id: "fresh_account", label: "Fresh Account" },
+          { id: "already_onboarded", label: "Already Onboarded" },
+        ],
+        forex_crypto: [
+          { id: "forex_platform_creation", label: "Forex Platform Creation" },
+          { id: "crypto_platform_creation", label: "Crypto Platform Creation" },
+        ],
+        banks_gateways_wallets: [
+          { id: "banks", label: "Banks" },
+          { id: "payment_gateways", label: "Payment Gateways" },
+          { id: "wallets", label: "Wallets" },
+        ],
+      },
       countries: sortedCountries,
       platforms,
     };

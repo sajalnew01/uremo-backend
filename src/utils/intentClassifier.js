@@ -85,9 +85,13 @@ const PAYMENT_PAT =
 const CUSTOM_SERVICE_PAT =
   /(\bcustom\b|\bnot\s+listed\b|\bspecial\s+request\b|\badd\s+service\b|\bnot\s+available\b)/i;
 
-// Dedicated intents (PATCH_09, expanded PATCH_19)
+// Dedicated intents (PATCH_09)
 const LIST_SERVICES_PAT =
-  /(\bshow\s+(?:me\s+)?services\b|\bservices\s+list\b|\blist\s+(?:of\s+)?services\b|\bavailable\s+services\b|\bwhat\s+services\b|\bwhich\s+(?:services|accounts|microjobs?)\s+(?:are\s+)?available\b|\bwhat\s+(?:can\s+i\s+(?:buy|purchase|order)|is\s+available)\b|\bservice\s+catalog\b|\bshow\s+(?:me\s+)?(?:microjobs?|accounts?|platforms?)\b|\bavailable\s+(?:to\s+(?:buy|purchase|order)|microjobs?|accounts?)\b)/i;
+  /(\bshow\s+services\b|\bservices\s+list\b|\blist\s+services\b|\bavailable\s+services\b|\bwhat\s+services\b)/i;
+
+// PATCH_19: Enhanced pattern to catch "which services available", "what can i buy", "microjob accounts available"
+const SERVICES_QUERY_PAT =
+  /(\bwhich\s+(?:services?|accounts?|products?)\b|\bwhat\s+(?:services?|accounts?|products?)\s+(?:are|do\s+you\s+have|available|can\s+i\s+(?:buy|purchase|get))\b|\bwhat\s+can\s+i\s+(?:buy|purchase|get)\b|\bavailable\s+(?:to\s+)?(?:buy|purchase)\b|\bmicrojob\s*accounts?\s*(?:available|to\s+buy)?\b|\btell\s+me\s+(?:about\s+)?(?:the\s+)?(?:available\s+)?services\b|\bshow\s+(?:me\s+)?(?:available\s+)?services\b)/i;
 
 // User identity (who am I?)
 const USER_IDENTITY_PAT =
@@ -131,6 +135,8 @@ function classifyIntent(text) {
   if (USER_IDENTITY_PAT.test(t)) return "USER_IDENTITY_QUERY";
   // Assistant identity should be below USER_IDENTITY to avoid "who am I" matching "who are"
   if (ASSISTANT_IDENTITY_PAT.test(t)) return "ASSISTANT_IDENTITY";
+  // PATCH_19: Check services query BEFORE list services for broader matching
+  if (SERVICES_QUERY_PAT.test(t)) return "LIST_SERVICES";
   if (LIST_SERVICES_PAT.test(t)) return "LIST_SERVICES";
 
   // Specific purchase request with platform + buy intent (or platform + account + price)
