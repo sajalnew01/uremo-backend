@@ -30,28 +30,35 @@ const serviceSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // PATCH_19: Strict category enum with 3 main categories
+    // PATCH_19/20: Category with fallback (not required for backwards compatibility)
     category: {
       type: String,
-      required: true,
       trim: true,
       enum: {
-        values: CATEGORY_ENUM,
+        values: [...CATEGORY_ENUM, "general"], // Allow "general" for legacy
         message:
-          "Category must be one of: microjobs, forex_crypto, banks_gateways_wallets",
+          "Category must be one of: microjobs, forex_crypto, banks_gateways_wallets, general",
       },
+      default: "microjobs",
       index: true,
     },
 
-    // PATCH_19: Subcategory field with validation
+    // PATCH_19/20: Subcategory field with validation (optional for backwards compat)
     subcategory: {
       type: String,
       trim: true,
       enum: {
-        values: ALL_SUBCATEGORIES,
+        values: [...ALL_SUBCATEGORIES, "general"], // Allow "general" for legacy
         message: "Invalid subcategory for the selected category",
       },
       index: true,
+    },
+
+    // PATCH_20: Country-based pricing - key is country code, value is price
+    countryPricing: {
+      type: Map,
+      of: Number,
+      default: {},
     },
 
     description: {

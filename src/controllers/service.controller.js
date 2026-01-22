@@ -192,17 +192,33 @@ exports.getActiveServices = async (req, res) => {
     const appliedFilters = {};
     const ignoredFilters = [];
 
-    // Category filter
+    // PATCH_20: Category filter with backwards compat
     const categoryVal = String(category || "").trim();
     if (categoryVal && categoryVal !== "all") {
-      baseFilter.category = normalizeCategory(categoryVal);
-      appliedFilters.category = baseFilter.category;
+      const normalizedCat = normalizeCategory(categoryVal);
+      // Also match services with "general" category or missing category
+      if (normalizedCat === "microjobs") {
+        baseFilter.$or = [
+          { category: "microjobs" },
+          { category: "general" },
+          { category: { $exists: false } },
+          { category: "" },
+        ];
+      } else {
+        baseFilter.category = normalizedCat;
+      }
+      appliedFilters.category = normalizedCat;
     }
 
-    // PATCH_19: Subcategory filter (preferred over listingType)
+    // PATCH_20: Subcategory filter with backwards compat for listingType
     const subcategoryVal = String(subcategory || "").trim();
     if (subcategoryVal && subcategoryVal !== "all") {
-      baseFilter.subcategory = subcategoryVal;
+      // Match either subcategory OR listingType (for legacy services)
+      baseFilter.$or = baseFilter.$or || [];
+      baseFilter.$or.push(
+        { subcategory: subcategoryVal },
+        { listingType: subcategoryVal },
+      );
       appliedFilters.subcategory = subcategoryVal;
     }
 
@@ -215,10 +231,11 @@ exports.getActiveServices = async (req, res) => {
 
     if (normalizedListingType) {
       // Also check subcategory for legacy support
-      baseFilter.$or = [
+      baseFilter.$or = baseFilter.$or || [];
+      baseFilter.$or.push(
         { listingType: normalizedListingType },
         { subcategory: normalizedListingType },
-      ];
+      );
       appliedFilters.listingType = normalizedListingType;
     }
 
@@ -315,24 +332,52 @@ exports.getActiveServices = async (req, res) => {
       .limit(take)
       .lean();
 
-    // PATCH_18/19: Normalize service data and auto-fill missing defaults
-    const services = rawServices.map((s) => ({
-      ...s,
-      category: s.category || "microjobs",
-      subcategory: s.subcategory || s.listingType || "fresh_account", // PATCH_19
-      listingType: s.listingType || "general",
-      countries:
-        Array.isArray(s.countries) && s.countries.length > 0
-          ? s.countries.map(normalizeCountry)
-          : ["Global"],
-      platform: s.platform || "",
-      subject: s.subject || "",
-      projectName: s.projectName || "",
-      payRate: s.payRate || 0,
-      instantDelivery: s.instantDelivery || false,
-      tags: Array.isArray(s.tags) ? s.tags : [],
-      features: Array.isArray(s.features) ? s.features : [],
-    }));
+    // PATCH_20: Normalize service data and apply country-based pricing
+    const selectedCountry = appliedFilters.country || null;
+    const services = rawServices.map((s) => {
+      // Calculate effective price based on selected country
+      let effectivePrice = s.price;
+      if (selectedCountry && s.countryPricing) {
+        // countryPricing is a Map, convert to object for lookup
+        const pricing =
+          s.countryPricing instanceof Map
+            ? Object.fromEntries(s.countryPricing)
+            : s.countryPricing || {};
+
+        // Check for country-specific price (case-insensitive)
+        const countryKey = Object.keys(pricing).find(
+          (k) => k.toLowerCase() === selectedCountry.toLowerCase(),
+        );
+        if (countryKey && pricing[countryKey] != null) {
+          effectivePrice = pricing[countryKey];
+        }
+      }
+
+      return {
+        ...s,
+        category: s.category || "microjobs",
+        subcategory: s.subcategory || s.listingType || "fresh_account",
+        listingType: s.listingType || "general",
+        countries:
+          Array.isArray(s.countries) && s.countries.length > 0
+            ? s.countries.map(normalizeCountry)
+            : ["Global"],
+        platform: s.platform || "",
+        subject: s.subject || "",
+        projectName: s.projectName || "",
+        payRate: s.payRate || 0,
+        instantDelivery: s.instantDelivery || false,
+        tags: Array.isArray(s.tags) ? s.tags : [],
+        features: Array.isArray(s.features) ? s.features : [],
+        // PATCH_20: Show effective price and original for comparison
+        price: effectivePrice,
+        basePrice: s.price,
+        countryPricing:
+          s.countryPricing instanceof Map
+            ? Object.fromEntries(s.countryPricing)
+            : s.countryPricing || {},
+      };
+    });
 
     const total = await Service.countDocuments(baseFilter);
 
