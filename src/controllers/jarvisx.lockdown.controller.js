@@ -94,9 +94,19 @@ function parseServiceTypeFromText(text) {
 // PATCH_17: Extract listingType from natural language
 function parseListingTypeFromText(text) {
   const lower = String(text || "").toLowerCase();
-  if (lower.includes("fresh") || lower.includes("fresh_account") || lower.includes("kyc") || lower.includes("screening"))
+  if (
+    lower.includes("fresh") ||
+    lower.includes("fresh_account") ||
+    lower.includes("kyc") ||
+    lower.includes("screening")
+  )
     return "fresh_account";
-  if (lower.includes("already") || lower.includes("onboard") || lower.includes("already_onboarded") || lower.includes("project-ready"))
+  if (
+    lower.includes("already") ||
+    lower.includes("onboard") ||
+    lower.includes("already_onboarded") ||
+    lower.includes("project-ready")
+  )
     return "already_onboarded";
   return "general";
 }
@@ -149,7 +159,11 @@ function parseSubjectFromText(text) {
 function parseProjectNameFromText(text) {
   const lower = String(text || "").toLowerCase();
   const projectPatterns = [
-    { pattern: /project\s+([A-Za-z0-9_\-\s]+?)(?:\s+(?:pay|for|at|country|instant|\$)|$)/i, name: null },
+    {
+      pattern:
+        /project\s+([A-Za-z0-9_\-\s]+?)(?:\s+(?:pay|for|at|country|instant|\$)|$)/i,
+      name: null,
+    },
     { pattern: /\bvalkyrie\s*v?\d*/i, name: null },
     { pattern: /\baurora\b/i, name: "Aurora" },
     { pattern: /\bphoenix\b/i, name: "Phoenix" },
@@ -165,7 +179,9 @@ function parseProjectNameFromText(text) {
 
 // PATCH_17: Extract payRate from natural language
 function parsePayRateFromText(text) {
-  const match = String(text || "").match(/(?:payrate|pay\s*rate|hourly)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i);
+  const match = String(text || "").match(
+    /(?:payrate|pay\s*rate|hourly)\s*\$?\s*(\d+(?:\.\d{1,2})?)/i,
+  );
   if (match) {
     const value = Number(match[1]);
     return Number.isFinite(value) ? value : 0;
@@ -176,7 +192,12 @@ function parsePayRateFromText(text) {
 // PATCH_17: Extract instantDelivery from natural language
 function parseInstantDeliveryFromText(text) {
   const lower = String(text || "").toLowerCase();
-  return lower.includes("instant") && (lower.includes("true") || lower.includes("delivery") || lower.includes("yes"));
+  return (
+    lower.includes("instant") &&
+    (lower.includes("true") ||
+      lower.includes("delivery") ||
+      lower.includes("yes"))
+  );
 }
 
 // PATCH_15: Extract countries from natural language
@@ -1077,28 +1098,7 @@ exports.chat = async (req, res) => {
         }
 
         // If we previously asked for missing price, accept price and create
-        // PATCH_15: Enhanced with vision-aligned fields
-        if (session?.metadata?.pendingService && !wantsCreateService) {
-          const price = parsePriceFromText(message);
-          if (price !== null) {
-            const pending = session.metadata.pendingService;
-            try {
-              const baseSlug = slugify(pending.title);
-              const slug = await ensureUniqueServiceSlug(
-                baseSlug || `service-${Date.now()}`,
-              );
-
-              const shouldActivate = pending.shouldActivate !== false;
-
-              const created = await Service.create({
-                title: pending.title,
-                slug,
-                category: pending.category || "general",
-                serviceType: pending.serviceType || "general",
-                countries: pending.countries || ["Global"],
-                status: shouldActivate ? "active" : "draft",
-                description: pending.description || "Service created by admin",
-                pr7: Enhanced with vision-aligned fields
+        // PATCH_17: Enhanced with vision-aligned fields
         if (session?.metadata?.pendingService && !wantsCreateService) {
           const price = parsePriceFromText(message);
           if (price !== null) {
@@ -1137,36 +1137,36 @@ exports.chat = async (req, res) => {
                 await session.save();
               }
 
-              const reply = `Created service: ${created.title} ($${created.price}). ID: ${created._id}`;
+              const replyMsg = `Created service: ${created.title} ($${created.price}). ID: ${created._id}`;
               await sessionManager.addMessage(session, "user", message);
-              await sessionManager.addMessage(session, "jarvis", reply);
+              await sessionManager.addMessage(session, "jarvis", replyMsg);
               return res.json({
                 ok: true,
-                reply,
+                reply: replyMsg,
                 intent: "ADMIN_SERVICE_CREATE",
                 quickReplies: ["Create service", "Orders"],
                 serviceId: String(created._id),
                 sessionId: session.sessionKey,
-                realAction: truessage);
-
-          // PATCH_15: Better title extraction - handle patterns like "Create service Airtm - receive payments..."
-          const titlePatterns = [
-            /service\s+(?:called|named)?\s*[:\-]?\s*"?([^"$\n]+?)(?:\s+(?:for|at|category|type|country|\$)|"|\s*$)/i,
-            /create\s+(?:a\s+)?service\s+"?([^"$\n]+?)(?:\s+(?:for|at|category|type|country|\$)|"|\s*$)/i,
-            /add\s+(?:a\s+)?service\s+"?([^"$\n]+?)(?:\s+(?:for|at|category|type|country|\$)|"|\s*$)/i,
-          ];
-
-          let title = "New Service";
-          for (const pattern of titlePatterns) {
-            const match = String(message || "")
-              .replace(/\s+/g, " ")
-              .match(pattern);
-            if (match?.[1]) {
-              title = match[1].trim().slice(0, 120);
-              break;
+                realAction: true,
+              });
+            } catch (err) {
+              const replyMsg =
+                "I tried to create the service, but the database write failed.";
+              await sessionManager.addMessage(session, "user", message);
+              await sessionManager.addMessage(session, "jarvis", replyMsg);
+              return res.json({
+                ok: false,
+                reply: replyMsg,
+                intent: "ADMIN_SERVICE_CREATE_ERROR",
+                quickReplies: ["Try again"],
+                sessionId: session.sessionKey,
+              });
             }
           }
-7: Enhanced with vision-aligned fields (category, listingType, platform, subject, projectName, payRate, instantDelivery)
+        }
+
+        // Create service
+        // PATCH_17: Enhanced with vision-aligned fields (category, listingType, platform, subject, projectName, payRate, instantDelivery)
         if (wantsCreateService) {
           const price = parsePriceFromText(message);
 
@@ -1281,7 +1281,28 @@ exports.chat = async (req, res) => {
               realAction: true,
             });
           } catch (err) {
-            const reply = `❌ Failed to create service: ${err?.message || "Database write failed"}`
+            const errReply = `❌ Failed to create service: ${err?.message || "Database write failed"}`;
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", errReply);
+            return res.json({
+              ok: false,
+              reply: errReply,
+              intent: "ADMIN_SERVICE_CREATE_ERROR",
+              quickReplies: ["Try again"],
+              sessionId: session.sessionKey,
+            });
+          }
+        }
+      }
+
+      // Greeting fallback ONLY if it's a greeting AND there is no session history.
+      if (brainV1IsGreeting(message) && !hasHistory) {
+        await sessionManager.addMessage(session, "user", message);
+        await sessionManager.addMessage(
+          session,
+          "jarvis",
+          "Yes boss ✅ I'm here. What should I handle?",
+        );
         return res.json({
           ok: true,
           reply: "Yes boss ✅ I'm here. What should I handle?",
@@ -1420,7 +1441,8 @@ exports.chat = async (req, res) => {
           .lean();
 
         if (!Array.isArray(list) || list.length === 0) {
-          const out = "No services are listed right now. Tell me what you need and I can create a custom request.";
+          const out =
+            "No services are listed right now. Tell me what you need and I can create a custom request.";
           await sessionManager.addMessage(session, "user", message);
           await sessionManager.addMessage(session, "jarvis", out);
           return res.json({
@@ -1461,7 +1483,11 @@ exports.chat = async (req, res) => {
         // Build formatted output
         let out = "Here are our current services:\n\n";
         const sortedGroups = Object.values(grouped).sort((a, b) => {
-          const catOrder = ["microjobs", "forex_crypto", "banks_gateways_wallets"];
+          const catOrder = [
+            "microjobs",
+            "forex_crypto",
+            "banks_gateways_wallets",
+          ];
           const aIdx = catOrder.indexOf(a.category);
           const bIdx = catOrder.indexOf(b.category);
           if (aIdx !== bIdx) return aIdx - bIdx;
@@ -1469,8 +1495,11 @@ exports.chat = async (req, res) => {
         });
 
         for (const group of sortedGroups) {
-          const catLabel = categoryLabels[group.category] || group.category.replace(/_/g, " ");
-          const subcatLabel = subcategoryLabels[group.subcategory] || group.subcategory.replace(/_/g, " ");
+          const catLabel =
+            categoryLabels[group.category] || group.category.replace(/_/g, " ");
+          const subcatLabel =
+            subcategoryLabels[group.subcategory] ||
+            group.subcategory.replace(/_/g, " ");
           out += `**${catLabel} → ${subcatLabel}:**\n`;
           for (const s of group.services.slice(0, 5)) {
             const price = s.price ? ` ($${s.price})` : "";
@@ -1494,7 +1523,8 @@ exports.chat = async (req, res) => {
         });
       } catch (err) {
         console.error("[JarvisX] LIST_SERVICES error:", err);
-        const out = "Sorry, I couldn't load services right now. Please try again or visit the Buy Service page.";
+        const out =
+          "Sorry, I couldn't load services right now. Please try again or visit the Buy Service page.";
         await sessionManager.addMessage(session, "user", message);
         await sessionManager.addMessage(session, "jarvis", out);
         return res.json({

@@ -120,25 +120,7 @@ function getClientIp(req) {
   return String(ip || "").trim();
 }
 
-/**
- * P0 FIX: STABLE SESSION KEY - Uses cookie-based session ID for anonymous users
- * NEVER use IP+UA as primary key (causes reset loops when IP changes)
- */
-function getSessionKey(req) {
-  const userId = req.user?.id ? String(req.user.id) : "";
-  if (userId) return `user:${userId}`;
-
-  // Use cookie-based session ID for anonymous users
-  const cookieSid = req.cookies?.jarvisx_sid;
-  if (cookieSid && typeof cookieSid === "string" && cookieSid.length >= 8) {
-    return `anon:${cookieSid}`;
-  }
-
-  // Fallback: generate new UUID and mark for cookie setting
-  const newSid = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
-  req._jarvisxNewSid = newSid;
-  return `anon:${newSid}`;
-}
+// Use imported getSessionKey from jarvisSession.js
 
 async function loadOrCreateSession(req) {
   const key = getSessionKey(req);
@@ -164,7 +146,7 @@ async function pushSessionMessage(session, role, content) {
 
 function withBrainEnvelope(
   payload,
-  { intent, quickReplies, didCreateRequest }
+  { intent, quickReplies, didCreateRequest },
 ) {
   const out = {
     ...payload,
@@ -206,7 +188,7 @@ async function getPublicContextObject() {
       price: s.price,
       description: s.description,
       imageUrl: s.imageUrl || "",
-    })
+    }),
   );
 
   const normalizedPaymentMethods = (
@@ -443,12 +425,12 @@ function isPriorityComplaint(message) {
   const urgent = /(urgent|asap|immediately|right now|today)/.test(msg);
   const dispute =
     /(chargeback|refund|scam|fraud|stolen|report|lawsuit|police|paypal dispute|stripe dispute)/.test(
-      msg
+      msg,
     );
   const angry = /(angry|unacceptable|terrible|worst|rip ?off|cheat)/.test(msg);
   const broken =
     /(not working|doesn\s*t work|no response|ignored|still waiting|delayed|late)/.test(
-      msg
+      msg,
     );
 
   return urgent || dispute || angry || broken;
@@ -550,10 +532,10 @@ function isServiceRequestIntent(message) {
   const msg = String(message || "").toLowerCase();
   return (
     /(i\s*(need|want|require)|looking\s*for|can\s*you\s*(do|help)|do\s*you\s*(offer|provide)|service\s*for|help\s*me\s*with)/.test(
-      msg
+      msg,
     ) &&
     /(service|account|kyc|verification|outlier|paypal|binance|stripe|payment|ads|instagram|tiktok|facebook|google|shopify|amazon|upwork|fiverr)/.test(
-      msg
+      msg,
     )
   );
 }
@@ -566,7 +548,7 @@ function wantsCancel(message) {
 function parseBudget(message) {
   const msg = String(message || "").toLowerCase();
   const m = msg.match(
-    /(\$|usd|eur|ngn|gbp)?\s*([0-9]{2,7})(?:\s*(\$|usd|eur|ngn|gbp))?/i
+    /(\$|usd|eur|ngn|gbp)?\s*([0-9]{2,7})(?:\s*(\$|usd|eur|ngn|gbp))?/i,
   );
   if (!m) return null;
   const amount = Number(m[2]);
@@ -873,7 +855,7 @@ function normalizeAiResponse(
   raw,
   inputMessage,
   isAdmin = false,
-  intent = null
+  intent = null,
 ) {
   const fallback = buildNotSureReply(isAdmin, intent);
   const obj = raw && typeof raw === "object" ? raw : null;
@@ -1047,8 +1029,8 @@ exports.chat = async (req, res) => {
             suggestedActions: [{ label: "My Orders", url: "/orders" }],
             llm: getJarvisLlmStatus(),
           },
-          { intent: "ESCALATE" }
-        )
+          { intent: "ESCALATE" },
+        ),
       );
     }
 
@@ -1062,7 +1044,7 @@ exports.chat = async (req, res) => {
       console.log(
         `[JARVISX_CHAT_OK] key=${sessionKey.slice(0, 12)}... flow=${
           session.flow
-        } step=${session.step} mode=quick_reply_route`
+        } step=${session.step} mode=quick_reply_route`,
       );
 
       return res.json(
@@ -1077,8 +1059,8 @@ exports.chat = async (req, res) => {
           {
             intent: session.flow || intent,
             quickReplies: stepResponse.quickReplies || [],
-          }
-        )
+          },
+        ),
       );
     }
   }
@@ -1120,8 +1102,8 @@ exports.chat = async (req, res) => {
           {
             intent: "CANCELLED",
             quickReplies: ["Buy service", "Order status", "Interview help"],
-          }
-        )
+          },
+        ),
       );
     }
 
@@ -1148,7 +1130,7 @@ exports.chat = async (req, res) => {
       console.log(
         `[JARVISX_CHAT_OK] key=${sessionKey.slice(0, 12)}... flow=${
           session.flow
-        } step=COMPLETE mode=flow_complete`
+        } step=COMPLETE mode=flow_complete`,
       );
 
       return res.json(
@@ -1162,8 +1144,8 @@ exports.chat = async (req, res) => {
             ],
             llm: getJarvisLlmStatus(),
           },
-          { intent: session.flow || intent }
-        )
+          { intent: session.flow || intent },
+        ),
       );
     }
 
@@ -1177,7 +1159,7 @@ exports.chat = async (req, res) => {
       console.log(
         `[JARVISX_CHAT_OK] key=${sessionKey.slice(0, 12)}... flow=${
           session.flow
-        } step=${session.step} mode=flow_continue`
+        } step=${session.step} mode=flow_continue`,
       );
 
       return res.json(
@@ -1192,8 +1174,8 @@ exports.chat = async (req, res) => {
           {
             intent: session.flow || intent,
             quickReplies: stepResponse.quickReplies || [],
-          }
-        )
+          },
+        ),
       );
     }
   }
@@ -1216,14 +1198,14 @@ exports.chat = async (req, res) => {
       console.log(
         `[JARVISX_CHAT_OK] key=${sessionKey.slice(
           0,
-          12
-        )}... intent=GREETING mode=admin_greeting`
+          12,
+        )}... intent=GREETING mode=admin_greeting`,
       );
       return res.json(
         withBrainEnvelope(
           { ...adminGreeting, llm: getJarvisLlmStatus() },
-          { intent: "GREETING", quickReplies: adminGreeting.quickReplies }
-        )
+          { intent: "GREETING", quickReplies: adminGreeting.quickReplies },
+        ),
       );
     }
   } else {
@@ -1237,14 +1219,14 @@ exports.chat = async (req, res) => {
       console.log(
         `[JARVISX_CHAT_OK] key=${sessionKey.slice(
           0,
-          12
-        )}... intent=GREETING mode=public_greeting`
+          12,
+        )}... intent=GREETING mode=public_greeting`,
       );
       return res.json(
         withBrainEnvelope(
           { ...publicGreeting, llm: getJarvisLlmStatus() },
-          { intent: "GREETING", quickReplies: publicGreeting.quickReplies }
-        )
+          { intent: "GREETING", quickReplies: publicGreeting.quickReplies },
+        ),
       );
     }
   }
@@ -1289,8 +1271,8 @@ exports.chat = async (req, res) => {
       console.log(
         `[JARVISX_CHAT_OK] key=${sessionKey.slice(
           0,
-          12
-        )}... intent=${intent} provider=none mode=${replyMode}`
+          12,
+        )}... intent=${intent} provider=none mode=${replyMode}`,
       );
 
       return res.json(
@@ -1305,8 +1287,8 @@ exports.chat = async (req, res) => {
           {
             intent,
             quickReplies: getClarifyQuickReplies(),
-          }
-        )
+          },
+        ),
       );
     }
 
@@ -1336,8 +1318,8 @@ exports.chat = async (req, res) => {
         console.log(
           `[JARVISX_CHAT_OK] key=${sessionKey.slice(
             0,
-            12
-          )}... intent=${intent} provider=none mode=deterministic`
+            12,
+          )}... intent=${intent} provider=none mode=deterministic`,
         );
 
         return res.json(
@@ -1351,8 +1333,8 @@ exports.chat = async (req, res) => {
               ],
               llm: getJarvisLlmStatus(),
             },
-            { intent, quickReplies: platformQuickReplies() }
-          )
+            { intent, quickReplies: platformQuickReplies() },
+          ),
         );
       } else if (
         hasPlatform &&
@@ -1369,8 +1351,8 @@ exports.chat = async (req, res) => {
         console.log(
           `[JARVISX_CHAT_OK] key=${sessionKey.slice(
             0,
-            12
-          )}... intent=${intent} provider=none mode=deterministic`
+            12,
+          )}... intent=${intent} provider=none mode=deterministic`,
         );
 
         return res.json(
@@ -1384,8 +1366,8 @@ exports.chat = async (req, res) => {
               ],
               llm: getJarvisLlmStatus(),
             },
-            { intent, quickReplies: urgencyQuickReplies() }
-          )
+            { intent, quickReplies: urgencyQuickReplies() },
+          ),
         );
       } else if (hasPlatform && hasUrgency) {
         // Both collected, confirm and guide to services
@@ -1397,8 +1379,8 @@ exports.chat = async (req, res) => {
         console.log(
           `[JARVISX_CHAT_OK] key=${sessionKey.slice(
             0,
-            12
-          )}... intent=${intent} provider=none mode=deterministic`
+            12,
+          )}... intent=${intent} provider=none mode=deterministic`,
         );
 
         return res.json(
@@ -1412,8 +1394,8 @@ exports.chat = async (req, res) => {
               ],
               llm: getJarvisLlmStatus(),
             },
-            { intent }
-          )
+            { intent },
+          ),
         );
       } else {
         // Anti-loop fallback: we asked platform but user didn't provide it
@@ -1428,8 +1410,8 @@ exports.chat = async (req, res) => {
         console.log(
           `[JARVISX_CHAT_OK] key=${sessionKey.slice(
             0,
-            12
-          )}... intent=${intent} provider=none mode=${replyMode}`
+            12,
+          )}... intent=${intent} provider=none mode=${replyMode}`,
         );
 
         return res.json(
@@ -1446,8 +1428,8 @@ exports.chat = async (req, res) => {
             {
               intent,
               quickReplies: [...platformQuickReplies(), "Browse Services"],
-            }
-          )
+            },
+          ),
         );
       }
     }
@@ -1479,8 +1461,8 @@ exports.chat = async (req, res) => {
             console.log(
               `[JARVISX_CHAT_OK] key=${sessionKey.slice(
                 0,
-                12
-              )}... intent=CUSTOM_SERVICE provider=none mode=cancelled`
+                12,
+              )}... intent=CUSTOM_SERVICE provider=none mode=cancelled`,
             );
 
             return res.json(
@@ -1490,8 +1472,8 @@ exports.chat = async (req, res) => {
                   requestId: String(draft._id),
                   stepKey: "cancelled",
                 }),
-                { intent: "CUSTOM_SERVICE" }
-              )
+                { intent: "CUSTOM_SERVICE" },
+              ),
             );
           }
 
@@ -1531,8 +1513,8 @@ exports.chat = async (req, res) => {
                 console.log(
                   `[JARVISX_CHAT_OK] key=${sessionKey.slice(
                     0,
-                    12
-                  )}... intent=CUSTOM_SERVICE provider=none mode=${replyMode}`
+                    12,
+                  )}... intent=CUSTOM_SERVICE provider=none mode=${replyMode}`,
                 );
 
                 return res.json(
@@ -1545,8 +1527,8 @@ exports.chat = async (req, res) => {
                     {
                       intent: "CUSTOM_SERVICE",
                       quickReplies: [...urgencyQuickReplies(), "Skip"],
-                    }
-                  )
+                    },
+                  ),
                 );
               }
             } else if (q.key === "budget") {
@@ -1585,8 +1567,8 @@ exports.chat = async (req, res) => {
               console.log(
                 `[JARVISX_CHAT_OK] key=${sessionKey.slice(
                   0,
-                  12
-                )}... intent=CUSTOM_SERVICE provider=none mode=lead_capture`
+                  12,
+                )}... intent=CUSTOM_SERVICE provider=none mode=lead_capture`,
               );
 
               return res.json(
@@ -1602,10 +1584,10 @@ exports.chat = async (req, res) => {
                       nextQ.key === "platform"
                         ? platformQuickReplies()
                         : nextQ.key === "urgency"
-                        ? urgencyQuickReplies()
-                        : undefined,
-                  }
-                )
+                          ? urgencyQuickReplies()
+                          : undefined,
+                  },
+                ),
               );
             }
 
@@ -1620,7 +1602,7 @@ exports.chat = async (req, res) => {
             await draft.save();
 
             const reply = `Request created ✅\n\nYour request ID is: ${String(
-              draft._id
+              draft._id,
             )}\n\nAn admin will contact you shortly in your Order Support Chat/inbox.`;
             appendMessage(session, "assistant", reply);
             session.lastQuestionKey = "created";
@@ -1629,8 +1611,8 @@ exports.chat = async (req, res) => {
             console.log(
               `[JARVISX_CHAT_OK] key=${sessionKey.slice(
                 0,
-                12
-              )}... intent=CUSTOM_SERVICE provider=none mode=lead_created`
+                12,
+              )}... intent=CUSTOM_SERVICE provider=none mode=lead_created`,
             );
 
             return res.json(
@@ -1640,8 +1622,8 @@ exports.chat = async (req, res) => {
                   requestId: String(draft._id),
                   stepKey: "created",
                 }),
-                { intent: "CUSTOM_SERVICE", didCreateRequest: true }
-              )
+                { intent: "CUSTOM_SERVICE", didCreateRequest: true },
+              ),
             );
           }
         }
@@ -1650,7 +1632,7 @@ exports.chat = async (req, res) => {
       // Start a new lead capture if user asks for an unlisted service
       const matchedServiceTitle = findMatchingServiceTitle(
         message,
-        context?.services
+        context?.services,
       );
       const intent = isServiceRequestIntent(message);
 
@@ -1674,7 +1656,7 @@ exports.chat = async (req, res) => {
             });
           } catch (err) {
             console.error(
-              `[JARVISX_PRIORITY_INBOX_FAIL] errMessage=${err?.message}`
+              `[JARVISX_PRIORITY_INBOX_FAIL] errMessage=${err?.message}`,
             );
           }
 
@@ -1754,8 +1736,8 @@ exports.chat = async (req, res) => {
         console.log(
           `[JARVISX_CHAT_OK] key=${sessionKey.slice(
             0,
-            12
-          )}... intent=CUSTOM_SERVICE provider=none mode=new_lead`
+            12,
+          )}... intent=CUSTOM_SERVICE provider=none mode=new_lead`,
         );
 
         return res.json(
@@ -1771,11 +1753,11 @@ exports.chat = async (req, res) => {
                 firstQ.key === "platform"
                   ? platformQuickReplies()
                   : firstQ.key === "urgency"
-                  ? urgencyQuickReplies()
-                  : undefined,
+                    ? urgencyQuickReplies()
+                    : undefined,
               didCreateRequest: true,
-            }
-          )
+            },
+          ),
         );
       }
     }
@@ -1804,10 +1786,10 @@ exports.chat = async (req, res) => {
       console.log(
         `[JARVISX_CHAT_OK] key=${sessionKey.slice(
           0,
-          12
+          12,
         )}... intent=${intent} provider=${
           providerForLog || "none"
-        } mode=${mode}`
+        } mode=${mode}`,
       );
       await saveSession(session);
       return res.json(withBrainEnvelope({ ...out, llm }, { intent }));
@@ -1819,11 +1801,11 @@ exports.chat = async (req, res) => {
           .map(
             (m) =>
               `- [${String(m.source)}|c=${Number(m.confidence).toFixed(
-                2
-              )}] ${clampString(m.correctResponse, 240)}`
+                2,
+              )}] ${clampString(m.correctResponse, 240)}`,
           )
           .join(
-            "\n"
+            "\n",
           )}\n\nIf any memory conflicts with CONTEXT JSON facts, follow CONTEXT.`
       : "";
 
@@ -1839,7 +1821,7 @@ exports.chat = async (req, res) => {
       : "";
 
     const system = `You are JarvisX Support — Sajal’s human assistant for UREMO.\n\nStrict style rules:\n- Speak like a real human support assistant (not like a chatbot).\n- Very short replies (1-4 lines).\n- Ask max 1 question.\n- Never repeat the same question twice.\n- Never mention API keys, system errors, stack traces, or provider issues in PUBLIC mode.\n\nAccuracy rules:\n- Use ONLY the provided CONTEXT JSON facts (services, payment methods, work positions, CMS/support texts, FAQ).\n- Do not hallucinate services, prices, or policies.\n\nDeterministic intent: ${intent}\n\nIf the user asks for a service that is NOT listed in CONTEXT.services:\n- Don’t just say “not available”.\n- Say we can still help if they share requirements.\n- Ask max 1 short question.\n- Say you’ll create a request for the admin/team.\n\nReturn STRICT JSON only, with keys:\n- reply (string)\n- confidence (0-1)\n- usedSources (array from [settings, services, paymentMethods, workPositions, rules])\n- suggestedActions (array of {label,url})\n\nCONTEXT JSON:\n${JSON.stringify(
-      context
+      context,
     )}${memoryBlock}${sessionBlock}`;
 
     const user = `User message: ${message}\n\nMeta: page=${
@@ -1862,7 +1844,7 @@ exports.chat = async (req, res) => {
       console.log(
         `[JARVISX_CHAT_FAIL] provider=${
           providerForLog || ""
-        } mode=${mode} errorCode=${llmResult.error?.code || "UNKNOWN"}`
+        } mode=${mode} errorCode=${llmResult.error?.code || "UNKNOWN"}`,
       );
 
       const out =
@@ -1882,10 +1864,10 @@ exports.chat = async (req, res) => {
       console.log(
         `[JARVISX_CHAT_OK] key=${sessionKey.slice(
           0,
-          12
+          12,
         )}... intent=${intent} provider=${
           providerForLog || "none"
-        } mode=llm_fallback`
+        } mode=llm_fallback`,
       );
 
       await saveSession(session);
@@ -1921,8 +1903,8 @@ exports.chat = async (req, res) => {
       return res.json(
         withBrainEnvelope(
           { ...buildNotSureReply(false, intent), llm: getJarvisLlmStatus() },
-          { intent }
-        )
+          { intent },
+        ),
       );
     }
 
@@ -1937,29 +1919,29 @@ exports.chat = async (req, res) => {
     console.log(
       `[JARVISX_CHAT_OK] key=${sessionKey.slice(
         0,
-        12
+        12,
       )}... intent=${intent} provider=${
         providerForLog || "none"
-      } mode=llm_success`
+      } mode=llm_success`,
     );
     appendMessage(session, "assistant", normalized.reply);
     await saveSession(session);
     return res.json(
       withBrainEnvelope(
         { ...normalized, llm: getJarvisLlmStatus() },
-        { intent }
-      )
+        { intent },
+      ),
     );
   } catch (err) {
     console.error(
       `[JARVISX_CHAT_FAIL] key=${
         sessionKey?.slice(0, 12) || "unknown"
-      }... err=${err?.message}`
+      }... err=${err?.message}`,
     );
     console.log(
       `[JARVISX_CHAT_FAIL] key=${
         sessionKey?.slice(0, 12) || "unknown"
-      }... intent=${intent} provider=${providerForLog || "none"} mode=exception`
+      }... intent=${intent} provider=${providerForLog || "none"} mode=exception`,
     );
     await recordChatEvent({
       mode,
@@ -1974,14 +1956,14 @@ exports.chat = async (req, res) => {
       const context = await getAdminContextObject().catch(() => null);
       const out = fallbackAnswerFromContextAdmin({ message, context });
       return res.json(
-        withBrainEnvelope({ ...out, llm: getJarvisLlmStatus() }, { intent })
+        withBrainEnvelope({ ...out, llm: getJarvisLlmStatus() }, { intent }),
       );
     }
     return res.json(
       withBrainEnvelope(
         { ...buildNotSureReply(false, intent), llm: getJarvisLlmStatus() },
-        { intent }
-      )
+        { intent },
+      ),
     );
   }
 };
@@ -2045,7 +2027,7 @@ exports.healthReport = async (req, res) => {
         console.error(
           `[JARVISX_HEALTH_COUNT_FAIL] model=${
             model?.modelName || "unknown"
-          } err=${e?.message}`
+          } err=${e?.message}`,
         );
         return 0;
       }
@@ -2147,7 +2129,7 @@ exports.healthReport = async (req, res) => {
           chatOk24h,
           chatErrorRate24h,
         },
-      })
+      }),
     );
   } catch (err) {
     console.error(`[JARVISX_HEALTH_FAIL] errMessage=${err?.message}`);
@@ -2156,7 +2138,7 @@ exports.healthReport = async (req, res) => {
       buildSafeHealthResponse({
         ok: false,
         generatedAt: new Date().toISOString(),
-      })
+      }),
     );
   }
 };
