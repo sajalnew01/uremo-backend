@@ -22,11 +22,20 @@ function normalizeUrgency(input) {
 
 exports.createServiceRequest = async (req, res) => {
   try {
-    const requestedService = clampString(req.body?.requestedService, 200);
+    // PATCH_21: Support different request types
+    const requestType = clampString(req.body?.type, 50) || "general";
+    const isCountryUnavailable = requestType === "country_unavailable";
+
+    // For country_unavailable requests, use serviceName instead of requestedService
+    const requestedService =
+      clampString(req.body?.requestedService, 200) ||
+      clampString(req.body?.serviceName, 200);
+    const serviceId = clampString(req.body?.serviceId, 50);
     const platform = clampString(req.body?.platform, 120);
     const country = clampString(req.body?.country, 120);
     const urgency = normalizeUrgency(req.body?.urgency);
     const notes = clampString(req.body?.notes, 1200);
+    const message = clampString(req.body?.message, 1200);
 
     const budgetRaw = req.body?.budget;
     const budget =
@@ -39,22 +48,39 @@ exports.createServiceRequest = async (req, res) => {
     const name = clampString(req.body?.name, 120);
     const email = clampString(req.body?.email, 200).toLowerCase();
 
-    const rawMessage = clampString(req.body?.rawMessage, 1200);
+    const rawMessage = clampString(req.body?.rawMessage, 1200) || message;
 
-    if (!requestedService) {
-      return res.status(400).json({ message: "requestedService is required" });
-    }
-
-    if (!platform) {
-      return res.status(400).json({ message: "platform is required" });
-    }
-
-    if (!country) {
-      return res.status(400).json({ message: "country is required" });
-    }
-
-    if (!urgency) {
-      return res.status(400).json({ message: "urgency is required" });
+    // Validation differs by request type
+    if (isCountryUnavailable) {
+      // PATCH_21: Country unavailable requests only need name, email, service, country
+      if (!requestedService) {
+        return res.status(400).json({ message: "serviceName is required" });
+      }
+      if (!country) {
+        return res.status(400).json({ message: "country is required" });
+      }
+      if (!name) {
+        return res.status(400).json({ message: "name is required" });
+      }
+      if (!email) {
+        return res.status(400).json({ message: "email is required" });
+      }
+    } else {
+      // Original validation for general requests
+      if (!requestedService) {
+        return res
+          .status(400)
+          .json({ message: "requestedService is required" });
+      }
+      if (!platform) {
+        return res.status(400).json({ message: "platform is required" });
+      }
+      if (!country) {
+        return res.status(400).json({ message: "country is required" });
+      }
+      if (!urgency) {
+        return res.status(400).json({ message: "urgency is required" });
+      }
     }
 
     const doc = await ServiceRequest.create({
@@ -64,22 +90,27 @@ exports.createServiceRequest = async (req, res) => {
       source: "public",
       rawMessage,
       requestedService,
-      platform,
+      platform: platform || (isCountryUnavailable ? "n/a" : ""),
       country,
-      urgency,
+      urgency: urgency || (isCountryUnavailable ? "flexible" : ""),
       budget: Number.isFinite(budget) ? budget : undefined,
       budgetCurrency,
-      notes,
+      notes: notes || message,
       status: "new",
       createdFrom: {
         page: clampString(req.body?.page, 120),
         userAgent: clampString(req.headers["user-agent"], 240),
+        // PATCH_21: Track request type and service ID
+        requestType,
+        serviceId,
       },
       events: [
         {
           type: "created",
-          message: "Service request created via public endpoint",
-          meta: { hasAuth: !!req.user?.id },
+          message: isCountryUnavailable
+            ? `Country unavailable request for "${requestedService}" in ${country}`
+            : "Service request created via public endpoint",
+          meta: { hasAuth: !!req.user?.id, requestType },
         },
       ],
     });

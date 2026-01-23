@@ -257,10 +257,11 @@ exports.getActiveServices = async (req, res) => {
       appliedFilters.search = searchVal;
     }
 
-    // Country filter
+    // PATCH_21: Country filter - track selected country but DON'T filter out services
+    // We'll mark unavailable services instead so frontend can show "Request Service" option
     const countryVal = String(country || "").trim();
     if (countryVal && countryVal !== "all") {
-      conditions.push({ countries: { $in: [countryVal, "Global"] } });
+      // Don't add to conditions - we want to show all services and mark availability
       appliedFilters.country = countryVal;
     }
 
@@ -349,12 +350,31 @@ exports.getActiveServices = async (req, res) => {
       .limit(take)
       .lean();
 
-    // PATCH_20: Normalize service data and apply country-based pricing
+    // PATCH_20/21: Normalize service data, apply country-based pricing, and mark availability
     const selectedCountry = appliedFilters.country || null;
     const services = rawServices.map((s) => {
-      // Calculate effective price based on selected country
+      // Normalize countries list
+      const serviceCountries =
+        Array.isArray(s.countries) && s.countries.length > 0
+          ? s.countries.map(normalizeCountry)
+          : ["Global"];
+
+      // PATCH_21: Check if service is available for selected country
+      let availableForCountry = true;
+      if (selectedCountry) {
+        // Service is available if: countries includes selectedCountry OR includes "Global"
+        const hasSelectedCountry = serviceCountries.some(
+          (c) => c.toLowerCase() === selectedCountry.toLowerCase(),
+        );
+        const hasGlobal = serviceCountries.some(
+          (c) => c.toLowerCase() === "global",
+        );
+        availableForCountry = hasSelectedCountry || hasGlobal;
+      }
+
+      // Calculate effective price based on selected country (only if available)
       let effectivePrice = s.price;
-      if (selectedCountry && s.countryPricing) {
+      if (selectedCountry && availableForCountry && s.countryPricing) {
         // countryPricing is a Map, convert to object for lookup
         const pricing =
           s.countryPricing instanceof Map
@@ -375,10 +395,7 @@ exports.getActiveServices = async (req, res) => {
         category: s.category || "microjobs",
         subcategory: s.subcategory || s.listingType || "fresh_account",
         listingType: s.listingType || "general",
-        countries:
-          Array.isArray(s.countries) && s.countries.length > 0
-            ? s.countries.map(normalizeCountry)
-            : ["Global"],
+        countries: serviceCountries,
         platform: s.platform || "",
         subject: s.subject || "",
         projectName: s.projectName || "",
@@ -393,6 +410,9 @@ exports.getActiveServices = async (req, res) => {
           s.countryPricing instanceof Map
             ? Object.fromEntries(s.countryPricing)
             : s.countryPricing || {},
+        // PATCH_21: Availability flag for selected country
+        availableForCountry,
+        selectedCountry: selectedCountry || null,
       };
     });
 
