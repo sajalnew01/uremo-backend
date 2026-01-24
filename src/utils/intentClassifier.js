@@ -109,6 +109,22 @@ const ORDINAL_SELECTION_PAT =
 const ADMIN_CREATE_SERVICE_PAT =
   /(\bcreate\s+(?:a\s+)?(?:new\s+)?service\b|\badd\s+(?:a\s+)?(?:new\s+)?service\b|\bnew\s+service\b|\bwant\s+to\s+(?:create|add)\s+(?:a\s+)?service\b|\bhelp\s+(?:me\s+)?create\s+(?:a\s+)?service\b)/i;
 
+// PATCH_22: Trust/legitimacy questions
+const TRUST_QUERY_PAT =
+  /(\btrust\b|\blegit\b|\blegitimate\b|\bsafe\b|\bscam\b|\breliable\b|\btrusted\b|\breal\b|\bfake\b|\bfraud\b|\bwhat\s+makes\s+(?:it|you)\s+trusted\b|\bcan\s+i\s+(?:really\s+)?trust\b|\bis\s+(?:this|it)\s+(?:safe|legit|real)\b)/i;
+
+// PATCH_22: Refund/difficulty questions
+const REFUND_QUERY_PAT =
+  /(\brefund\b|\bmoney\s+back\b|\bif\s+(?:i\s+)?(?:face|have)\s+(?:any\s+)?(?:difficulties|problems|issues)\b|\bnot\s+(?:get\s+)?delivered\b|\bdispute\b|\bcomplaint\b|\bwhat\s+if\s+(?:it\s+)?(?:doesn't|not)\b)/i;
+
+// PATCH_22: Delivery time questions
+const DELIVERY_TIME_PAT =
+  /(\bhow\s+long\b.*\b(?:deliver|take|get)\b|\bdelivery\s+time\b|\bwhen\s+(?:will\s+)?(?:i\s+)?(?:get|receive)\b|\binstant\b|\bready[\s-]?to[\s-]?(?:task|work)\b|\bimmediately\b|\bhow\s+(?:fast|quick)\b)/i;
+
+// PATCH_22: Platform/service availability questions
+const AVAILABILITY_PAT =
+  /(\bwhich\s+(?:forex|trading|crypto|payment)\s+(?:platforms?|services?|accounts?)\b|\bavailable\s+(?:forex|trading|platforms?)\b|\bdo\s+you\s+have\b)/i;
+
 // Platform purchase requests (specific; do NOT trigger without purchase intent)
 const PLATFORM_KEYWORDS = [
   "bybit",
@@ -196,6 +212,11 @@ function classifyIntent(text) {
   if (ORDINAL_SELECTION_PAT.test(t)) return "ORDINAL_SELECTION";
   // PATCH_21: Admin create/add service - check BEFORE list services
   if (ADMIN_CREATE_SERVICE_PAT.test(t)) return "ADMIN_CREATE_SERVICE";
+  // PATCH_22: Trust/refund/delivery questions - deterministic responses
+  if (TRUST_QUERY_PAT.test(t)) return "TRUST_QUERY";
+  if (REFUND_QUERY_PAT.test(t)) return "REFUND_QUERY";
+  if (DELIVERY_TIME_PAT.test(t)) return "DELIVERY_TIME_QUERY";
+  if (AVAILABILITY_PAT.test(t)) return "AVAILABILITY_QUERY";
   // PATCH_19: Check services query BEFORE list services for broader matching
   if (SERVICES_QUERY_PAT.test(t)) return "LIST_SERVICES";
   if (LIST_SERVICES_PAT.test(t)) return "LIST_SERVICES";
@@ -308,6 +329,44 @@ function getIntentResponse(intent, isAdmin = false) {
         "Service creation requires admin access. How can I help you today?",
       quickReplies: ["Microjobs", "Forex/Crypto", "Banks/Wallets", "Rentals"],
       nextQuestion: "service_title",
+    },
+
+    // PATCH_22: Trust query - deterministic response
+    TRUST_QUERY: {
+      admin:
+        "Yes boss ✅ UREMO is our verified platform with full admin support.",
+      public:
+        "Absolutely ✅ UREMO is a verified marketplace with:\n\n• Real admin support available 24/7\n• Secure Stripe payments (fully traceable)\n• Order tracking for every purchase\n• Refund policy if service isn't delivered\n\nAll transactions are logged. You can message admin anytime through your orders.",
+      quickReplies: ["Show services", "How to buy", "Refund policy"],
+    },
+
+    // PATCH_22: Refund query - deterministic response
+    REFUND_QUERY: {
+      admin: "Yes boss ✅ Refund requests are handled via order messages.",
+      public:
+        "Yes ✅ we have a refund policy!\n\n• If your service isn't delivered as promised, you can request a refund\n• Contact admin through your order messages or admin chat\n• Refunds are reviewed within 24-48 hours\n\nWe're here to help if you face any issues.",
+      quickReplies: ["Contact admin", "Order status", "Show services"],
+    },
+
+    // PATCH_22: Delivery time query - deterministic response
+    DELIVERY_TIME_QUERY: {
+      admin: "Yes boss ✅ Delivery times vary by service type.",
+      public:
+        "Delivery times depend on the service:\n\n• Fresh microjob accounts: 1-3 days\n• KYC verification: 1-7 days (depends on platform)\n• Ready-to-task accounts: Instant if in stock, otherwise 2-5 days\n\nCheck the specific service for exact delivery estimates. Need help finding a service?",
+      quickReplies: ["Show services", "Instant accounts", "Fresh accounts"],
+    },
+
+    // PATCH_22: Availability query - list platforms
+    AVAILABILITY_QUERY: {
+      admin: "Yes boss ✅ Checking available platforms...",
+      public:
+        "We offer services for multiple platforms. Let me show you what's available. Which category interests you?",
+      quickReplies: [
+        "Forex platforms",
+        "Microjobs",
+        "Payment gateways",
+        "Show all",
+      ],
     },
 
     PAYMENT_HELP: {
