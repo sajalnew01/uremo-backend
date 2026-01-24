@@ -1665,8 +1665,22 @@ Or I can guide you step by step. What would you prefer?`;
         });
       }
 
-      // No lastServiceOptions context - treat as general chat
-      // Fall through to later handlers
+      // PATCH_21: No lastServiceOptions context - give helpful response
+      // instead of confusing FLOW response
+      const numericInput = parseInt(String(message).trim(), 10);
+      if (Number.isFinite(numericInput) && numericInput > 0) {
+        // User typed a number but we don't have context
+        const out = `I see you selected option ${numericInput}, but I'm not sure what you're referring to. Would you like me to show you our available services?`;
+        await sessionManager.addMessage(session, "user", message);
+        await sessionManager.addMessage(session, "jarvis", out);
+        return res.json({
+          ok: true,
+          reply: out,
+          intent: "ORDINAL_NO_CONTEXT",
+          quickReplies: ["Show services", "Buy service", "Help"],
+        });
+      }
+      // Fall through for non-numeric ordinal words
     }
 
     // Legacy: List services (explicit) - kept for backward compatibility
@@ -1729,6 +1743,32 @@ Or I can guide you step by step. What would you prefer?`;
         reply: out,
         intent: classifiedIntent,
         quickReplies: ["Buy service", "Order status", "Interview help"],
+      });
+    }
+
+    // PATCH_21: Pure greetings mid-flow should reset the flow and show menu
+    // This prevents confusion when user wants to start fresh
+    if (!route && isGreetingOnly(message) && hasActiveFlow(session)) {
+      // Reset the session flow
+      session.flow = null;
+      session.step = null;
+      session.currentFlow = null;
+      session.currentStep = null;
+      session.collectedData = {};
+      if (session.metadata) {
+        session.metadata.lastServiceOptions = null;
+        session.metadata.lastIntent = null;
+      }
+      await session.save();
+
+      const menu = buildPublicMenuReply(session);
+      await sessionManager.addMessage(session, "user", message);
+      await sessionManager.addMessage(session, "jarvis", menu.reply);
+      return res.json({
+        ok: true,
+        reply: menu.reply,
+        intent: "GREETING_RESET",
+        quickReplies: menu.quickReplies,
       });
     }
 
