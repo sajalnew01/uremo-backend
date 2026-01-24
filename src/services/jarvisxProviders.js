@@ -15,7 +15,7 @@ try {
 function requireGroqClient() {
   if (!groq) {
     throw new Error(
-      "GROQ_API_KEY not configured. Please set GROQ_API_KEY in environment variables."
+      "GROQ_API_KEY not configured. Please set GROQ_API_KEY in environment variables.",
     );
   }
   return groq;
@@ -37,7 +37,7 @@ function withTimeout(promise, timeoutMs) {
   });
 
   return Promise.race([promise, timeout]).finally(() =>
-    clearTimeout(timeoutId)
+    clearTimeout(timeoutId),
   );
 }
 
@@ -52,10 +52,10 @@ function safeGroqResult(error) {
         status === 401 || status === 403
           ? "auth"
           : status === 429
-          ? "rate_limited"
-          : error?.name === "GroqTimeoutError"
-          ? "timeout"
-          : "unknown",
+            ? "rate_limited"
+            : error?.name === "GroqTimeoutError"
+              ? "timeout"
+              : "unknown",
     },
   };
 }
@@ -67,13 +67,13 @@ async function groqChatCompletion(messages, options = {}) {
   if (!groq) {
     return safeGroqResult(
       new Error(
-        "GROQ_API_KEY not configured. Please set GROQ_API_KEY in environment variables."
-      )
+        "GROQ_API_KEY not configured. Please set GROQ_API_KEY in environment variables.",
+      ),
     );
   }
   const client = groq;
   const model = String(
-    options.model || process.env.JARVISX_MODEL || "llama-3.3-70b-versatile"
+    options.model || process.env.JARVISX_MODEL || "llama-3.3-70b-versatile",
   )
     .trim()
     .toLowerCase();

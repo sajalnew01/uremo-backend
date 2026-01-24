@@ -302,8 +302,10 @@ function getIntentResponse(intent, isAdmin = false) {
 
     // PATCH_21: Admin create service intent
     ADMIN_CREATE_SERVICE: {
-      admin: "Yes boss ✅ I'll help you create a new service. What's the title?",
-      public: "Service creation requires admin access. How can I help you today?",
+      admin:
+        "Yes boss ✅ I'll help you create a new service. What's the title?",
+      public:
+        "Service creation requires admin access. How can I help you today?",
       quickReplies: ["Microjobs", "Forex/Crypto", "Banks/Wallets", "Rentals"],
       nextQuestion: "service_title",
     },
