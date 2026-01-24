@@ -105,6 +105,10 @@ const ASSISTANT_IDENTITY_PAT =
 const ORDINAL_SELECTION_PAT =
   /^(?:(?:the\s+)?(?:first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|#?\d{1,2})(?:\s+(?:one|option|service|choice))?|option\s*(?:#?\d{1,2}|one|two|three|four|five)|number\s*\d{1,2}|\d{1,2})$/i;
 
+// PATCH_21: Admin create/add service intent (for admin CMS via JarvisX)
+const ADMIN_CREATE_SERVICE_PAT =
+  /(\bcreate\s+(?:a\s+)?(?:new\s+)?service\b|\badd\s+(?:a\s+)?(?:new\s+)?service\b|\bnew\s+service\b|\bwant\s+to\s+(?:create|add)\s+(?:a\s+)?service\b|\bhelp\s+(?:me\s+)?create\s+(?:a\s+)?service\b)/i;
+
 // Platform purchase requests (specific; do NOT trigger without purchase intent)
 const PLATFORM_KEYWORDS = [
   "bybit",
@@ -190,6 +194,8 @@ function classifyIntent(text) {
   if (ASSISTANT_IDENTITY_PAT.test(t)) return "ASSISTANT_IDENTITY";
   // PATCH_20: Ordinal selection ("1", "first option", etc.) - context-dependent
   if (ORDINAL_SELECTION_PAT.test(t)) return "ORDINAL_SELECTION";
+  // PATCH_21: Admin create/add service - check BEFORE list services
+  if (ADMIN_CREATE_SERVICE_PAT.test(t)) return "ADMIN_CREATE_SERVICE";
   // PATCH_19: Check services query BEFORE list services for broader matching
   if (SERVICES_QUERY_PAT.test(t)) return "LIST_SERVICES";
   if (LIST_SERVICES_PAT.test(t)) return "LIST_SERVICES";
@@ -292,6 +298,14 @@ function getIntentResponse(intent, isAdmin = false) {
       admin: "Custom service request. Create proposal or collect details?",
       public: "Got it ✅ what's the service name you need?",
       nextQuestion: "service_name",
+    },
+
+    // PATCH_21: Admin create service intent
+    ADMIN_CREATE_SERVICE: {
+      admin: "Yes boss ✅ I'll help you create a new service. What's the title?",
+      public: "Service creation requires admin access. How can I help you today?",
+      quickReplies: ["Microjobs", "Forex/Crypto", "Banks/Wallets", "Rentals"],
+      nextQuestion: "service_title",
     },
 
     PAYMENT_HELP: {

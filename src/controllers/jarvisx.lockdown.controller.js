@@ -1432,6 +1432,42 @@ exports.chat = async (req, res) => {
       });
     }
 
+    // PATCH_21: Admin create service command
+    if (!route && classifiedIntent === "ADMIN_CREATE_SERVICE" && isAdmin) {
+      const out = `Yes boss ✅ I can help you create a new service. Please provide the following details:
+
+**Required:**
+1. **Title** - Service name (e.g., "Outlier Math Expert Support")
+2. **Category** - microjobs, forex_crypto, banks_gateways_wallets, or rentals
+3. **Price** - Base price in USD
+
+**Optional (but recommended):**
+4. **Subcategory** - fresh_account, already_onboarded, forex_platform_creation, etc.
+5. **Platform** - Outlier, Bybit, PayPal, etc.
+6. **Subject** - Math, Coding, Dentistry (for fresh accounts)
+7. **Countries** - India, USA, UK, Global
+8. **Description** - Full service description
+
+You can also say something like:
+_"Create service: Bybit KYC Account, category forex_crypto, price $45, platform Bybit, countries India and UAE"_
+
+Or I can guide you step by step. What would you prefer?`;
+
+      session.currentFlow = "admin_create_service";
+      session.currentStep = "collect_details";
+      session.collectedData = {};
+      await session.save();
+
+      await sessionManager.addMessage(session, "user", message);
+      await sessionManager.addMessage(session, "jarvis", out);
+      return res.json({
+        ok: true,
+        reply: out,
+        intent: "ADMIN_CREATE_SERVICE",
+        quickReplies: ["Guide me step by step", "I'll provide all details"],
+      });
+    }
+
     // PATCH_19: List services (explicit) - grouped by category/subcategory
     // PATCH_20: Store service IDs for ordinal selection
     if (!route && classifiedIntent === "LIST_SERVICES") {
