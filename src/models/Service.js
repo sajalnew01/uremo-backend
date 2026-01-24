@@ -226,8 +226,9 @@ serviceSchema.index({ status: 1, category: 1, listingType: 1 }); // Legacy suppo
 serviceSchema.index({ status: 1, countries: 1 });
 serviceSchema.index({ active: 1, category: 1 });
 
-// PATCH_19: Pre-save hook to set defaults and validate subcategory
-serviceSchema.pre("save", function (next) {
+// PATCH_19/21: Pre-save hook to set defaults and validate subcategory
+// PATCH_21: Use async function to avoid "next is not a function" error in Mongoose 9.x
+serviceSchema.pre("save", async function () {
   // Default category if not set
   if (!this.category) {
     this.category = "microjobs";
@@ -239,6 +240,7 @@ serviceSchema.pre("save", function (next) {
       microjobs: "fresh_account",
       forex_crypto: "forex_platform_creation",
       banks_gateways_wallets: "banks",
+      rentals: "whatsapp_business_verified", // PATCH_21: Default for rentals
     };
     this.subcategory = defaults[this.category] || "fresh_account";
   }
@@ -257,8 +259,7 @@ serviceSchema.pre("save", function (next) {
   ) {
     this.listingType = this.subcategory;
   }
-
-  next();
+  // PATCH_21: No next() needed - async function returns Promise automatically
 });
 
 // PATCH_19: Export enums for use in controllers
