@@ -1,10 +1,38 @@
 const Service = require("../models/Service");
 
-// PATCH_18: Canonical enums (single source of truth)
+// PATCH_20: No-cache headers for admin CMS endpoints
+function setNoCache(res) {
+  res.set(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, proxy-revalidate",
+  );
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  res.set("Surrogate-Control", "no-store");
+}
+
+// PATCH_18/20/21: Canonical enums (single source of truth) - synced with Service model
 const VALID_CATEGORIES = [
   "microjobs",
   "forex_crypto",
   "banks_gateways_wallets",
+  "rentals", // PATCH_21: Added rentals category
+  "general",
+];
+// PATCH_19/20/21: All valid subcategories across categories
+const VALID_SUBCATEGORIES = [
+  "fresh_account",
+  "already_onboarded",
+  "forex_platform_creation",
+  "crypto_platform_creation",
+  "banks",
+  "payment_gateways",
+  "wallets",
+  // PATCH_21: Rental subcategories
+  "whatsapp_business_verified",
+  "linkedin_premium_account",
+  "social_media_verified",
+  "email_accounts",
   "general",
 ];
 const VALID_LISTING_TYPES = ["fresh_account", "already_onboarded", "general"];
@@ -61,6 +89,24 @@ function normalizeListingType(val) {
   return "general";
 }
 
+// PATCH_20/21: Normalize subcategory to valid enum
+function normalizeSubcategory(val, category) {
+  const v = String(val || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[\s-]+/g, "_");
+  if (VALID_SUBCATEGORIES.includes(v)) return v;
+  // PATCH_21: Default subcategory based on category (includes rentals)
+  const defaults = {
+    microjobs: "fresh_account",
+    forex_crypto: "forex_platform_creation",
+    banks_gateways_wallets: "banks",
+    rentals: "whatsapp_business_verified",
+    general: "general",
+  };
+  return defaults[category] || "fresh_account";
+}
+
 // PATCH_18: Normalize status to valid enum
 function normalizeStatus(val) {
   const v = String(val || "")
@@ -70,15 +116,23 @@ function normalizeStatus(val) {
   return "draft";
 }
 
-// PATCH_18: Full Admin CMS - Create service with all fields
+// PATCH_18/20: Full Admin CMS - Create service with all fields
 exports.createService = async (req, res) => {
   try {
+    // PATCH_20: Enhanced debug logging
+    console.log("[ADMIN_SERVICES] createService called", {
+      hasUser: !!req.user,
+      userId: req.user?.id || req.user?._id,
+      bodyKeys: Object.keys(req.body || {}),
+    });
+
     const {
       title,
       price,
       description,
       shortDescription,
       category,
+      subcategory, // PATCH_20: Added subcategory field
       listingType,
       countries,
       platform,
@@ -93,6 +147,7 @@ exports.createService = async (req, res) => {
       isActive,
       currency,
       deliveryType,
+      countryPricing, // PATCH_20: Country-based pricing
     } = req.body || {};
 
     // Validation
@@ -135,12 +190,44 @@ exports.createService = async (req, res) => {
       if (resolvedCountries.length === 0) resolvedCountries = ["Global"];
     }
 
+    // PATCH_20: Normalize category and subcategory
+    const resolvedCategory = normalizeCategory(category);
+    const resolvedSubcategory = normalizeSubcategory(
+      subcategory || listingType,
+      resolvedCategory,
+    );
+    // Sync listingType with subcategory for backwards compatibility
+    const resolvedListingType =
+      resolvedSubcategory === "fresh_account" ||
+      resolvedSubcategory === "already_onboarded"
+        ? resolvedSubcategory
+        : normalizeListingType(listingType);
+
+    // PATCH_20: Parse countryPricing if provided
+    let resolvedCountryPricing = {};
+    if (countryPricing) {
+      if (
+        typeof countryPricing === "object" &&
+        !Array.isArray(countryPricing)
+      ) {
+        resolvedCountryPricing = countryPricing;
+      } else if (typeof countryPricing === "string") {
+        try {
+          resolvedCountryPricing = JSON.parse(countryPricing);
+        } catch {
+          // Ignore parse error, use empty object
+        }
+      }
+    }
+
     const service = await Service.create({
       title: safeTitle,
       slug,
-      category: normalizeCategory(category),
-      listingType: normalizeListingType(listingType),
+      category: resolvedCategory,
+      subcategory: resolvedSubcategory, // PATCH_20: Set subcategory
+      listingType: resolvedListingType,
       countries: resolvedCountries,
+      countryPricing: resolvedCountryPricing, // PATCH_20: Country pricing
       platform: String(platform || "").trim(),
       subject: String(subject || "").trim(),
       projectName: String(projectName || "").trim(),
@@ -158,6 +245,8 @@ exports.createService = async (req, res) => {
       createdBy: req.user?._id || req.user?.id || null,
     });
 
+    console.log("[ADMIN_SERVICES] Service created:", service._id);
+
     return res.status(201).json({
       ok: true,
       message: "Service created",
@@ -165,7 +254,28 @@ exports.createService = async (req, res) => {
       serviceId: service._id,
     });
   } catch (err) {
-    console.error("[Admin] createService error:", err);
+    // PATCH_20: Enhanced error logging
+    console.error("[ADMIN_SERVICES_CREATE_ERROR]", {
+      message: err?.message,
+      name: err?.name,
+      code: err?.code,
+      stack: err?.stack?.split("\n").slice(0, 5).join("\n"),
+    });
+
+    // Handle Mongoose validation errors specifically
+    if (err?.name === "ValidationError") {
+      const details = Object.entries(err.errors || {}).map(([field, e]) => ({
+        field,
+        message: e.message,
+      }));
+      return res.status(400).json({
+        ok: false,
+        message: "Validation failed",
+        details,
+        error: err?.message,
+      });
+    }
+
     return res.status(500).json({
       ok: false,
       message: "Failed to create service",
@@ -174,13 +284,20 @@ exports.createService = async (req, res) => {
   }
 };
 
-// PATCH_18: Full Admin CMS - Update service with all fields
+// PATCH_18/20: Full Admin CMS - Update service with all fields
 exports.updateService = async (req, res) => {
   try {
     const serviceId = req.params?.id || req.body?.serviceId;
     if (!serviceId) {
       return res.status(400).json({ ok: false, message: "serviceId required" });
     }
+
+    // PATCH_20: Debug logging
+    console.log("[ADMIN_SERVICES] updateService called", {
+      serviceId,
+      hasUser: !!req.user,
+      bodyKeys: Object.keys(req.body || {}),
+    });
 
     const service = await Service.findById(serviceId);
     if (!service) {
@@ -193,8 +310,10 @@ exports.updateService = async (req, res) => {
       shortDescription,
       price,
       category,
+      subcategory, // PATCH_20: Added subcategory
       listingType,
       countries,
+      countryPricing, // PATCH_20: Country-based pricing
       platform,
       subject,
       projectName,
@@ -225,10 +344,40 @@ exports.updateService = async (req, res) => {
     if (deliveryType !== undefined)
       service.deliveryType = String(deliveryType).trim();
 
-    // PATCH_18: Category/ListingType normalized
-    if (category !== undefined) service.category = normalizeCategory(category);
-    if (listingType !== undefined)
+    // PATCH_18/20: Category/Subcategory/ListingType normalized
+    if (category !== undefined) {
+      service.category = normalizeCategory(category);
+    }
+    // PATCH_20: Handle subcategory
+    if (subcategory !== undefined) {
+      service.subcategory = normalizeSubcategory(subcategory, service.category);
+      // Sync listingType with subcategory for backwards compatibility
+      if (
+        service.subcategory === "fresh_account" ||
+        service.subcategory === "already_onboarded"
+      ) {
+        service.listingType = service.subcategory;
+      }
+    }
+    if (listingType !== undefined && subcategory === undefined) {
       service.listingType = normalizeListingType(listingType);
+    }
+
+    // PATCH_20: Country-based pricing
+    if (countryPricing !== undefined) {
+      if (
+        typeof countryPricing === "object" &&
+        !Array.isArray(countryPricing)
+      ) {
+        service.countryPricing = countryPricing;
+      } else if (typeof countryPricing === "string") {
+        try {
+          service.countryPricing = JSON.parse(countryPricing);
+        } catch {
+          // Ignore parse error
+        }
+      }
+    }
 
     // PATCH_18: Countries - replace entire array
     if (countries !== undefined) {
@@ -272,9 +421,32 @@ exports.updateService = async (req, res) => {
 
     await service.save();
 
+    console.log("[ADMIN_SERVICES] Service updated:", service._id);
+
     return res.json({ ok: true, message: "Service updated", service });
   } catch (err) {
-    console.error("[Admin] updateService error:", err);
+    // PATCH_20: Enhanced error logging
+    console.error("[ADMIN_SERVICES_UPDATE_ERROR]", {
+      message: err?.message,
+      name: err?.name,
+      code: err?.code,
+      stack: err?.stack?.split("\n").slice(0, 5).join("\n"),
+    });
+
+    // Handle Mongoose validation errors specifically
+    if (err?.name === "ValidationError") {
+      const details = Object.entries(err.errors || {}).map(([field, e]) => ({
+        field,
+        message: e.message,
+      }));
+      return res.status(400).json({
+        ok: false,
+        message: "Validation failed",
+        details,
+        error: err?.message,
+      });
+    }
+
     return res.status(500).json({
       ok: false,
       message: "Failed to update service",
@@ -284,8 +456,10 @@ exports.updateService = async (req, res) => {
 };
 
 // PATCH_18: List all services for admin with optional filtering
+// PATCH_20: Added no-cache headers
 exports.listServices = async (req, res) => {
   try {
+    setNoCache(res);
     const {
       status,
       category,
@@ -339,8 +513,10 @@ exports.listServices = async (req, res) => {
 };
 
 // PATCH_18: Get single service by ID for admin
+// PATCH_20: Added no-cache headers
 exports.getService = async (req, res) => {
   try {
+    setNoCache(res);
     const serviceId = req.params?.id;
     if (!serviceId) {
       return res.status(400).json({ ok: false, message: "serviceId required" });

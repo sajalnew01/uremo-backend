@@ -11,6 +11,7 @@ const {
   classifyIntent,
   classifyIntentDetailed,
   getIntentResponse,
+  parseOrdinalSelection,
 } = require("../utils/intentClassifier");
 const {
   groqChatCompletion,
@@ -1432,6 +1433,7 @@ exports.chat = async (req, res) => {
     }
 
     // PATCH_19: List services (explicit) - grouped by category/subcategory
+    // PATCH_20: Store service IDs for ordinal selection
     if (!route && classifiedIntent === "LIST_SERVICES") {
       try {
         const list = await Service.find({ active: true })
@@ -1480,7 +1482,7 @@ exports.chat = async (req, res) => {
           grouped[key].services.push(s);
         }
 
-        // Build formatted output
+        // Build formatted output with numbered list
         let out = "Here are our current services:\n\n";
         const sortedGroups = Object.values(grouped).sort((a, b) => {
           const catOrder = [
@@ -1494,6 +1496,9 @@ exports.chat = async (req, res) => {
           return a.subcategory.localeCompare(b.subcategory);
         });
 
+        // PATCH_20: Build numbered flat list for ordinal selection
+        const flatServices = [];
+        let serviceNum = 0;
         for (const group of sortedGroups) {
           const catLabel =
             categoryLabels[group.category] || group.category.replace(/_/g, " ");
@@ -1502,8 +1507,10 @@ exports.chat = async (req, res) => {
             group.subcategory.replace(/_/g, " ");
           out += `**${catLabel} → ${subcatLabel}:**\n`;
           for (const s of group.services.slice(0, 5)) {
+            serviceNum++;
+            flatServices.push({ _id: s._id, title: s.title });
             const price = s.price ? ` ($${s.price})` : "";
-            out += `• ${s.title}${price}\n`;
+            out += `${serviceNum}. ${s.title}${price}\n`;
           }
           if (group.services.length > 5) {
             out += `  ...and ${group.services.length - 5} more\n`;
@@ -1511,7 +1518,16 @@ exports.chat = async (req, res) => {
           out += "\n";
         }
 
-        out += "Which one do you want?";
+        out += "Reply with a number (1, 2, 3...) or service name to select.";
+
+        // PATCH_20: Store service IDs in session metadata for ordinal selection
+        if (!session.metadata) session.metadata = {};
+        session.metadata.lastServiceOptions = flatServices.map((s) => ({
+          _id: String(s._id),
+          title: s.title,
+        }));
+        session.metadata.lastIntent = "LIST_SERVICES";
+        await session.save();
 
         await sessionManager.addMessage(session, "user", message);
         await sessionManager.addMessage(session, "jarvis", out);
@@ -1519,7 +1535,7 @@ exports.chat = async (req, res) => {
           ok: true,
           reply: out,
           intent: "LIST_SERVICES",
-          quickReplies: ["Buy service", "More info"],
+          quickReplies: ["1", "2", "3", "More info"],
         });
       } catch (err) {
         console.error("[JarvisX] LIST_SERVICES error:", err);
@@ -1534,6 +1550,87 @@ exports.chat = async (req, res) => {
           quickReplies: ["Try again", "Buy service"],
         });
       }
+    }
+
+    // PATCH_20: Handle ordinal selection from service list ("1", "first", "option 2")
+    if (!route && classifiedIntent === "ORDINAL_SELECTION") {
+      const lastServiceOptions = session.metadata?.lastServiceOptions;
+      const lastIntent = session.metadata?.lastIntent;
+
+      if (
+        lastIntent === "LIST_SERVICES" &&
+        Array.isArray(lastServiceOptions) &&
+        lastServiceOptions.length > 0
+      ) {
+        const ordinalIndex = parseOrdinalSelection(message);
+        if (ordinalIndex && ordinalIndex <= lastServiceOptions.length) {
+          const selected = lastServiceOptions[ordinalIndex - 1];
+          const serviceId = selected._id;
+          const serviceTitle = selected.title;
+
+          // Fetch full service details
+          let service = null;
+          try {
+            service = await Service.findById(serviceId).lean();
+          } catch {
+            // fallback handled below
+          }
+
+          if (service) {
+            // Start purchase flow with this service
+            session.collectedData = session.collectedData || {};
+            session.collectedData.serviceName = service.title;
+            session.collectedData.platform = service.platform || "";
+            session.collectedData.serviceId = String(service._id);
+            session.currentFlow = "purchase";
+            session.currentStep = "confirm_service";
+
+            // Clear lastServiceOptions to avoid stale data
+            session.metadata.lastServiceOptions = null;
+            session.metadata.lastIntent = "SERVICE_SELECTED";
+            await session.save();
+
+            const price = service.price
+              ? `$${service.price}`
+              : "Contact for price";
+            const out = `Great choice! You selected **${service.title}** (${price}). How many do you need?`;
+
+            await sessionManager.addMessage(session, "user", message);
+            await sessionManager.addMessage(session, "jarvis", out);
+            return res.json({
+              ok: true,
+              reply: out,
+              intent: "SERVICE_SELECTED",
+              quickReplies: ["1", "2", "5", "10"],
+            });
+          }
+
+          // Fallback if service not found
+          const out = `Sorry, I couldn't find service "${serviceTitle}". Let me show you the services again.`;
+          await sessionManager.addMessage(session, "user", message);
+          await sessionManager.addMessage(session, "jarvis", out);
+          return res.json({
+            ok: true,
+            reply: out,
+            intent: "SERVICE_NOT_FOUND",
+            quickReplies: ["Show services"],
+          });
+        }
+
+        // Invalid ordinal number
+        const out = `Please select a number between 1 and ${lastServiceOptions.length}, or type the service name.`;
+        await sessionManager.addMessage(session, "user", message);
+        await sessionManager.addMessage(session, "jarvis", out);
+        return res.json({
+          ok: true,
+          reply: out,
+          intent: "INVALID_SELECTION",
+          quickReplies: ["1", "2", "Show services"],
+        });
+      }
+
+      // No lastServiceOptions context - treat as general chat
+      // Fall through to later handlers
     }
 
     // Legacy: List services (explicit) - kept for backward compatibility
@@ -1765,7 +1862,7 @@ exports.chat = async (req, res) => {
         ok: true,
         reply: out,
         intent: "SERVICE_PURCHASE_REQUEST",
-        quickReplies: ["KYC", "Ready account"],
+        quickReplies: ["KYC/Fresh", "Already Onboarded", "Need help"],
         customRequestDraft: {
           sessionId: String(session?.sessionKey || ""),
           platform: platform || undefined,

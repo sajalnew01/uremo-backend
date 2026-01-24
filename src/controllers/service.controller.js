@@ -24,11 +24,13 @@ const slugify = (str) => {
     .replace(/-+/g, "-");
 };
 
-// PATCH_17: Canonical filter definitions (matches vision 3-step flow)
+// PATCH_17/21: Canonical filter definitions (matches vision 3-step flow)
 const CANON_CATEGORIES = [
   { id: "microjobs", label: "Microjobs" },
   { id: "forex_crypto", label: "Forex / Crypto" },
   { id: "banks_gateways_wallets", label: "Banks / Gateways / Wallets" },
+  // PATCH_21: Rentals category for account rental services
+  { id: "rentals", label: "Rentals (Account Rental Services)" },
   { id: "general", label: "General" },
 ];
 
@@ -52,7 +54,7 @@ const CANON_SERVICE_TYPES = [
   { id: "general", label: "General" },
 ];
 
-// PATCH_16: Normalize category for vision-aligned filtering (canon mapping)
+// PATCH_16/21: Normalize category for vision-aligned filtering (canon mapping)
 function normalizeCategory(input) {
   if (!input) return "general";
   const v = String(input).toLowerCase();
@@ -60,11 +62,17 @@ function normalizeCategory(input) {
   if (v.includes("forex") || v.includes("crypto")) return "forex_crypto";
   if (v.includes("bank") || v.includes("gateway") || v.includes("wallet"))
     return "banks_gateways_wallets";
+  // PATCH_21: Handle rentals category
+  if (v.includes("rental") || v.includes("rent")) return "rentals";
   // Return as-is if already a valid category id
   if (
-    ["microjobs", "forex_crypto", "banks_gateways_wallets", "general"].includes(
-      v,
-    )
+    [
+      "microjobs",
+      "forex_crypto",
+      "banks_gateways_wallets",
+      "rentals",
+      "general",
+    ].includes(v)
   )
     return v;
   return "general";

@@ -101,6 +101,10 @@ const USER_IDENTITY_PAT =
 const ASSISTANT_IDENTITY_PAT =
   /(\bwhat'?s\s+your\s+name\b|\bwho\s+are\s+you\b|\bwhat\s+are\s+you\b|\bare\s+you\s+jarvis\b|\bjarvisx\b|\bjarvis\b)/i;
 
+// PATCH_20: Ordinal selection ("1", "first option", "the second one", "option 3")
+const ORDINAL_SELECTION_PAT =
+  /^(?:(?:the\s+)?(?:first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|#?\d{1,2})(?:\s+(?:one|option|service|choice))?|option\s*(?:#?\d{1,2}|one|two|three|four|five)|number\s*\d{1,2}|\d{1,2})$/i;
+
 // Platform purchase requests (specific; do NOT trigger without purchase intent)
 const PLATFORM_KEYWORDS = [
   "bybit",
@@ -122,6 +126,55 @@ const PURCHASE_VERB_PAT =
 const ACCOUNT_OBJECT_PAT = /(\baccount\b|\baccounts\b|\bkyc\b)/i;
 
 /**
+ * PATCH_20: Parse ordinal selection to a 1-based index
+ * @param {string} text - User message like "1", "first", "option 2"
+ * @returns {number|null} - 1-based index or null
+ */
+function parseOrdinalSelection(text) {
+  if (!text || typeof text !== "string") return null;
+  const t = text.trim().toLowerCase();
+  if (!t) return null;
+
+  // Direct number: "1", "2", "#3"
+  const numMatch = t.match(/^#?(\d{1,2})$/);
+  if (numMatch) {
+    const n = parseInt(numMatch[1], 10);
+    return n > 0 && n <= 50 ? n : null;
+  }
+
+  // "option 1", "number 2", "option one"
+  const optMatch = t.match(
+    /(?:option|number)\s*#?(\d{1,2}|one|two|three|four|five)/i,
+  );
+  if (optMatch) {
+    const v = optMatch[1];
+    const wordToNum = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+    if (wordToNum[v]) return wordToNum[v];
+    const n = parseInt(v, 10);
+    return n > 0 && n <= 50 ? n : null;
+  }
+
+  // "first", "second", "1st", "2nd"
+  const ordinals = {
+    first: 1,
+    "1st": 1,
+    second: 2,
+    "2nd": 2,
+    third: 3,
+    "3rd": 3,
+    fourth: 4,
+    "4th": 4,
+    fifth: 5,
+    "5th": 5,
+  };
+  for (const [word, idx] of Object.entries(ordinals)) {
+    if (t.includes(word)) return idx;
+  }
+
+  return null;
+}
+
+/**
  * Classify user message intent
  * @param {string} text - User message
  * @returns {string} Intent string
@@ -135,6 +188,8 @@ function classifyIntent(text) {
   if (USER_IDENTITY_PAT.test(t)) return "USER_IDENTITY_QUERY";
   // Assistant identity should be below USER_IDENTITY to avoid "who am I" matching "who are"
   if (ASSISTANT_IDENTITY_PAT.test(t)) return "ASSISTANT_IDENTITY";
+  // PATCH_20: Ordinal selection ("1", "first option", etc.) - context-dependent
+  if (ORDINAL_SELECTION_PAT.test(t)) return "ORDINAL_SELECTION";
   // PATCH_19: Check services query BEFORE list services for broader matching
   if (SERVICES_QUERY_PAT.test(t)) return "LIST_SERVICES";
   if (LIST_SERVICES_PAT.test(t)) return "LIST_SERVICES";
@@ -260,4 +315,5 @@ module.exports = {
   classifyIntent,
   classifyIntentDetailed,
   getIntentResponse,
+  parseOrdinalSelection,
 };

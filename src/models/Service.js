@@ -1,13 +1,26 @@
 const mongoose = require("mongoose");
 
-// PATCH_19: Category and Subcategory enums for 3-tier service organization
-const CATEGORY_ENUM = ["microjobs", "forex_crypto", "banks_gateways_wallets"];
+// PATCH_19/22: Category and Subcategory enums for 3-tier service organization
+// PATCH_22: Added "rentals" category for account rental services
+const CATEGORY_ENUM = [
+  "microjobs",
+  "forex_crypto",
+  "banks_gateways_wallets",
+  "rentals",
+];
 
-// PATCH_19: Subcategory mapped by category
+// PATCH_19/22: Subcategory mapped by category
 const SUBCATEGORY_BY_CATEGORY = {
   microjobs: ["fresh_account", "already_onboarded"],
   forex_crypto: ["forex_platform_creation", "crypto_platform_creation"],
   banks_gateways_wallets: ["banks", "payment_gateways", "wallets"],
+  // PATCH_22: Rental subcategories
+  rentals: [
+    "whatsapp_business_verified",
+    "linkedin_premium_account",
+    "social_media_verified",
+    "email_accounts",
+  ],
 };
 
 // PATCH_19: Flat list of all subcategories for schema validation
@@ -30,14 +43,14 @@ const serviceSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // PATCH_19/20: Category with fallback (not required for backwards compatibility)
+    // PATCH_19/20/22: Category with fallback (not required for backwards compatibility)
     category: {
       type: String,
       trim: true,
       enum: {
         values: [...CATEGORY_ENUM, "general"], // Allow "general" for legacy
         message:
-          "Category must be one of: microjobs, forex_crypto, banks_gateways_wallets, general",
+          "Category must be one of: microjobs, forex_crypto, banks_gateways_wallets, rentals, general",
       },
       default: "microjobs",
       index: true,
