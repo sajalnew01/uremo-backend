@@ -40,6 +40,9 @@ const serviceRequestRoutes = require("./routes/serviceRequest.routes");
 const healthRoutes = require("./routes/health.routes");
 const debugRoutes = require("./routes/debug.routes");
 const adminServicesRoutes = require("./routes/adminServices");
+// PATCH_21: Blog routes
+const blogsRoutes = require("./routes/blogs.routes");
+const adminBlogsRoutes = require("./routes/admin.blogs.routes");
 
 const auth = require("./middlewares/auth.middleware");
 const admin = require("./middlewares/admin.middleware");
@@ -167,6 +170,9 @@ app.use("/api/service-requests", serviceRequestRoutes);
 app.use("/api/admin", adminServicesRoutes);
 app.use("/api/health", healthRoutes);
 app.use("/api/debug", debugRoutes);
+// PATCH_21: Blog routes
+app.use("/api/blogs", blogsRoutes);
+app.use("/api/admin/blogs", auth, admin, adminBlogsRoutes);
 
 // TEMP: Debug endpoint to list mounted routes (admin-only)
 app.get("/api/__routes", auth, admin, (req, res) => {
