@@ -131,7 +131,8 @@ exports.payWithWallet = async (req, res) => {
     }
 
     const Order = require("../models/Order");
-    const order = await Order.findById(orderId);
+    // Populate serviceId to get the price
+    const order = await Order.findById(orderId).populate("serviceId", "price title");
 
     if (!order) {
       return res.status(404).json({ error: "Order not found" });
@@ -139,10 +140,9 @@ exports.payWithWallet = async (req, res) => {
 
     const userId = req.user.id || req.user._id;
 
-    if (
-      order.user.toString() !== userId.toString() &&
-      order.userId?.toString() !== userId.toString()
-    ) {
+    // Check authorization - Order model uses userId, not user
+    const orderUserId = order.userId || order.user;
+    if (!orderUserId || orderUserId.toString() !== userId.toString()) {
       return res.status(403).json({ error: "Not authorized" });
     }
 
@@ -155,7 +155,12 @@ exports.payWithWallet = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const orderAmount = order.totalPrice || order.price || 0;
+    // Get order amount from service price or order fields
+    const orderAmount = order.totalPrice || order.price || order.serviceId?.price || 0;
+    
+    if (!orderAmount || orderAmount <= 0) {
+      return res.status(400).json({ error: "Unable to determine order price" });
+    }
 
     if (user.walletBalance < orderAmount) {
       return res.status(400).json({
