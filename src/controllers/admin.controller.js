@@ -9,8 +9,10 @@ const {
   welcomeEmail,
 } = require("../emails/templates");
 
-// PATCH_23: Affiliate commission processing
-const { processOrderCommission } = require("./affiliate.controller");
+// PATCH_23: Affiliate commission processing (using new service)
+const {
+  processAffiliateCommission,
+} = require("../services/affiliateCommission.service");
 
 exports.getAllOrders = async (req, res) => {
   try {
@@ -252,7 +254,7 @@ exports.verifyPayment = async (req, res) => {
     if (order.userId?._id) {
       setImmediate(async () => {
         try {
-          await processOrderCommission(order, order.userId._id);
+          await processAffiliateCommission(order._id, "manual");
         } catch (err) {
           console.error("[affiliate] commission processing failed", {
             orderId: String(order?._id),

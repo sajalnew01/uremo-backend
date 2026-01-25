@@ -132,7 +132,10 @@ exports.payWithWallet = async (req, res) => {
 
     const Order = require("../models/Order");
     // Populate serviceId to get the price
-    const order = await Order.findById(orderId).populate("serviceId", "price title");
+    const order = await Order.findById(orderId).populate(
+      "serviceId",
+      "price title",
+    );
 
     if (!order) {
       return res.status(404).json({ error: "Order not found" });
@@ -156,8 +159,9 @@ exports.payWithWallet = async (req, res) => {
     }
 
     // Get order amount from service price or order fields
-    const orderAmount = order.totalPrice || order.price || order.serviceId?.price || 0;
-    
+    const orderAmount =
+      order.totalPrice || order.price || order.serviceId?.price || 0;
+
     if (!orderAmount || orderAmount <= 0) {
       return res.status(400).json({ error: "Unable to determine order price" });
     }
@@ -191,12 +195,15 @@ exports.payWithWallet = async (req, res) => {
     order.paymentStatus = "paid";
     order.paymentMethod = "wallet";
     order.status = "processing";
+    order.paidAt = new Date();
     await order.save();
 
-    // Process affiliate commission if applicable
+    // Process affiliate commission if applicable (using new service)
     try {
-      const { processOrderCommission } = require("./affiliate.controller");
-      await processOrderCommission(order._id);
+      const {
+        processAffiliateCommission,
+      } = require("../services/affiliateCommission.service");
+      await processAffiliateCommission(order._id, "wallet");
     } catch (affErr) {
       console.error("Affiliate commission processing error:", affErr);
     }

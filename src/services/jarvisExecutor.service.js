@@ -9,6 +9,9 @@ const SiteSettingsController = require("../controllers/siteSettings.controller")
 const ServiceRequest = require("../models/ServiceRequest");
 const cloudinary = require("../config/cloudinary");
 
+// PATCH_23: Affiliate commission processing
+const { processAffiliateCommission } = require("./affiliateCommission.service");
+
 const MAX_ACTIONS_PER_PROPOSAL = 10;
 
 function isPlainObject(v) {
@@ -450,6 +453,14 @@ async function executeAction(action, opts) {
       });
 
       await order.save();
+
+      // PATCH_23: Process affiliate commission
+      try {
+        await processAffiliateCommission(order._id, "manual");
+      } catch (affErr) {
+        console.error("[jarvis] affiliate commission error:", affErr.message);
+      }
+
       return {
         id: String(order._id),
         status: order.status,
