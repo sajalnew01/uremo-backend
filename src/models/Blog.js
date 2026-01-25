@@ -79,8 +79,9 @@ const blogSchema = new mongoose.Schema(
   },
 );
 
-// Auto-generate slug from title before save
-blogSchema.pre("save", function (next) {
+// Auto-generate slug from title before save, and ensure unique
+blogSchema.pre("save", async function () {
+  // Generate slug from title if not set
   if (this.isModified("title") && !this.slug) {
     this.slug = this.title
       .toLowerCase()
@@ -90,12 +91,9 @@ blogSchema.pre("save", function (next) {
       .replace(/-+/g, "-")
       .substring(0, 100);
   }
-  next();
-});
 
-// Ensure unique slug by appending random suffix if needed
-blogSchema.pre("save", async function (next) {
-  if (this.isModified("slug") || this.isNew) {
+  // Ensure unique slug by appending random suffix if needed
+  if (this.slug && (this.isModified("slug") || this.isNew)) {
     const existingBlog = await mongoose.models.Blog.findOne({
       slug: this.slug,
       _id: { $ne: this._id },
@@ -104,7 +102,6 @@ blogSchema.pre("save", async function (next) {
       this.slug = `${this.slug}-${Date.now().toString(36)}`;
     }
   }
-  next();
 });
 
 // Virtual for reading time (approx 200 words per minute)
