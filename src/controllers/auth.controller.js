@@ -19,7 +19,7 @@ const findUserByEmailInsensitive = async (email) => {
 
 exports.signup = async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, referralCode } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ message: "All fields required" });
@@ -32,16 +32,28 @@ exports.signup = async (req, res, next) => {
       return res.status(400).json({ message: "Email already exists" });
     }
 
+    // PATCH_23: Find referrer if referral code provided
+    let referredBy = null;
+    if (referralCode) {
+      const referrer = await User.findOne({
+        referralCode: String(referralCode).trim().toUpperCase(),
+      });
+      if (referrer) {
+        referredBy = referrer._id;
+      }
+    }
+
     const user = await User.create({
       name,
       email: emailNormalized,
       password,
+      referredBy,
     });
 
     const token = jwt.sign(
       { id: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET || "secret",
-      { expiresIn: "7d" }
+      { expiresIn: "7d" },
     );
 
     // Email is best-effort; never block signup on email failure.
@@ -134,7 +146,7 @@ exports.login = async (req, res) => {
     const token = jwt.sign(
       { id: user._id, email: user.email, role: user.role },
       process.env.JWT_SECRET || "secret",
-      { expiresIn: "7d" }
+      { expiresIn: "7d" },
     );
 
     res.json({

@@ -9,6 +9,9 @@ const {
   welcomeEmail,
 } = require("../emails/templates");
 
+// PATCH_23: Affiliate commission processing
+const { processOrderCommission } = require("./affiliate.controller");
+
 exports.getAllOrders = async (req, res) => {
   try {
     const statusQuery = String(req.query?.status || "")
@@ -245,6 +248,20 @@ exports.verifyPayment = async (req, res) => {
 
     await order.save();
 
+    // PATCH_23: Process affiliate commission when payment is verified
+    if (order.userId?._id) {
+      setImmediate(async () => {
+        try {
+          await processOrderCommission(order, order.userId._id);
+        } catch (err) {
+          console.error("[affiliate] commission processing failed", {
+            orderId: String(order?._id),
+            message: err?.message || String(err),
+          });
+        }
+      });
+    }
+
     // Email notification (best-effort, non-blocking)
     const userEmail = order.userId?.email;
     if (userEmail) {
@@ -344,7 +361,7 @@ exports.getAdminInbox = async (req, res) => {
       (Array.isArray(unreadAgg) ? unreadAgg : []).map((x) => [
         String(x._id),
         Number(x.count || 0),
-      ])
+      ]),
     );
 
     const orders = await Order.find({ _id: { $in: orderIds } })
@@ -372,7 +389,7 @@ exports.getAdminInbox = async (req, res) => {
       })
       .filter(Boolean)
       .sort(
-        (a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime()
+        (a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime(),
       );
 
     res.json(items);
@@ -423,7 +440,7 @@ exports.markOrderSupportRead = async (req, res) => {
         senderRole: "user",
         status: { $ne: "seen" },
       },
-      { $set: { status: "seen", seenAt: new Date() } }
+      { $set: { status: "seen", seenAt: new Date() } },
     );
 
     res.json({ ok: true, updated: result?.modifiedCount || 0 });
