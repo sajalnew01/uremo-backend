@@ -37,6 +37,13 @@ const userSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+
+    // PATCH_23: Internal Wallet Balance
+    walletBalance: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   { timestamps: true },
 );

@@ -49,6 +49,9 @@ const adminRentalsRoutes = require("./routes/admin.rentals.routes");
 // PATCH_23: Affiliate routes
 const affiliateRoutes = require("./routes/affiliate.routes");
 const adminAffiliateRoutes = require("./routes/admin.affiliate.routes");
+// PATCH_23: Wallet routes
+const walletRoutes = require("./routes/wallet.routes");
+const adminWalletRoutes = require("./routes/admin.wallet.routes");
 
 const auth = require("./middlewares/auth.middleware");
 const admin = require("./middlewares/admin.middleware");
@@ -185,6 +188,9 @@ app.use("/api/admin/rentals", adminRentalsRoutes);
 // PATCH_23: Affiliate routes
 app.use("/api/affiliate", affiliateRoutes);
 app.use("/api/admin/affiliate", adminAffiliateRoutes);
+// PATCH_23: Wallet routes
+app.use("/api/wallet", walletRoutes);
+app.use("/api/admin/wallet", adminWalletRoutes);
 
 // TEMP: Debug endpoint to list mounted routes (admin-only)
 app.get("/api/__routes", auth, admin, (req, res) => {
