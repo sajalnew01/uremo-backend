@@ -214,6 +214,58 @@ const serviceSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+
+    // PATCH_22: Rental/Subscription service support
+    isRental: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    // PATCH_22: Rental plans - multiple time-based pricing options
+    rentalPlans: [
+      {
+        duration: {
+          type: Number,
+          required: true,
+          min: 1,
+        },
+        unit: {
+          type: String,
+          enum: ["days", "months"],
+          default: "days",
+        },
+        price: {
+          type: Number,
+          required: true,
+          min: 0,
+        },
+        label: {
+          type: String,
+          default: "",
+        },
+        isPopular: {
+          type: Boolean,
+          default: false,
+        },
+      },
+    ],
+
+    // PATCH_22: Rental-specific fields
+    rentalDescription: {
+      type: String,
+      default: "",
+    },
+
+    maxActiveRentals: {
+      type: Number,
+      default: 0, // 0 = unlimited
+    },
+
+    currentActiveRentals: {
+      type: Number,
+      default: 0,
+    },
   },
   { timestamps: true },
 );
