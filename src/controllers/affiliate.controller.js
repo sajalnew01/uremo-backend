@@ -17,7 +17,7 @@ const MINIMUM_WITHDRAWAL = 10;
  */
 exports.getMyAffiliateStats = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
 
     // Get user with affiliate fields
     const user = await User.findById(userId).select(
@@ -80,7 +80,7 @@ exports.getMyAffiliateStats = async (req, res) => {
  */
 exports.getMyAffiliateTransactions = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
     const skip = (page - 1) * limit;
@@ -115,7 +115,7 @@ exports.getMyAffiliateTransactions = async (req, res) => {
  */
 exports.withdrawAffiliateBalance = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
     const { amount, paymentMethod, paymentDetails } = req.body;
 
     // Validate input
@@ -196,7 +196,7 @@ exports.withdrawAffiliateBalance = async (req, res) => {
  */
 exports.getMyWithdrawals = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.user.id || req.user._id;
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
     const skip = (page - 1) * limit;
@@ -289,7 +289,7 @@ exports.approveWithdrawal = async (req, res) => {
     withdrawal.status = "paid";
     withdrawal.transactionId = transactionId || "";
     withdrawal.adminNotes = adminNotes || "";
-    withdrawal.processedBy = req.user._id;
+    withdrawal.processedBy = req.user.id || req.user._id;
     withdrawal.processedAt = new Date();
     await withdrawal.save();
 
@@ -338,7 +338,7 @@ exports.rejectWithdrawal = async (req, res) => {
 
     withdrawal.status = "rejected";
     withdrawal.adminNotes = adminNotes || "Withdrawal rejected by admin";
-    withdrawal.processedBy = req.user._id;
+    withdrawal.processedBy = req.user.id || req.user._id;
     withdrawal.processedAt = new Date();
     await withdrawal.save();
 

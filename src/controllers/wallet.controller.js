@@ -11,7 +11,8 @@ const WalletTransaction = require("../models/WalletTransaction");
  */
 exports.getBalance = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select("walletBalance");
+    const userId = req.user.id || req.user._id;
+    const user = await User.findById(userId).select("walletBalance");
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -45,9 +46,11 @@ exports.topUp = async (req, res) => {
       return res.status(400).json({ error: "Minimum top-up amount is $1" });
     }
 
+    const userId = req.user.id || req.user._id;
+
     // Update user balance
     const user = await User.findByIdAndUpdate(
-      req.user._id,
+      userId,
       { $inc: { walletBalance: numAmount } },
       { new: true },
     );
@@ -58,7 +61,7 @@ exports.topUp = async (req, res) => {
 
     // Create transaction record
     await WalletTransaction.create({
-      user: req.user._id,
+      user: userId,
       type: "credit",
       amount: numAmount,
       source: "topup",
@@ -84,17 +87,18 @@ exports.topUp = async (req, res) => {
  */
 exports.getTransactions = async (req, res) => {
   try {
+    const userId = req.user.id || req.user._id;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
     const [transactions, total] = await Promise.all([
-      WalletTransaction.find({ user: req.user._id })
+      WalletTransaction.find({ user: userId })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean(),
-      WalletTransaction.countDocuments({ user: req.user._id }),
+      WalletTransaction.countDocuments({ user: userId }),
     ]);
 
     res.json({
@@ -133,7 +137,12 @@ exports.payWithWallet = async (req, res) => {
       return res.status(404).json({ error: "Order not found" });
     }
 
-    if (order.user.toString() !== req.user._id.toString()) {
+    const userId = req.user.id || req.user._id;
+
+    if (
+      order.user.toString() !== userId.toString() &&
+      order.userId?.toString() !== userId.toString()
+    ) {
       return res.status(403).json({ error: "Not authorized" });
     }
 
@@ -141,7 +150,7 @@ exports.payWithWallet = async (req, res) => {
       return res.status(400).json({ error: "Order already paid" });
     }
 
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -164,7 +173,7 @@ exports.payWithWallet = async (req, res) => {
     const source =
       order.serviceType === "rental" ? "rental_purchase" : "service_purchase";
     await WalletTransaction.create({
-      user: req.user._id,
+      user: userId,
       type: "debit",
       amount: orderAmount,
       source,
