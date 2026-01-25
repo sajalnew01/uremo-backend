@@ -134,6 +134,7 @@ exports.createService = async (req, res) => {
     const {
       title,
       category,
+      subcategory,
       description,
       price,
       currency,
@@ -141,6 +142,14 @@ exports.createService = async (req, res) => {
       images,
       imageUrl,
       requirements,
+      // PATCH_22: Country-based pricing fields
+      countries,
+      countryPricing,
+      platform,
+      subject,
+      projectName,
+      payRate,
+      instantDelivery,
     } = req.body;
 
     if (!title || !category || !description || !price) {
@@ -149,10 +158,12 @@ exports.createService = async (req, res) => {
 
     const slug = slugify(title);
 
-    const service = await Service.create({
+    // PATCH_22: Build service payload with country pricing
+    const servicePayload = {
       title,
       slug,
       category,
+      subcategory: subcategory || "",
       description,
       price,
       currency: currency || "USD",
@@ -162,7 +173,38 @@ exports.createService = async (req, res) => {
       requirements: requirements || "",
       createdBy: req.user.id,
       active: true,
-    });
+      status: "active",
+    };
+
+    // PATCH_22: Add countries array (normalize country names)
+    if (Array.isArray(countries) && countries.length > 0) {
+      servicePayload.countries = countries.map((c) => normalizeCountry(c));
+    }
+
+    // PATCH_22: Add country-specific pricing
+    if (countryPricing && typeof countryPricing === "object") {
+      const pricingMap = new Map();
+      for (const [country, priceVal] of Object.entries(countryPricing)) {
+        const normalizedCountry = normalizeCountry(country);
+        const numPrice = Number(priceVal);
+        if (normalizedCountry && Number.isFinite(numPrice) && numPrice >= 0) {
+          pricingMap.set(normalizedCountry, numPrice);
+        }
+      }
+      if (pricingMap.size > 0) {
+        servicePayload.countryPricing = pricingMap;
+      }
+    }
+
+    // PATCH_22: Additional service fields
+    if (platform) servicePayload.platform = platform;
+    if (subject) servicePayload.subject = subject;
+    if (projectName) servicePayload.projectName = projectName;
+    if (payRate !== undefined) servicePayload.payRate = Number(payRate);
+    if (typeof instantDelivery === "boolean")
+      servicePayload.instantDelivery = instantDelivery;
+
+    const service = await Service.create(servicePayload);
 
     res.status(201).json(service);
   } catch (err) {
@@ -611,6 +653,7 @@ exports.updateService = async (req, res) => {
     const {
       title,
       category,
+      subcategory,
       description,
       requirements,
       price,
@@ -621,6 +664,15 @@ exports.updateService = async (req, res) => {
       type,
       active,
       isActive,
+      // PATCH_22: Country-based pricing fields
+      countries,
+      countryPricing,
+      platform,
+      subject,
+      projectName,
+      payRate,
+      instantDelivery,
+      status,
     } = req.body || {};
 
     const payload = {};
@@ -630,6 +682,8 @@ exports.updateService = async (req, res) => {
       payload.slug = slugify(payload.title);
     }
     if (typeof category === "string") payload.category = category;
+    // PATCH_22: Subcategory support
+    if (typeof subcategory === "string") payload.subcategory = subcategory;
     if (typeof description === "string") payload.description = description;
     if (typeof requirements === "string") payload.requirements = requirements;
     if (price !== undefined) payload.price = Number(price);
@@ -654,6 +708,40 @@ exports.updateService = async (req, res) => {
           ? isActive
           : undefined;
     if (resolvedActive !== undefined) payload.active = resolvedActive;
+
+    // PATCH_22: Country-based pricing support
+    if (Array.isArray(countries)) {
+      payload.countries = countries.map((c) => normalizeCountry(c));
+    }
+
+    // PATCH_22: Handle countryPricing Map
+    if (countryPricing && typeof countryPricing === "object") {
+      // Convert to Map if it's a plain object
+      const pricingMap = new Map();
+      for (const [country, priceVal] of Object.entries(countryPricing)) {
+        const normalizedCountry = normalizeCountry(country);
+        const numPrice = Number(priceVal);
+        if (normalizedCountry && Number.isFinite(numPrice) && numPrice >= 0) {
+          pricingMap.set(normalizedCountry, numPrice);
+        }
+      }
+      payload.countryPricing = pricingMap;
+    }
+
+    // PATCH_22: Additional service fields
+    if (typeof platform === "string") payload.platform = platform.trim();
+    if (typeof subject === "string") payload.subject = subject.trim();
+    if (typeof projectName === "string")
+      payload.projectName = projectName.trim();
+    if (payRate !== undefined) payload.payRate = Number(payRate);
+    if (typeof instantDelivery === "boolean")
+      payload.instantDelivery = instantDelivery;
+    if (
+      typeof status === "string" &&
+      ["draft", "active", "archived"].includes(status)
+    ) {
+      payload.status = status;
+    }
 
     const service = await Service.findByIdAndUpdate(id, payload, {
       new: true,
