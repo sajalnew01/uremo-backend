@@ -15,6 +15,9 @@ const {
   unarchiveRejectedOrder,
   testEmail,
   getAllUsers,
+  resetAllWallets,
+  resetAllAffiliateData,
+  resetAllTestData,
 } = require("../controllers/admin.controller");
 const {
   createEmailCampaign,
@@ -98,5 +101,15 @@ router.put("/settings/raw", auth, admin, putAdminSettingsRaw);
 
 // User management (admin-only)
 router.get("/users", auth, admin, getAllUsers);
+
+// ============================================
+// ADMIN RESET ENDPOINTS - For production launch
+// ============================================
+// POST /api/admin/reset/wallets - Reset all wallet balances to 0
+router.post("/reset/wallets", auth, admin, resetAllWallets);
+// POST /api/admin/reset/affiliate - Reset all affiliate data
+router.post("/reset/affiliate", auth, admin, resetAllAffiliateData);
+// POST /api/admin/reset/all-test-data - Reset all test data (wallets + affiliate)
+router.post("/reset/all-test-data", auth, admin, resetAllTestData);
 
 module.exports = router;
