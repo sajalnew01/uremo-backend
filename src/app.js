@@ -52,6 +52,9 @@ const adminAffiliateRoutes = require("./routes/admin.affiliate.routes");
 // PATCH_23: Wallet routes
 const walletRoutes = require("./routes/wallet.routes");
 const adminWalletRoutes = require("./routes/admin.wallet.routes");
+// PATCH_24: Support Ticket routes
+const ticketsRoutes = require("./routes/tickets.routes");
+const adminTicketsRoutes = require("./routes/admin.tickets.routes");
 
 const auth = require("./middlewares/auth.middleware");
 const admin = require("./middlewares/admin.middleware");
@@ -191,6 +194,9 @@ app.use("/api/admin/affiliate", adminAffiliateRoutes);
 // PATCH_23: Wallet routes
 app.use("/api/wallet", walletRoutes);
 app.use("/api/admin/wallet", adminWalletRoutes);
+// PATCH_24: Support Ticket routes
+app.use("/api/tickets", ticketsRoutes);
+app.use("/api/admin/tickets", adminTicketsRoutes);
 
 // TEMP: Debug endpoint to list mounted routes (admin-only)
 app.get("/api/__routes", auth, admin, (req, res) => {
