@@ -12,6 +12,9 @@ const affiliateController = require("../controllers/affiliate.controller");
 router.use(authMiddleware);
 router.use(adminMiddleware);
 
+// Get all affiliates (Affiliate Directory)
+router.get("/affiliates", affiliateController.getAdminAffiliates);
+
 // Get all affiliate transactions
 router.get("/transactions", affiliateController.getAdminTransactions);
 

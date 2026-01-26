@@ -226,6 +226,209 @@ exports.getMyWithdrawals = async (req, res) => {
 // ===== ADMIN FUNCTIONS =====
 
 /**
+ * Get all affiliates (admin) - The Affiliate Directory
+ * GET /api/admin/affiliate/affiliates
+ * Lists all users who are affiliates (have earned or have referrals)
+ */
+exports.getAdminAffiliates = async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const skip = (page - 1) * limit;
+    const { status, search, sort = "-totalAffiliateEarned" } = req.query;
+
+    // Build filter for users who are active affiliates
+    // An affiliate is someone who has referralCode AND (has referred users OR has earnings)
+    const filter = {
+      referralCode: { $exists: true, $ne: null, $ne: "" },
+    };
+
+    // Status filter
+    if (status === "active") {
+      filter.$or = [
+        { totalAffiliateEarned: { $gt: 0 } },
+        { affiliateBalance: { $gt: 0 } },
+      ];
+    } else if (status === "hasReferrals") {
+      // Will filter after aggregation
+    }
+
+    // Search filter
+    if (search && search.trim()) {
+      const searchRegex = new RegExp(search.trim(), "i");
+      filter.$or = [
+        { email: searchRegex },
+        { name: searchRegex },
+        { referralCode: searchRegex },
+      ];
+    }
+
+    // Get affiliates with referral counts
+    const affiliates = await User.aggregate([
+      { $match: filter },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "referredBy",
+          as: "referredUsers",
+        },
+      },
+      {
+        $lookup: {
+          from: "affiliatewithdrawals",
+          let: { userId: "$_id" },
+          pipeline: [
+            {
+              $match: { $expr: { $eq: ["$user", "$$userId"] }, status: "paid" },
+            },
+            { $group: { _id: null, total: { $sum: "$amount" } } },
+          ],
+          as: "withdrawalStats",
+        },
+      },
+      {
+        $addFields: {
+          referralCount: { $size: "$referredUsers" },
+          totalWithdrawn: {
+            $ifNull: [{ $arrayElemAt: ["$withdrawalStats.total", 0] }, 0],
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          name: 1,
+          email: 1,
+          referralCode: 1,
+          affiliateBalance: 1,
+          totalAffiliateEarned: 1,
+          referralCount: 1,
+          totalWithdrawn: 1,
+          createdAt: 1,
+          isActive: {
+            $or: [
+              { $gt: ["$totalAffiliateEarned", 0] },
+              { $gt: ["$referralCount", 0] },
+            ],
+          },
+        },
+      },
+      // Filter by status after aggregation
+      ...(status === "hasReferrals"
+        ? [{ $match: { referralCount: { $gt: 0 } } }]
+        : []),
+      ...(status === "active" ? [{ $match: { isActive: true } }] : []),
+      // Sort
+      {
+        $sort:
+          sort === "referralCount"
+            ? { referralCount: -1 }
+            : sort === "-referralCount"
+              ? { referralCount: -1 }
+              : sort === "affiliateBalance"
+                ? { affiliateBalance: -1 }
+                : sort === "totalAffiliateEarned"
+                  ? { totalAffiliateEarned: -1 }
+                  : sort === "-createdAt"
+                    ? { createdAt: -1 }
+                    : { totalAffiliateEarned: -1 },
+      },
+      { $skip: skip },
+      { $limit: limit },
+    ]);
+
+    // Get total count
+    const totalCountPipeline = [
+      { $match: filter },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "referredBy",
+          as: "referredUsers",
+        },
+      },
+      {
+        $addFields: {
+          referralCount: { $size: "$referredUsers" },
+          isActive: {
+            $or: [
+              { $gt: ["$totalAffiliateEarned", 0] },
+              { $gt: ["$affiliateBalance", 0] },
+            ],
+          },
+        },
+      },
+      ...(status === "hasReferrals"
+        ? [{ $match: { referralCount: { $gt: 0 } } }]
+        : []),
+      ...(status === "active" ? [{ $match: { isActive: true } }] : []),
+      { $count: "total" },
+    ];
+
+    const countResult = await User.aggregate(totalCountPipeline);
+    const total = countResult[0]?.total || 0;
+
+    // Get summary stats
+    const statsResult = await User.aggregate([
+      { $match: { referralCode: { $exists: true, $ne: null, $ne: "" } } },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "referredBy",
+          as: "referredUsers",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalAffiliates: { $sum: 1 },
+          totalEarned: { $sum: "$totalAffiliateEarned" },
+          totalBalance: { $sum: "$affiliateBalance" },
+          totalReferrals: { $sum: { $size: "$referredUsers" } },
+          activeAffiliates: {
+            $sum: {
+              $cond: [
+                {
+                  $or: [
+                    { $gt: ["$totalAffiliateEarned", 0] },
+                    { $gt: [{ $size: "$referredUsers" }, 0] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    const stats = statsResult[0] || {
+      totalAffiliates: 0,
+      totalEarned: 0,
+      totalBalance: 0,
+      totalReferrals: 0,
+      activeAffiliates: 0,
+    };
+
+    res.json({
+      ok: true,
+      affiliates,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+      stats,
+    });
+  } catch (err) {
+    console.error("getAdminAffiliates error:", err);
+    res.status(500).json({ ok: false, message: "Failed to get affiliates" });
+  }
+};
+
+/**
  * Get all withdrawal requests (admin)
  * GET /api/admin/affiliate/withdrawals
  */

@@ -58,7 +58,7 @@ exports.apply = async (req, res, next) => {
           (error, uploadResult) => {
             if (error) return reject(error);
             resolve(uploadResult);
-          }
+          },
         );
 
         uploadStream.end(req.file.buffer);
@@ -141,13 +141,73 @@ exports.apply = async (req, res, next) => {
 
 exports.getAll = async (req, res, next) => {
   try {
-    const apps = await ApplyWork.find()
+    // Parse filters from query params
+    const { status, category, search, page = 1, limit = 50 } = req.query;
+
+    const filter = {};
+
+    // Status filter
+    if (status && ["pending", "approved", "rejected"].includes(status)) {
+      filter.status = status;
+    }
+
+    // Category filter (supports: microjob_worker, outlier, writerbay, coding_math, other)
+    if (category) {
+      const categoryLower = category.toLowerCase();
+      if (categoryLower === "microjob_worker") {
+        filter.category = { $regex: /microjob|worker/i };
+      } else if (categoryLower === "outlier") {
+        filter.$or = [
+          { category: { $regex: /outlier/i } },
+          { positionTitle: { $regex: /outlier/i } },
+        ];
+      } else if (categoryLower === "writerbay") {
+        filter.$or = [
+          { category: { $regex: /writerbay|writer/i } },
+          { positionTitle: { $regex: /writerbay|writer/i } },
+        ];
+      } else if (categoryLower === "coding_math") {
+        filter.$or = [
+          { category: { $regex: /coding|math|expert/i } },
+          { positionTitle: { $regex: /coding|math|expert/i } },
+        ];
+      } else if (categoryLower !== "all") {
+        filter.category = { $regex: new RegExp(category, "i") };
+      }
+    }
+
+    // Pagination
+    const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+    const limitNum = Math.min(parseInt(limit, 10), 100);
+
+    // Build the query
+    let query = ApplyWork.find(filter);
+
+    // If search is provided, we need to filter by user email/name after populate
+    const apps = await query
       .populate("user", "email name")
       .populate("position", "_id title category active")
       .sort({ createdAt: -1 })
       .lean();
 
-    const normalized = apps.map((app) => ({
+    // Filter by search (user email or name) - done after populate
+    let filtered = apps;
+    if (search && search.trim()) {
+      const searchLower = search.toLowerCase().trim();
+      filtered = apps.filter(
+        (app) =>
+          app.user?.email?.toLowerCase().includes(searchLower) ||
+          app.user?.name?.toLowerCase().includes(searchLower),
+      );
+    }
+
+    // Get total before pagination
+    const total = filtered.length;
+
+    // Apply pagination
+    const paginated = filtered.slice(skip, skip + limitNum);
+
+    const normalized = paginated.map((app) => ({
       ...app,
       resumeUrl: normalizeCloudinaryUrl(app.resumeUrl, {
         mimeType: app.resumeMimeType,
@@ -155,7 +215,24 @@ exports.getAll = async (req, res, next) => {
       }),
     }));
 
-    res.json(normalized);
+    res.json({
+      applications: normalized,
+      total,
+      page: parseInt(page, 10),
+      pages: Math.ceil(total / limitNum),
+      // Include filter options for frontend
+      filterOptions: {
+        statuses: ["pending", "approved", "rejected"],
+        categories: [
+          { value: "all", label: "All Categories" },
+          { value: "microjob_worker", label: "Microjob Worker" },
+          { value: "outlier", label: "Outlier Writing Jobs" },
+          { value: "writerbay", label: "WriterBay Platform" },
+          { value: "coding_math", label: "Coding / Math Expert" },
+          { value: "other", label: "Other" },
+        ],
+      },
+    });
   } catch (err) {
     next(err);
   }

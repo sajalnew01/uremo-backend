@@ -387,26 +387,53 @@ exports.adminSearchUsers = async (req, res) => {
  */
 exports.adminGetStats = async (req, res) => {
   try {
-    const [totalBalanceResult, transactionStats] = await Promise.all([
-      User.aggregate([
-        { $group: { _id: null, total: { $sum: "$walletBalance" } } },
-      ]),
-      WalletTransaction.aggregate([
-        {
-          $group: {
-            _id: "$type",
-            total: { $sum: "$amount" },
-            count: { $sum: 1 },
+    const [totalBalanceResult, transactionStats, userCounts] =
+      await Promise.all([
+        User.aggregate([
+          { $group: { _id: null, total: { $sum: "$walletBalance" } } },
+        ]),
+        WalletTransaction.aggregate([
+          {
+            $group: {
+              _id: "$type",
+              total: { $sum: "$amount" },
+              count: { $sum: 1 },
+            },
           },
-        },
-      ]),
-    ]);
+        ]),
+        // Count users by balance range
+        User.aggregate([
+          {
+            $facet: {
+              low: [
+                { $match: { walletBalance: { $gte: 0, $lte: 50 } } },
+                { $count: "count" },
+              ],
+              medium: [
+                { $match: { walletBalance: { $gt: 50, $lte: 300 } } },
+                { $count: "count" },
+              ],
+              high: [
+                { $match: { walletBalance: { $gt: 300 } } },
+                { $count: "count" },
+              ],
+              total: [{ $count: "count" }],
+            },
+          },
+        ]),
+      ]);
 
     const totalBalance = totalBalanceResult[0]?.total || 0;
     const stats = {
       totalBalance,
       credits: { total: 0, count: 0 },
       debits: { total: 0, count: 0 },
+      userCounts: {
+        low: userCounts[0]?.low[0]?.count || 0,
+        medium: userCounts[0]?.medium[0]?.count || 0,
+        high: userCounts[0]?.high[0]?.count || 0,
+        total: userCounts[0]?.total[0]?.count || 0,
+      },
     };
 
     transactionStats.forEach((s) => {
@@ -424,6 +451,80 @@ exports.adminGetStats = async (req, res) => {
   } catch (err) {
     console.error("adminGetStats error:", err);
     res.status(500).json({ error: "Failed to get stats" });
+  }
+};
+
+/**
+ * Admin: List all users with wallet balance (paginated with filters)
+ * GET /api/admin/wallet/users?balanceLevel=low|medium|high&page=1&limit=20&search=
+ */
+exports.adminListUsers = async (req, res) => {
+  try {
+    const {
+      balanceLevel,
+      page = 1,
+      limit = 20,
+      search,
+      sort = "-walletBalance",
+    } = req.query;
+
+    const filter = {};
+
+    // Balance level filter
+    if (balanceLevel === "low") {
+      filter.walletBalance = { $gte: 0, $lte: 50 };
+    } else if (balanceLevel === "medium") {
+      filter.walletBalance = { $gt: 50, $lte: 300 };
+    } else if (balanceLevel === "high") {
+      filter.walletBalance = { $gt: 300 };
+    }
+
+    // Search filter
+    if (search && search.trim()) {
+      const searchRegex = new RegExp(search.trim(), "i");
+      filter.$or = [{ email: searchRegex }, { name: searchRegex }];
+    }
+
+    const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+    const limitNum = Math.min(parseInt(limit, 10), 100);
+
+    // Build sort object
+    let sortObj = { walletBalance: -1 };
+    if (sort === "walletBalance") sortObj = { walletBalance: 1 };
+    else if (sort === "-walletBalance") sortObj = { walletBalance: -1 };
+    else if (sort === "name") sortObj = { name: 1 };
+    else if (sort === "-name") sortObj = { name: -1 };
+    else if (sort === "createdAt") sortObj = { createdAt: 1 };
+    else if (sort === "-createdAt") sortObj = { createdAt: -1 };
+
+    const [users, total] = await Promise.all([
+      User.find(filter)
+        .select("_id name email walletBalance createdAt")
+        .sort(sortObj)
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      User.countDocuments(filter),
+    ]);
+
+    res.json({
+      success: true,
+      users,
+      total,
+      page: parseInt(page, 10),
+      pages: Math.ceil(total / limitNum),
+      filterOptions: {
+        balanceLevels: [
+          { value: "all", label: "All Users" },
+          { value: "low", label: "Low Balance (0-50)" },
+          { value: "medium", label: "Medium Balance (51-300)" },
+          { value: "high", label: "High Balance (300+)" },
+        ],
+      },
+    });
+  } catch (err) {
+    console.error("adminListUsers error:", err);
+    res.status(500).json({ error: "Failed to list users" });
   }
 };
 

@@ -533,7 +533,7 @@ exports.getAllUsers = async (req, res) => {
 exports.resetAllWallets = async (req, res) => {
   try {
     const { confirm } = req.body;
-    
+
     // Require explicit confirmation
     if (confirm !== "RESET_ALL_WALLETS") {
       return res.status(400).json({
@@ -547,14 +547,20 @@ exports.resetAllWallets = async (req, res) => {
 
     // Get stats before reset
     const userStats = await User.aggregate([
-      { $group: { _id: null, totalBalance: { $sum: "$walletBalance" }, count: { $sum: 1 } } },
+      {
+        $group: {
+          _id: null,
+          totalBalance: { $sum: "$walletBalance" },
+          count: { $sum: 1 },
+        },
+      },
     ]);
     const txCount = await WalletTransaction.countDocuments();
 
     // Reset all user wallet balances to 0
     const walletResetResult = await User.updateMany(
       { walletBalance: { $gt: 0 } },
-      { $set: { walletBalance: 0 } }
+      { $set: { walletBalance: 0 } },
     );
 
     // Delete all wallet transactions
@@ -583,19 +589,20 @@ exports.resetAllWallets = async (req, res) => {
 exports.resetAllAffiliateData = async (req, res) => {
   try {
     const { confirm } = req.body;
-    
+
     // Require explicit confirmation
     if (confirm !== "RESET_ALL_AFFILIATE") {
       return res.status(400).json({
         ok: false,
-        message: "Confirmation required. Send { confirm: 'RESET_ALL_AFFILIATE' }",
+        message:
+          "Confirmation required. Send { confirm: 'RESET_ALL_AFFILIATE' }",
       });
     }
 
     const User = require("../models/User");
     const AffiliateTransaction = require("../models/AffiliateTransaction");
     const AffiliateWithdrawal = require("../models/AffiliateWithdrawal");
-    
+
     // Try to load AffiliateCommission if exists
     let AffiliateCommission;
     try {
@@ -611,14 +618,18 @@ exports.resetAllAffiliateData = async (req, res) => {
           _id: null,
           totalAffiliateBalance: { $sum: "$affiliateBalance" },
           totalEarned: { $sum: "$totalAffiliateEarned" },
-          usersWithReferrer: { $sum: { $cond: [{ $ne: ["$referredBy", null] }, 1, 0] } },
+          usersWithReferrer: {
+            $sum: { $cond: [{ $ne: ["$referredBy", null] }, 1, 0] },
+          },
         },
       },
     ]);
 
     const txCount = await AffiliateTransaction.countDocuments();
     const withdrawalCount = await AffiliateWithdrawal.countDocuments();
-    const commissionCount = AffiliateCommission ? await AffiliateCommission.countDocuments() : 0;
+    const commissionCount = AffiliateCommission
+      ? await AffiliateCommission.countDocuments()
+      : 0;
 
     // Reset all user affiliate data
     const affiliateResetResult = await User.updateMany(
@@ -629,15 +640,15 @@ exports.resetAllAffiliateData = async (req, res) => {
           totalAffiliateEarned: 0,
           referredBy: null,
         },
-      }
+      },
     );
 
     // Delete all affiliate transactions
     const txDeleteResult = await AffiliateTransaction.deleteMany({});
-    
+
     // Delete all affiliate withdrawals
     const withdrawalDeleteResult = await AffiliateWithdrawal.deleteMany({});
-    
+
     // Delete all commission records if model exists
     let commissionDeleteResult = { deletedCount: 0 };
     if (AffiliateCommission) {
@@ -659,7 +670,9 @@ exports.resetAllAffiliateData = async (req, res) => {
     });
   } catch (err) {
     console.error("[admin] resetAllAffiliateData error:", err);
-    res.status(500).json({ ok: false, message: "Failed to reset affiliate data" });
+    res
+      .status(500)
+      .json({ ok: false, message: "Failed to reset affiliate data" });
   }
 };
 
@@ -671,12 +684,13 @@ exports.resetAllAffiliateData = async (req, res) => {
 exports.resetAllTestData = async (req, res) => {
   try {
     const { confirm, includeOrders } = req.body;
-    
+
     // Require explicit confirmation
     if (confirm !== "RESET_ALL_TEST_DATA") {
       return res.status(400).json({
         ok: false,
-        message: "Confirmation required. Send { confirm: 'RESET_ALL_TEST_DATA' }",
+        message:
+          "Confirmation required. Send { confirm: 'RESET_ALL_TEST_DATA' }",
       });
     }
 
@@ -684,7 +698,7 @@ exports.resetAllTestData = async (req, res) => {
     const WalletTransaction = require("../models/WalletTransaction");
     const AffiliateTransaction = require("../models/AffiliateTransaction");
     const AffiliateWithdrawal = require("../models/AffiliateWithdrawal");
-    
+
     let AffiliateCommission;
     try {
       AffiliateCommission = require("../models/AffiliateCommission");
@@ -697,7 +711,7 @@ exports.resetAllTestData = async (req, res) => {
     // Reset wallet balances
     const walletReset = await User.updateMany(
       { walletBalance: { $gt: 0 } },
-      { $set: { walletBalance: 0 } }
+      { $set: { walletBalance: 0 } },
     );
     results.walletsReset = walletReset.modifiedCount;
 
@@ -714,7 +728,7 @@ exports.resetAllTestData = async (req, res) => {
           totalAffiliateEarned: 0,
           referredBy: null,
         },
-      }
+      },
     );
     results.affiliateDataReset = affiliateReset.modifiedCount;
 

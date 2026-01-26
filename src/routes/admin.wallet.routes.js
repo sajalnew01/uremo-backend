@@ -15,6 +15,9 @@ router.use(adminMiddleware);
 // GET /api/admin/wallet/stats - Get wallet statistics
 router.get("/stats", walletController.adminGetStats);
 
+// GET /api/admin/wallet/users - List all users with wallet balance (paginated with filters)
+router.get("/users", walletController.adminListUsers);
+
 // GET /api/admin/wallet/search - Search users
 router.get("/search", walletController.adminSearchUsers);
 
