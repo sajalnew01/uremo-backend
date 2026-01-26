@@ -110,6 +110,77 @@ exports.getMyAffiliateTransactions = async (req, res) => {
 };
 
 /**
+ * Get user's commission history (with order details)
+ * GET /api/affiliate/commissions
+ */
+exports.getMyCommissions = async (req, res) => {
+  try {
+    const userId = req.user.id || req.user._id;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
+    const skip = (page - 1) * limit;
+    const status = req.query.status; // pending, approved, paid
+
+    const filter = { user: userId };
+    if (status) filter.status = status;
+
+    const [commissions, total] = await Promise.all([
+      AffiliateTransaction.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("referredUser", "name email")
+        .populate("order", "_id status amount createdAt")
+        .lean(),
+      AffiliateTransaction.countDocuments(filter),
+    ]);
+
+    // Calculate totals from user record
+    const user = await User.findById(userId).select(
+      "affiliateBalance totalAffiliateEarned",
+    );
+
+    // Get total withdrawn
+    const withdrawnResult = await AffiliateWithdrawal.aggregate([
+      { $match: { user: userId, status: { $in: ["paid", "pending"] } } },
+      { $group: { _id: "$status", total: { $sum: "$amount" } } },
+    ]);
+
+    const withdrawnPaid =
+      withdrawnResult.find((r) => r._id === "paid")?.total || 0;
+    const withdrawnPending =
+      withdrawnResult.find((r) => r._id === "pending")?.total || 0;
+
+    res.json({
+      ok: true,
+      commissions: commissions.map((c) => ({
+        _id: c._id,
+        referredUserEmail: c.referredUser?.email || "Unknown",
+        referredUserName: c.referredUser?.name || "Unknown",
+        orderId: c.order?._id || null,
+        orderAmount: c.orderAmount,
+        commissionAmount: c.commission,
+        commissionRate: c.commissionRate,
+        status: c.status,
+        date: c.createdAt,
+      })),
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+      summary: {
+        totalEarnings: user?.totalAffiliateEarned || 0,
+        availableBalance: user?.affiliateBalance || 0,
+        withdrawnAmount: withdrawnPaid,
+        pendingWithdrawal: withdrawnPending,
+      },
+    });
+  } catch (err) {
+    console.error("getMyCommissions error:", err);
+    res.status(500).json({ ok: false, message: "Failed to get commissions" });
+  }
+};
+
+/**
  * Request withdrawal
  * POST /api/affiliate/withdraw
  */
@@ -425,6 +496,94 @@ exports.getAdminAffiliates = async (req, res) => {
   } catch (err) {
     console.error("getAdminAffiliates error:", err);
     res.status(500).json({ ok: false, message: "Failed to get affiliates" });
+  }
+};
+
+/**
+ * Get single affiliate details (admin)
+ * GET /api/admin/affiliate/affiliates/:id
+ */
+exports.getAdminAffiliateById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get affiliate user
+    const user = await User.findById(id).select(
+      "name email referralCode affiliateBalance totalAffiliateEarned createdAt",
+    );
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ ok: false, message: "Affiliate not found" });
+    }
+
+    // Get referred users
+    const referredUsers = await User.find({ referredBy: id })
+      .select("name email createdAt")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Get commission history
+    const commissions = await AffiliateTransaction.find({ user: id })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .populate("referredUser", "name email")
+      .populate("order", "_id status amount")
+      .lean();
+
+    // Get withdrawal history
+    const withdrawals = await AffiliateWithdrawal.find({ user: id })
+      .sort({ createdAt: -1 })
+      .populate("processedBy", "name email")
+      .lean();
+
+    // Calculate stats
+    const totalWithdrawn = withdrawals
+      .filter((w) => w.status === "paid")
+      .reduce((sum, w) => sum + w.amount, 0);
+
+    const pendingWithdrawals = withdrawals
+      .filter((w) => w.status === "pending")
+      .reduce((sum, w) => sum + w.amount, 0);
+
+    const successfulReferrals = commissions.filter(
+      (c) => c.status === "approved",
+    ).length;
+
+    res.json({
+      ok: true,
+      affiliate: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        referralCode: user.referralCode,
+        referralLink: `https://uremo.world/signup?ref=${user.referralCode}`,
+        commissionRate: 10, // 10%
+        affiliateBalance: user.affiliateBalance || 0,
+        totalAffiliateEarned: user.totalAffiliateEarned || 0,
+        totalWithdrawn,
+        pendingWithdrawals,
+        totalReferrals: referredUsers.length,
+        successfulReferrals,
+        createdAt: user.createdAt,
+      },
+      referredUsers,
+      commissions: commissions.map((c) => ({
+        _id: c._id,
+        referredUserEmail: c.referredUser?.email || "Unknown",
+        referredUserName: c.referredUser?.name || "Unknown",
+        orderId: c.order?._id,
+        orderAmount: c.orderAmount,
+        commissionAmount: c.commission,
+        status: c.status,
+        date: c.createdAt,
+      })),
+      withdrawals,
+    });
+  } catch (err) {
+    console.error("getAdminAffiliateById error:", err);
+    res.status(500).json({ ok: false, message: "Failed to get affiliate" });
   }
 };
 

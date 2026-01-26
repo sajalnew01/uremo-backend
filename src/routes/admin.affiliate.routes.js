@@ -15,6 +15,9 @@ router.use(adminMiddleware);
 // Get all affiliates (Affiliate Directory)
 router.get("/affiliates", affiliateController.getAdminAffiliates);
 
+// Get single affiliate details
+router.get("/affiliates/:id", affiliateController.getAdminAffiliateById);
+
 // Get all affiliate transactions
 router.get("/transactions", affiliateController.getAdminTransactions);
 

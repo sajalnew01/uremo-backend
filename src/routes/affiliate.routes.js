@@ -16,6 +16,9 @@ router.get("/stats", affiliateController.getMyAffiliateStats);
 // Get affiliate transactions
 router.get("/transactions", affiliateController.getMyAffiliateTransactions);
 
+// Get commission history (for dashboard table)
+router.get("/commissions", affiliateController.getMyCommissions);
+
 // Get withdrawal history
 router.get("/withdrawals", affiliateController.getMyWithdrawals);
 
