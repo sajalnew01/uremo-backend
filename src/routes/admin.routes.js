@@ -14,6 +14,7 @@ const {
   archiveRejectedOrder,
   unarchiveRejectedOrder,
   testEmail,
+  getAllUsers,
 } = require("../controllers/admin.controller");
 const {
   createEmailCampaign,
@@ -94,5 +95,8 @@ router.put("/settings", auth, admin, updateAdminSettings);
 // CMS / Settings raw JSON (admin-only)
 router.get("/settings/raw", auth, admin, getAdminSettingsRaw);
 router.put("/settings/raw", auth, admin, putAdminSettingsRaw);
+
+// User management (admin-only)
+router.get("/users", auth, admin, getAllUsers);
 
 module.exports = router;

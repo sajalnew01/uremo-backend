@@ -477,3 +477,47 @@ exports.addOrderNote = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+/**
+ * Get all users (admin)
+ * GET /api/admin/users
+ */
+exports.getAllUsers = async (req, res) => {
+  try {
+    const User = require("../models/User");
+    
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const skip = (page - 1) * limit;
+    const search = req.query.search?.trim();
+
+    const query = {};
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const [users, total] = await Promise.all([
+      User.find(query)
+        .select("-password -__v")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      User.countDocuments(query),
+    ]);
+
+    res.json({
+      users,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    });
+  } catch (err) {
+    console.error("[admin] getAllUsers error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+};

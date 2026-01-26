@@ -240,3 +240,38 @@ exports.resetPasswordWithSecret = async (req, res) => {
     return res.status(500).json({ message: error.message || "Server error" });
   }
 };
+
+/**
+ * Get current user profile
+ * GET /api/auth/me
+ */
+exports.getProfile = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+
+    const user = await User.findById(userId).select("-password -__v");
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json({
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        referralCode: user.referralCode,
+        affiliateBalance: user.affiliateBalance || 0,
+        totalAffiliateEarned: user.totalAffiliateEarned || 0,
+        walletBalance: user.walletBalance || 0,
+        createdAt: user.createdAt,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Server error" });
+  }
+};
