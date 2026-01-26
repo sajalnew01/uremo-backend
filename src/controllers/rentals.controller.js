@@ -20,6 +20,50 @@ const calculateEndDate = (startDate, duration, unit) => {
 };
 
 /**
+ * GET ALL RENTAL SERVICES (PUBLIC)
+ * GET /api/rentals
+ * Returns all services marked as isRental=true with their rental plans
+ */
+exports.getRentalServices = async (req, res) => {
+  try {
+    // Find all active services that are marked as rentals
+    const rentalServices = await Service.find({
+      isRental: true,
+      $or: [{ status: "active" }, { active: true }],
+    })
+      .select(
+        "title slug description price imageUrl images countries rentalPlans rentalDescription maxActiveRentals currentActiveRentals category",
+      )
+      .lean();
+
+    // Format response
+    const rentals = rentalServices.map((s) => ({
+      _id: s._id,
+      title: s.title,
+      slug: s.slug,
+      description: s.rentalDescription || s.description,
+      price: s.price,
+      imageUrl: s.imageUrl || (s.images && s.images[0]) || "",
+      countries: s.countries || ["Global"],
+      plans: s.rentalPlans || [],
+      maxSlots: s.maxActiveRentals || 0,
+      availableSlots: Math.max(
+        0,
+        (s.maxActiveRentals || 0) - (s.currentActiveRentals || 0),
+      ),
+      category: s.category || "rentals",
+    }));
+
+    res.json({ ok: true, rentals });
+  } catch (err) {
+    console.error("[RENTALS_LIST_ERROR]", err.message);
+    res
+      .status(500)
+      .json({ ok: false, message: "Failed to fetch rental services" });
+  }
+};
+
+/**
  * CREATE RENTAL ORDER
  * POST /api/rentals/create
  * Body: { serviceId, planIndex }
@@ -54,12 +98,10 @@ exports.createRentalOrder = async (req, res) => {
     }
 
     if (!service.isRental) {
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          message: "This service is not available for rental",
-        });
+      return res.status(400).json({
+        ok: false,
+        message: "This service is not available for rental",
+      });
     }
 
     if (!service.rentalPlans || !service.rentalPlans[planIndex]) {

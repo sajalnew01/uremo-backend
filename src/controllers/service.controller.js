@@ -569,18 +569,44 @@ exports.getActiveServices = async (req, res) => {
       // PATCH_19: Include subcategory mappings for frontend
       subcategoriesByCategory: {
         microjobs: [
-          { id: "fresh_account", label: "Fresh Account" },
-          { id: "already_onboarded", label: "Already Onboarded" },
+          { id: "fresh_account", label: "Fresh Account (With Screening)" },
+          { id: "already_onboarded", label: "Already Onboarded (Instant)" },
         ],
         forex_crypto: [
-          { id: "forex_platform_creation", label: "Forex Platform Creation" },
-          { id: "crypto_platform_creation", label: "Crypto Platform Creation" },
+          {
+            id: "forex_platform_creation",
+            label: "Forex Trading Platform Creation Assistance",
+          },
+          {
+            id: "crypto_platform_creation",
+            label: "Crypto Platform Account Assistance",
+          },
         ],
         banks_gateways_wallets: [
-          { id: "banks", label: "Banks" },
-          { id: "payment_gateways", label: "Payment Gateways" },
-          { id: "wallets", label: "Wallets" },
+          { id: "banks", label: "Bank Account Assistance" },
+          { id: "payment_gateways", label: "Payment Gateway Setup" },
+          { id: "wallets", label: "Wallet Account Setup" },
         ],
+        rentals: [{ id: "account_rental", label: "Account Rental" }],
+        general: [{ id: "general", label: "General" }],
+      },
+      // Flat subcategories list for convenience
+      subcategories: {
+        microjobs: [
+          "Fresh Account (With Screening)",
+          "Already Onboarded (Instant)",
+        ],
+        forex_crypto: [
+          "Forex Trading Platform Creation Assistance",
+          "Crypto Platform Account Assistance",
+        ],
+        banks_gateways_wallets: [
+          "Bank Account Assistance",
+          "Payment Gateway Setup",
+          "Wallet Account Setup",
+        ],
+        rentals: ["Account Rental"],
+        general: ["General"],
       },
       countries: sortedCountries,
       platforms,
@@ -624,15 +650,31 @@ exports.getServiceById = async (req, res) => {
   try {
     setNoCache(res);
     const { id } = req.params;
-    const service = await Service.findById(id);
+    const service = await Service.findById(id).lean();
 
     if (!service) {
       return res.status(404).json({ message: "Service not found" });
     }
 
-    res.json(service);
+    // Normalize service data
+    const normalizedService = {
+      ...service,
+      category: service.category || "microjobs",
+      subcategory: service.subcategory || service.listingType || "general",
+      countries:
+        Array.isArray(service.countries) && service.countries.length > 0
+          ? service.countries.map(normalizeCountry)
+          : ["Global"],
+      countryPricing:
+        service.countryPricing instanceof Map
+          ? Object.fromEntries(service.countryPricing)
+          : service.countryPricing || {},
+    };
+
+    // Wrap in service object for consistent API
+    res.json({ ok: true, service: normalizedService });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ ok: false, message: err.message });
   }
 };
 

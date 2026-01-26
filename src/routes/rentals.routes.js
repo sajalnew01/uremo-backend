@@ -5,6 +5,7 @@
 const express = require("express");
 const auth = require("../middlewares/auth.middleware");
 const {
+  getRentalServices,
   createRentalOrder,
   getUserRentals,
   getRentalById,
@@ -13,6 +14,9 @@ const {
 } = require("../controllers/rentals.controller");
 
 const router = express.Router();
+
+// Get all rental services (public)
+router.get("/", getRentalServices);
 
 // Create rental order (requires auth)
 router.post("/create", auth, createRentalOrder);
