@@ -1,10 +1,18 @@
 const Ticket = require("../models/Ticket");
 const TicketMessage = require("../models/TicketMessage");
 
+// Helper: Get user ID from normalized req.user (auth middleware uses .id)
+const getUserId = (req) => req.user?.id || req.user?._id || req.user?.userId;
+
 // Create a new ticket
 exports.createTicket = async (req, res) => {
   try {
     const { subject, category, priority, orderId, message } = req.body;
+    const userId = getUserId(req);
+
+    if (!userId) {
+      return res.status(401).json({ message: "User not authenticated" });
+    }
 
     if (!subject || !message) {
       return res
@@ -13,7 +21,7 @@ exports.createTicket = async (req, res) => {
     }
 
     const ticket = await Ticket.create({
-      user: req.user._id,
+      user: userId,
       subject,
       category: category || "other",
       priority: priority || "medium",
@@ -26,7 +34,7 @@ exports.createTicket = async (req, res) => {
     await TicketMessage.create({
       ticket: ticket._id,
       senderType: "user",
-      sender: req.user._id,
+      sender: userId,
       message,
     });
 
@@ -41,8 +49,9 @@ exports.createTicket = async (req, res) => {
 exports.getUserTickets = async (req, res) => {
   try {
     const { status, page = 1, limit = 20 } = req.query;
+    const userId = getUserId(req);
 
-    const filter = { user: req.user._id };
+    const filter = { user: userId };
     if (status && status !== "all") {
       filter.status = status;
     }
@@ -75,9 +84,10 @@ exports.getUserTickets = async (req, res) => {
 // Get single ticket details
 exports.getTicketById = async (req, res) => {
   try {
+    const userId = getUserId(req);
     const ticket = await Ticket.findOne({
       _id: req.params.id,
-      user: req.user._id,
+      user: userId,
     })
       .populate("order", "orderNumber status totalAmount")
       .lean();
@@ -99,10 +109,11 @@ exports.getTicketById = async (req, res) => {
 // Get ticket messages
 exports.getTicketMessages = async (req, res) => {
   try {
+    const userId = getUserId(req);
     // Verify user owns this ticket
     const ticket = await Ticket.findOne({
       _id: req.params.id,
-      user: req.user._id,
+      user: userId,
     });
 
     if (!ticket) {
@@ -127,6 +138,7 @@ exports.getTicketMessages = async (req, res) => {
 exports.replyTicket = async (req, res) => {
   try {
     const { message, attachment } = req.body;
+    const userId = getUserId(req);
 
     if (!message) {
       return res.status(400).json({ message: "Message is required" });
@@ -135,7 +147,7 @@ exports.replyTicket = async (req, res) => {
     // Verify user owns this ticket
     const ticket = await Ticket.findOne({
       _id: req.params.id,
-      user: req.user._id,
+      user: userId,
     });
 
     if (!ticket) {
@@ -151,7 +163,7 @@ exports.replyTicket = async (req, res) => {
     const msg = await TicketMessage.create({
       ticket: req.params.id,
       senderType: "user",
-      sender: req.user._id,
+      sender: userId,
       message,
       attachment: attachment || null,
     });
@@ -174,8 +186,9 @@ exports.replyTicket = async (req, res) => {
 // Get unread count for user
 exports.getUnreadCount = async (req, res) => {
   try {
+    const userId = getUserId(req);
     const count = await Ticket.countDocuments({
-      user: req.user._id,
+      user: userId,
       hasUnreadUser: true,
     });
 
