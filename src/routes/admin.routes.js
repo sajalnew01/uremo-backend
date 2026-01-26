@@ -15,6 +15,9 @@ const {
   unarchiveRejectedOrder,
   testEmail,
   getAllUsers,
+  resetAllWallets,
+  resetAllAffiliates,
+  resetPlatform,
 } = require("../controllers/admin.controller");
 const {
   createEmailCampaign,
@@ -98,5 +101,10 @@ router.put("/settings/raw", auth, admin, putAdminSettingsRaw);
 
 // User management (admin-only)
 router.get("/users", auth, admin, getAllUsers);
+
+// PLATFORM RESET ENDPOINTS (admin-only, for pre-launch cleanup)
+router.post("/reset/wallets", auth, admin, resetAllWallets);
+router.post("/reset/affiliates", auth, admin, resetAllAffiliates);
+router.post("/reset/all", auth, admin, resetPlatform);
 
 module.exports = router;

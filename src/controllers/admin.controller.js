@@ -520,3 +520,229 @@ exports.getAllUsers = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+/**
+ * ADMIN RESET: Reset all users' wallet balances to 0
+ * POST /api/admin/reset/wallets
+ * Body: { confirmReset: true }
+ */
+exports.resetAllWallets = async (req, res) => {
+  try {
+    const { confirmReset } = req.body;
+
+    if (confirmReset !== true) {
+      return res.status(400).json({
+        ok: false,
+        message: "Please confirm reset by sending { confirmReset: true }",
+      });
+    }
+
+    const User = require("../models/User");
+    const WalletTransaction = require("../models/WalletTransaction");
+
+    // Get count before reset
+    const usersWithBalance = await User.countDocuments({
+      walletBalance: { $gt: 0 },
+    });
+    const totalBalance = await User.aggregate([
+      { $group: { _id: null, total: { $sum: "$walletBalance" } } },
+    ]);
+
+    // Reset all wallet balances to 0
+    const walletResult = await User.updateMany(
+      {},
+      { $set: { walletBalance: 0 } },
+    );
+
+    // Optional: Clear wallet transactions (comment out if you want to keep history)
+    const txResult = await WalletTransaction.deleteMany({});
+
+    res.json({
+      ok: true,
+      message: "All wallet balances reset to 0",
+      details: {
+        usersAffected: walletResult.modifiedCount,
+        usersWithPreviousBalance: usersWithBalance,
+        totalBalanceCleared: totalBalance[0]?.total || 0,
+        transactionsDeleted: txResult.deletedCount,
+      },
+    });
+  } catch (err) {
+    console.error("[admin] resetAllWallets error:", err);
+    res
+      .status(500)
+      .json({ ok: false, message: "Server error", error: err.message });
+  }
+};
+
+/**
+ * ADMIN RESET: Reset all affiliate/referral data
+ * POST /api/admin/reset/affiliates
+ * Body: { confirmReset: true }
+ */
+exports.resetAllAffiliates = async (req, res) => {
+  try {
+    const { confirmReset } = req.body;
+
+    if (confirmReset !== true) {
+      return res.status(400).json({
+        ok: false,
+        message: "Please confirm reset by sending { confirmReset: true }",
+      });
+    }
+
+    const User = require("../models/User");
+    const AffiliateTransaction = require("../models/AffiliateTransaction");
+    const AffiliateWithdrawal = require("../models/AffiliateWithdrawal");
+
+    // Get stats before reset
+    const usersWithAffBalance = await User.countDocuments({
+      affiliateBalance: { $gt: 0 },
+    });
+    const totalAffBalance = await User.aggregate([
+      { $group: { _id: null, total: { $sum: "$affiliateBalance" } } },
+    ]);
+    const totalEarned = await User.aggregate([
+      { $group: { _id: null, total: { $sum: "$totalAffiliateEarned" } } },
+    ]);
+
+    // Reset all affiliate balances and earnings
+    const userResult = await User.updateMany(
+      {},
+      {
+        $set: {
+          affiliateBalance: 0,
+          totalAffiliateEarned: 0,
+          // Keep referredBy and referralCode - just reset balances
+        },
+      },
+    );
+
+    // Clear affiliate transactions
+    const txResult = await AffiliateTransaction.deleteMany({});
+
+    // Clear affiliate withdrawals
+    const withdrawalResult = await AffiliateWithdrawal.deleteMany({});
+
+    // Optional: Clear AffiliateCommission records too
+    let commissionResult = { deletedCount: 0 };
+    try {
+      const AffiliateCommission = require("../models/AffiliateCommission");
+      commissionResult = await AffiliateCommission.deleteMany({});
+    } catch (e) {
+      // Model might not exist
+    }
+
+    res.json({
+      ok: true,
+      message: "All affiliate balances and transactions reset",
+      details: {
+        usersAffected: userResult.modifiedCount,
+        usersWithPreviousBalance: usersWithAffBalance,
+        totalAffiliateBalanceCleared: totalAffBalance[0]?.total || 0,
+        totalEarningsCleared: totalEarned[0]?.total || 0,
+        transactionsDeleted: txResult.deletedCount,
+        withdrawalsDeleted: withdrawalResult.deletedCount,
+        commissionsDeleted: commissionResult.deletedCount,
+      },
+    });
+  } catch (err) {
+    console.error("[admin] resetAllAffiliates error:", err);
+    res
+      .status(500)
+      .json({ ok: false, message: "Server error", error: err.message });
+  }
+};
+
+/**
+ * ADMIN RESET: Full platform reset (wallets + affiliates + test orders)
+ * POST /api/admin/reset/all
+ * Body: { confirmReset: true, deleteTestOrders: true }
+ */
+exports.resetPlatform = async (req, res) => {
+  try {
+    const { confirmReset, deleteTestOrders } = req.body;
+
+    if (confirmReset !== true) {
+      return res.status(400).json({
+        ok: false,
+        message: "Please confirm reset by sending { confirmReset: true }",
+      });
+    }
+
+    const User = require("../models/User");
+    const WalletTransaction = require("../models/WalletTransaction");
+    const AffiliateTransaction = require("../models/AffiliateTransaction");
+    const AffiliateWithdrawal = require("../models/AffiliateWithdrawal");
+
+    const results = {
+      wallets: {},
+      affiliates: {},
+      orders: {},
+    };
+
+    // 1. Reset wallets
+    const walletUserResult = await User.updateMany(
+      {},
+      { $set: { walletBalance: 0 } },
+    );
+    const walletTxResult = await WalletTransaction.deleteMany({});
+    results.wallets = {
+      usersReset: walletUserResult.modifiedCount,
+      transactionsDeleted: walletTxResult.deletedCount,
+    };
+
+    // 2. Reset affiliates
+    const affUserResult = await User.updateMany(
+      {},
+      { $set: { affiliateBalance: 0, totalAffiliateEarned: 0 } },
+    );
+    const affTxResult = await AffiliateTransaction.deleteMany({});
+    const affWithdrawResult = await AffiliateWithdrawal.deleteMany({});
+    results.affiliates = {
+      usersReset: affUserResult.modifiedCount,
+      transactionsDeleted: affTxResult.deletedCount,
+      withdrawalsDeleted: affWithdrawResult.deletedCount,
+    };
+
+    // 3. Optionally delete test orders (orders from @test.com emails)
+    if (deleteTestOrders === true) {
+      // Find test users
+      const testUsers = await User.find({ email: /@test\.com$/i }).select(
+        "_id",
+      );
+      const testUserIds = testUsers.map((u) => u._id);
+
+      if (testUserIds.length > 0) {
+        const OrderMessage = require("../models/OrderMessage");
+
+        // Delete orders from test users
+        const orderResult = await Order.deleteMany({
+          userId: { $in: testUserIds },
+        });
+
+        // Delete messages from those orders
+        const msgResult = await OrderMessage.deleteMany({
+          userId: { $in: testUserIds },
+        });
+
+        results.orders = {
+          testUsersFound: testUserIds.length,
+          ordersDeleted: orderResult.deletedCount,
+          messagesDeleted: msgResult.deletedCount,
+        };
+      }
+    }
+
+    res.json({
+      ok: true,
+      message: "Platform reset complete",
+      results,
+    });
+  } catch (err) {
+    console.error("[admin] resetPlatform error:", err);
+    res
+      .status(500)
+      .json({ ok: false, message: "Server error", error: err.message });
+  }
+};
