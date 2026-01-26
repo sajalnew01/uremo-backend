@@ -485,7 +485,7 @@ exports.addOrderNote = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
   try {
     const User = require("../models/User");
-    
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 50;
     const skip = (page - 1) * limit;
@@ -519,5 +519,4 @@ exports.getAllUsers = async (req, res) => {
     console.error("[admin] getAllUsers error:", err);
     res.status(500).json({ message: "Server error" });
   }
-};
 };
