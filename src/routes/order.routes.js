@@ -15,6 +15,7 @@ const {
 const router = express.Router();
 
 router.post("/", auth, createOrder);
+router.get("/", auth, myOrders); // Alias for /my
 router.get("/my", auth, myOrders);
 router.get("/:id/messages", auth, getOrderMessages);
 router.post("/:id/messages", auth, postOrderMessage);

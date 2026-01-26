@@ -1,0 +1,94 @@
+═══════════════════════════════════════════════════════════════
+UREMO FULL PLATFORM TEST SUITE - PATCH_25
+Date: 2026-01-26T18:13:19.905Z
+Backend: https://uremo-backend.onrender.com/api
+═══════════════════════════════════════════════════════════════
+
+
+─── SECTION 1: AUTHENTICATION ───
+
+✅ PASS: Health Check
+✅ PASS: Admin Login
+   Admin referral code: SAJE23A19
+⚠️  WARN: User Signup with Referral - referredBy not in response - PATCH_25 not deployed yet
+✅ PASS: User Login
+✅ PASS: Get User Profile (/auth/me)
+
+─── SECTION 2: SERVICES ───
+
+✅ PASS: Browse Services (18 found)
+✅ PASS: Get Single Service
+
+─── SECTION 3: WALLET ───
+
+✅ PASS: Get Wallet Balance
+✅ PASS: Get Wallet Transactions
+
+─── SECTION 4: AFFILIATE ───
+
+✅ PASS: Get Affiliate Stats
+✅ PASS: Get Affiliate Transactions
+
+─── SECTION 5: ORDERS ───
+
+❌ FAIL: Get User Orders - Route not found
+
+─── SECTION 6: RENTALS ───
+
+✅ PASS: Get User Rentals
+
+─── SECTION 7: TICKETS ───
+
+✅ PASS: Get User Tickets
+
+─── SECTION 8: BLOGS ───
+
+✅ PASS: Get Public Blogs
+
+─── SECTION 9: ADMIN SERVICES ───
+
+✅ PASS: Admin Get All Services
+✅ PASS: Admin Create Service
+✅ PASS: Admin Update Service
+✅ PASS: Admin Delete Service
+
+─── SECTION 10: ADMIN BLOGS ───
+
+✅ PASS: Admin Create Blog
+✅ PASS: Admin Get All Blogs
+✅ PASS: Admin Delete Blog
+
+─── SECTION 11: ADMIN ORDERS ───
+
+✅ PASS: Admin Get All Orders
+
+─── SECTION 12: ADMIN WALLET ───
+
+✅ PASS: Admin Get Wallet Users
+
+─── SECTION 13: ADMIN AFFILIATES ───
+
+✅ PASS: Admin Get All Affiliates
+
+─── SECTION 14: ADMIN RENTALS ───
+
+✅ PASS: Admin Get All Rentals
+
+─── SECTION 15: ADMIN TICKETS ───
+
+✅ PASS: Admin Get All Tickets
+
+─── SECTION 16: SECURITY ───
+
+✅ PASS: Admin Route Security (No Token = 401)
+✅ PASS: Admin Route Security (User = 403)
+
+═══════════════════════════════════════════════════════════════
+FINAL RESULTS
+═══════════════════════════════════════════════════════════════
+✅ PASSED:   27
+❌ FAILED:   1
+⚠️  WARNINGS: 1
+📊 TOTAL:    29
+📈 SUCCESS:  96.4%
+═══════════════════════════════════════════════════════════════

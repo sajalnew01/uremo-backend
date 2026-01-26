@@ -80,7 +80,13 @@ exports.signup = async (req, res, next) => {
 
     res.status(201).json({
       token,
-      user: { id: user._id, email: user.email, role: user.role },
+      user: {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+        referralCode: user.referralCode,
+        referredBy: user.referredBy || null,
+      },
     });
   } catch (error) {
     next(error);

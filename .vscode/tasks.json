@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "test-referral-live",
+			"type": "shell",
+			"command": "node scripts/test-referral-live.js",
+			"group": "test"
+		},
+		{
+			"label": "test-referral-live",
+			"type": "shell",
+			"command": "node scripts/test-referral-live.js",
+			"group": "test"
+		}
+	]
+}
