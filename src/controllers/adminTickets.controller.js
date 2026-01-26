@@ -1,9 +1,6 @@
 const Ticket = require("../models/Ticket");
 const TicketMessage = require("../models/TicketMessage");
 
-// Helper: Get user ID from normalized req.user (auth middleware uses .id)
-const getUserId = (req) => req.user?.id || req.user?._id || req.user?.userId;
-
 // Get all tickets with filters
 exports.getAllTickets = async (req, res) => {
   try {
@@ -129,7 +126,6 @@ exports.getTicketMessages = async (req, res) => {
 exports.replyTicketAdmin = async (req, res) => {
   try {
     const { message, attachment } = req.body;
-    const adminId = getUserId(req);
 
     if (!message) {
       return res.status(400).json({ message: "Message is required" });
@@ -143,7 +139,7 @@ exports.replyTicketAdmin = async (req, res) => {
     const msg = await TicketMessage.create({
       ticket: req.params.id,
       senderType: "admin",
-      sender: adminId,
+      sender: req.user._id,
       message,
       attachment: attachment || null,
     });

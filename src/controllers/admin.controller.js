@@ -767,28 +767,3 @@ exports.resetAllTestData = async (req, res) => {
     res.status(500).json({ ok: false, message: "Failed to reset test data" });
   }
 };
-
-// Get single order by ID (admin)
-exports.getOrderById = async (req, res) => {
-  try {
-    const order = await Order.findById(req.params.id)
-      .populate("userId", "name email phone role walletBalance")
-      .populate("serviceId", "title price description category subcategory")
-      .populate("payment.methodId", "name type details instructions")
-      .lean();
-
-    if (!order) {
-      return res.status(404).json({ ok: false, message: "Order not found" });
-    }
-
-    // Get order messages
-    const messages = await OrderMessage.find({ order: req.params.id })
-      .sort({ createdAt: 1 })
-      .lean();
-
-    res.json({ ok: true, order, messages });
-  } catch (err) {
-    console.error("[admin] getOrderById error:", err);
-    res.status(500).json({ ok: false, message: "Failed to get order" });
-  }
-};

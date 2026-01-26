@@ -3,7 +3,6 @@ const auth = require("../middlewares/auth.middleware");
 const admin = require("../middlewares/admin.middleware");
 const {
   getAllOrders,
-  getOrderById,
   getRejectedArchivedOrders,
   updateOrderStatus,
   verifyPayment,
@@ -49,7 +48,6 @@ const router = express.Router();
 
 router.get("/orders", auth, admin, getAllOrders);
 router.get("/orders/rejected", auth, admin, getRejectedArchivedOrders);
-router.get("/orders/:id", auth, admin, getOrderById);
 router.get("/messages", auth, admin, getAdminInbox);
 router.get("/messages/unread", auth, admin, getAdminUnreadSnapshot);
 router.put("/orders/:id", auth, admin, updateOrderStatus);
