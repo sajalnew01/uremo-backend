@@ -6,7 +6,10 @@ const {
   uploadPaymentProof,
   uploadProofs,
   uploadPayment,
+  uploadChatAttachment,
+  uploadChatAttachments,
 } = require("../controllers/upload.controller");
+const { CHAT_ALLOWED_TYPES } = require("../middlewares/upload.middleware");
 
 const router = express.Router();
 
@@ -27,18 +30,51 @@ const memoryUpload = multer({
   },
 });
 
+// Chat attachment upload (supports images, PDF, ZIP, TXT - max 10MB)
+const chatMemoryUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!CHAT_ALLOWED_TYPES.includes(file.mimetype)) {
+      return cb(
+        new Error(
+          "Only images, PDF, ZIP, and text files are allowed (max 10MB)",
+        ),
+        false,
+      );
+    }
+    cb(null, true);
+  },
+});
+
+// Chat attachment routes - single file
+router.post(
+  "/chat",
+  auth,
+  chatMemoryUpload.single("file"),
+  uploadChatAttachment,
+);
+
+// Chat attachment routes - multiple files (max 5)
+router.post(
+  "/chat/multiple",
+  auth,
+  chatMemoryUpload.array("files", 5),
+  uploadChatAttachments,
+);
+
 router.post(
   "/payment-proof",
   auth,
   memoryUpload.single("file"),
-  uploadPaymentProof
+  uploadPaymentProof,
 );
 
 router.post(
   "/payment-proof/:orderId",
   auth,
   memoryUpload.single("file"),
-  uploadPayment
+  uploadPayment,
 );
 
 router.post(
@@ -48,7 +84,7 @@ router.post(
     { name: "paymentProof", maxCount: 1 },
     { name: "senderKyc", maxCount: 1 },
   ]),
-  uploadProofs
+  uploadProofs,
 );
 
 module.exports = router;

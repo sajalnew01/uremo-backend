@@ -4,6 +4,7 @@ const {
   inferResourceType,
   normalizeCloudinaryUrl,
 } = require("../utils/cloudinaryUrl");
+const { getFileCategory } = require("../middlewares/upload.middleware");
 
 function serializeUpload(uploadResult) {
   if (!uploadResult) return null;
@@ -15,6 +16,104 @@ function serializeUpload(uploadResult) {
   };
 }
 
+/**
+ * Upload a single file for chat attachments (tickets or order messages)
+ * POST /api/uploads/chat
+ * Returns: { url, filename, fileType, publicId, size }
+ */
+exports.uploadChatAttachment = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "File required" });
+    }
+
+    const file = req.file;
+    const fileCategory = getFileCategory(file.mimetype);
+    const resourceType = inferResourceType({ mimeType: file.mimetype });
+
+    // Use stream upload for buffer
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: "uremo/chat-attachments",
+        resource_type: resourceType,
+        // For raw files (zip, txt), we still upload as raw
+        ...(fileCategory === "archive" || fileCategory === "text"
+          ? { resource_type: "raw" }
+          : {}),
+      },
+      (error, uploadResult) => {
+        if (error) {
+          console.error("Chat attachment upload error:", error);
+          return res.status(500).json({ message: "Upload failed" });
+        }
+
+        res.json({
+          url: uploadResult.secure_url,
+          filename: file.originalname,
+          fileType: fileCategory,
+          publicId: uploadResult.public_id,
+          size: file.size,
+        });
+      },
+    );
+
+    uploadStream.end(file.buffer);
+  } catch (err) {
+    console.error("uploadChatAttachment error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+/**
+ * Upload multiple files for chat attachments (tickets or order messages)
+ * POST /api/uploads/chat/multiple
+ * Returns: { attachments: [{ url, filename, fileType, publicId, size }] }
+ */
+exports.uploadChatAttachments = async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: "At least one file required" });
+    }
+
+    const uploadPromises = req.files.map((file) => {
+      return new Promise((resolve, reject) => {
+        const fileCategory = getFileCategory(file.mimetype);
+        const resourceType =
+          fileCategory === "archive" || fileCategory === "text"
+            ? "raw"
+            : inferResourceType({ mimeType: file.mimetype });
+
+        const uploadStream = cloudinary.uploader.upload_stream(
+          {
+            folder: "uremo/chat-attachments",
+            resource_type: resourceType,
+          },
+          (error, uploadResult) => {
+            if (error) {
+              return reject(error);
+            }
+            resolve({
+              url: uploadResult.secure_url,
+              filename: file.originalname,
+              fileType: fileCategory,
+              publicId: uploadResult.public_id,
+              size: file.size,
+            });
+          },
+        );
+
+        uploadStream.end(file.buffer);
+      });
+    });
+
+    const attachments = await Promise.all(uploadPromises);
+    res.json({ attachments });
+  } catch (err) {
+    console.error("uploadChatAttachments error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 exports.uploadImages = async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
@@ -25,8 +124,8 @@ exports.uploadImages = async (req, res) => {
       req.files.map((file) =>
         cloudinary.uploader.upload(file.path, {
           folder: "uremo/services",
-        })
-      )
+        }),
+      ),
     );
 
     const files = uploads.map(serializeUpload).filter(Boolean);
@@ -58,7 +157,7 @@ exports.uploadPaymentProof = async (req, res) => {
 
         const payload = serializeUpload(uploadResult);
         res.json(payload);
-      }
+      },
     );
 
     uploadStream.end(req.file.buffer);
@@ -92,7 +191,7 @@ exports.uploadPayment = async (req, res) => {
 
         const payload = serializeUpload(uploadResult);
         res.json(payload);
-      }
+      },
     );
 
     uploadStream.end(req.file.buffer);
@@ -126,7 +225,7 @@ exports.uploadProofs = async (req, res) => {
     // NOTE: this legacy endpoint previously stored non-schema fields.
     // Keep behavior for status/contact, but always store viewable URLs.
     const paymentProofUrl = normalizeCloudinaryUrl(
-      req.files.paymentProof[0].path
+      req.files.paymentProof[0].path,
     );
     const senderKycUrl = normalizeCloudinaryUrl(req.files.senderKyc[0].path);
 

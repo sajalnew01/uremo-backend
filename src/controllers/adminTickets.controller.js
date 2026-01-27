@@ -125,7 +125,7 @@ exports.getTicketMessages = async (req, res) => {
 // Reply to ticket (admin)
 exports.replyTicketAdmin = async (req, res) => {
   try {
-    const { message, attachment } = req.body;
+    const { message, attachment, attachments } = req.body;
 
     if (!message) {
       return res.status(400).json({ message: "Message is required" });
@@ -136,11 +136,24 @@ exports.replyTicketAdmin = async (req, res) => {
       return res.status(404).json({ message: "Ticket not found" });
     }
 
+    // Validate attachments array if provided
+    const validAttachments = Array.isArray(attachments)
+      ? attachments.filter(
+          (att) =>
+            att &&
+            typeof att.url === "string" &&
+            typeof att.filename === "string" &&
+            typeof att.fileType === "string",
+        )
+      : [];
+
     const msg = await TicketMessage.create({
       ticket: req.params.id,
       senderType: "admin",
       sender: req.user._id,
       message,
+      attachments: validAttachments,
+      // Legacy field support
       attachment: attachment || null,
     });
 

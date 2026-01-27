@@ -4,7 +4,8 @@ const TicketMessage = require("../models/TicketMessage");
 // Create a new ticket
 exports.createTicket = async (req, res) => {
   try {
-    const { subject, category, priority, orderId, message } = req.body;
+    const { subject, category, priority, orderId, message, attachments } =
+      req.body;
 
     if (!subject || !message) {
       return res
@@ -23,11 +24,23 @@ exports.createTicket = async (req, res) => {
       hasUnreadUser: false,
     });
 
+    // Validate attachments array if provided
+    const validAttachments = Array.isArray(attachments)
+      ? attachments.filter(
+          (att) =>
+            att &&
+            typeof att.url === "string" &&
+            typeof att.filename === "string" &&
+            typeof att.fileType === "string",
+        )
+      : [];
+
     await TicketMessage.create({
       ticket: ticket._id,
       senderType: "user",
       sender: req.user._id,
       message,
+      attachments: validAttachments,
     });
 
     res.status(201).json({ ok: true, ticket });
@@ -126,7 +139,7 @@ exports.getTicketMessages = async (req, res) => {
 // Reply to ticket (user)
 exports.replyTicket = async (req, res) => {
   try {
-    const { message, attachment } = req.body;
+    const { message, attachment, attachments } = req.body;
 
     if (!message) {
       return res.status(400).json({ message: "Message is required" });
@@ -148,11 +161,24 @@ exports.replyTicket = async (req, res) => {
         .json({ message: "Cannot reply to a closed ticket" });
     }
 
+    // Validate attachments array if provided
+    const validAttachments = Array.isArray(attachments)
+      ? attachments.filter(
+          (att) =>
+            att &&
+            typeof att.url === "string" &&
+            typeof att.filename === "string" &&
+            typeof att.fileType === "string",
+        )
+      : [];
+
     const msg = await TicketMessage.create({
       ticket: req.params.id,
       senderType: "user",
       sender: req.user._id,
       message,
+      attachments: validAttachments,
+      // Legacy field support
       attachment: attachment || null,
     });
 

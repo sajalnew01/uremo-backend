@@ -1,5 +1,33 @@
 const mongoose = require("mongoose");
 
+// Attachment sub-schema for order chat messages
+const attachmentSchema = new mongoose.Schema(
+  {
+    url: {
+      type: String,
+      required: true,
+    },
+    filename: {
+      type: String,
+      required: true,
+    },
+    fileType: {
+      type: String,
+      enum: ["image", "pdf", "archive", "text", "unknown"],
+      required: true,
+    },
+    publicId: {
+      type: String,
+      default: null,
+    },
+    size: {
+      type: Number,
+      default: null,
+    },
+  },
+  { _id: false },
+);
+
 const orderMessageSchema = new mongoose.Schema(
   {
     orderId: {
@@ -31,6 +59,11 @@ const orderMessageSchema = new mongoose.Schema(
       trim: true,
       maxlength: 2000,
     },
+    // Attachments array for files
+    attachments: {
+      type: [attachmentSchema],
+      default: [],
+    },
     // Message delivery status
     status: {
       type: String,
@@ -50,7 +83,7 @@ const orderMessageSchema = new mongoose.Schema(
       default: Date.now,
     },
   },
-  { timestamps: false }
+  { timestamps: false },
 );
 
 orderMessageSchema.index({ orderId: 1, createdAt: 1 });

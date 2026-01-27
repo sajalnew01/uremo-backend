@@ -117,7 +117,7 @@ exports.streamOrderMessages = async (req, res) => {
     });
   } catch (err) {
     console.error(
-      `[CHAT_STREAM_FAIL] orderId=${orderId} userId=${userId} role=${role} errMessage=${err?.message}`
+      `[CHAT_STREAM_FAIL] orderId=${orderId} userId=${userId} role=${role} errMessage=${err?.message}`,
     );
     // If headers not sent, return safe JSON.
     if (!res.headersSent) {
@@ -144,20 +144,21 @@ exports.getOrderMessages = async (req, res) => {
 
     const list = Array.isArray(messages) ? messages : [];
 
-    // Keep legacy shape (_id) + provide stable id
+    // Keep legacy shape (_id) + provide stable id + include attachments
     const normalized = list.map((m) => ({
       _id: m._id,
       id: m._id,
       orderId: m.orderId,
       senderRole: m.senderRole,
       message: m.message,
+      attachments: m.attachments || [],
       createdAt: m.createdAt,
     }));
 
     res.json(normalized);
   } catch (err) {
     console.error(
-      `[CHAT_GET_FAIL] orderId=${orderId} userId=${userId} role=${role} errMessage=${err?.message}`
+      `[CHAT_GET_FAIL] orderId=${orderId} userId=${userId} role=${role} errMessage=${err?.message}`,
     );
     // Requirement: never crash chat GET. Return [] rather than 500.
     return res.json([]);
@@ -194,18 +195,30 @@ exports.postOrderMessage = async (req, res) => {
       return res.status(401).json({ message: "Invalid token" });
     }
 
+    // Validate attachments array if provided
+    const attachments = Array.isArray(req.body?.attachments)
+      ? req.body.attachments.filter(
+          (att) =>
+            att &&
+            typeof att.url === "string" &&
+            typeof att.filename === "string" &&
+            typeof att.fileType === "string",
+        )
+      : [];
+
     const created = await OrderMessage.create({
       orderId: order._id,
       senderId: rawSenderId,
       userId: rawSenderId,
       senderRole,
       message,
+      attachments,
       status: "sent",
       createdAt: new Date(),
     });
 
     console.log(
-      `[CHAT_SEND_OK] orderId=${orderId} userId=${userId} role=${senderRole}`
+      `[CHAT_SEND_OK] orderId=${orderId} userId=${userId} role=${senderRole}`,
     );
 
     const payload = {
@@ -215,6 +228,7 @@ exports.postOrderMessage = async (req, res) => {
       senderId: created.senderId,
       senderRole: created.senderRole,
       message: created.message,
+      attachments: created.attachments || [],
       status: created.status || "sent",
       createdAt: created.createdAt,
       deliveredAt: created.deliveredAt || null,
@@ -246,7 +260,7 @@ exports.postOrderMessage = async (req, res) => {
     const errName = err?.name;
     const errCode = err?.code;
     console.error(
-      `[CHAT_SEND_FAIL] orderId=${orderId} userId=${userId} role=${role} errName=${errName} errCode=${errCode} errMessage=${err?.message}`
+      `[CHAT_SEND_FAIL] orderId=${orderId} userId=${userId} role=${role} errName=${errName} errCode=${errCode} errMessage=${err?.message}`,
     );
 
     if (errName === "ValidationError") {
