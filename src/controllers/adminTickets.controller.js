@@ -162,10 +162,11 @@ exports.replyTicketAdmin = async (req, res) => {
         )
       : [];
 
+    const adminId = req.user?.id || req.user?._id;
     const msg = await TicketMessage.create({
       ticket: req.params.id,
       senderType: "admin",
-      sender: req.user._id,
+      sender: adminId,
       message,
       attachments: validAttachments,
       // Legacy field support

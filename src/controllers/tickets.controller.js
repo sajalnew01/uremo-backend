@@ -6,11 +6,19 @@ const { sendNotification } = require("../services/notification.service");
 // PATCH_31: FlowEngine for orchestrated state transitions
 const FlowEngine = require("../core/flowEngine");
 
+// Helper to get user ID consistently (handles both id and _id from auth middleware)
+const getUserId = (req) => req.user?.id || req.user?._id;
+
 // Create a new ticket
 exports.createTicket = async (req, res) => {
   try {
     const { subject, category, priority, orderId, message, attachments } =
       req.body;
+
+    const userId = getUserId(req);
+    if (!userId) {
+      return res.status(401).json({ message: "User not authenticated" });
+    }
 
     if (!subject || !message) {
       return res
@@ -28,7 +36,7 @@ exports.createTicket = async (req, res) => {
       }
 
       // Check if order belongs to this user
-      if (order.userId.toString() !== req.user._id.toString()) {
+      if (order.userId.toString() !== userId.toString()) {
         return res.status(403).json({
           message: "You can only create tickets for your own orders",
         });
@@ -52,7 +60,7 @@ exports.createTicket = async (req, res) => {
     }
 
     const ticket = await Ticket.create({
-      user: req.user._id,
+      user: userId,
       subject,
       category: category || "other",
       priority: priority || "medium",
@@ -76,7 +84,7 @@ exports.createTicket = async (req, res) => {
     await TicketMessage.create({
       ticket: ticket._id,
       senderType: "user",
-      sender: req.user._id,
+      sender: userId,
       message,
       attachments: validAttachments,
     });
@@ -84,7 +92,7 @@ exports.createTicket = async (req, res) => {
     // PATCH_29: Send notification to user confirming ticket creation
     try {
       await sendNotification({
-        userId: req.user._id,
+        userId: userId,
         title: "Support Ticket Created",
         message: `Your support ticket "${subject}" has been submitted. Our team will respond shortly.`,
         type: "ticket",
@@ -105,9 +113,10 @@ exports.createTicket = async (req, res) => {
 // Get user's tickets
 exports.getUserTickets = async (req, res) => {
   try {
+    const userId = getUserId(req);
     const { status, page = 1, limit = 20 } = req.query;
 
-    const filter = { user: req.user._id };
+    const filter = { user: userId };
     if (status && status !== "all") {
       filter.status = status;
     }
@@ -140,9 +149,10 @@ exports.getUserTickets = async (req, res) => {
 // Get single ticket details
 exports.getTicketById = async (req, res) => {
   try {
+    const userId = getUserId(req);
     const ticket = await Ticket.findOne({
       _id: req.params.id,
-      user: req.user._id,
+      user: userId,
     })
       .populate("order", "orderNumber status totalAmount")
       .lean();
@@ -164,10 +174,11 @@ exports.getTicketById = async (req, res) => {
 // Get ticket messages
 exports.getTicketMessages = async (req, res) => {
   try {
+    const userId = getUserId(req);
     // Verify user owns this ticket
     const ticket = await Ticket.findOne({
       _id: req.params.id,
-      user: req.user._id,
+      user: userId,
     });
 
     if (!ticket) {
@@ -191,6 +202,7 @@ exports.getTicketMessages = async (req, res) => {
 // Reply to ticket (user)
 exports.replyTicket = async (req, res) => {
   try {
+    const userId = getUserId(req);
     const { message, attachment, attachments } = req.body;
 
     if (!message) {
@@ -200,7 +212,7 @@ exports.replyTicket = async (req, res) => {
     // Verify user owns this ticket
     const ticket = await Ticket.findOne({
       _id: req.params.id,
-      user: req.user._id,
+      user: userId,
     });
 
     if (!ticket) {
@@ -227,7 +239,7 @@ exports.replyTicket = async (req, res) => {
     const msg = await TicketMessage.create({
       ticket: req.params.id,
       senderType: "user",
-      sender: req.user._id,
+      sender: userId,
       message,
       attachments: validAttachments,
       // Legacy field support
@@ -252,8 +264,9 @@ exports.replyTicket = async (req, res) => {
 // Get unread count for user
 exports.getUnreadCount = async (req, res) => {
   try {
+    const userId = getUserId(req);
     const count = await Ticket.countDocuments({
-      user: req.user._id,
+      user: userId,
       hasUnreadUser: true,
     });
 
@@ -267,8 +280,9 @@ exports.getUnreadCount = async (req, res) => {
 // Get user's orders for ticket linking dropdown
 exports.getUserOrdersForTicket = async (req, res) => {
   try {
+    const userId = getUserId(req);
     const Order = require("../models/Order");
-    const orders = await Order.find({ user: req.user._id })
+    const orders = await Order.find({ userId: userId })
       .select("orderNumber status")
       .sort({ createdAt: -1 })
       .limit(50)
