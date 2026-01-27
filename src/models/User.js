@@ -44,6 +44,17 @@ const userSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+
+    // PATCH_34: Onboarding wizard fields
+    onboardingCompleted: {
+      type: Boolean,
+      default: false,
+    },
+    interestCategory: {
+      type: String,
+      enum: ["microjobs", "forex_crypto", "banks_wallets", "general"],
+      default: "general",
+    },
   },
   { timestamps: true },
 );

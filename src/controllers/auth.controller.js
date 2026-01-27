@@ -284,10 +284,63 @@ exports.getProfile = async (req, res) => {
         affiliateBalance: user.affiliateBalance || 0,
         totalAffiliateEarned: user.totalAffiliateEarned || 0,
         walletBalance: user.walletBalance || 0,
+        // PATCH_34: Onboarding fields
+        onboardingCompleted: user.onboardingCompleted || false,
+        interestCategory: user.interestCategory || "general",
         createdAt: user.createdAt,
       },
     });
   } catch (error) {
     res.status(500).json({ message: error.message || "Server error" });
+  }
+};
+
+/**
+ * PATCH_34: Update user onboarding status
+ * PUT /api/auth/onboarding
+ */
+exports.updateOnboarding = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res
+        .status(401)
+        .json({ ok: false, message: "Authentication required" });
+    }
+
+    const { interestCategory } = req.body;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ ok: false, message: "User not found" });
+    }
+
+    // Validate category
+    const validCategories = [
+      "microjobs",
+      "forex_crypto",
+      "banks_wallets",
+      "general",
+    ];
+    user.interestCategory = validCategories.includes(interestCategory)
+      ? interestCategory
+      : "general";
+    user.onboardingCompleted = true;
+
+    await user.save();
+
+    res.json({
+      ok: true,
+      message: "Onboarding completed",
+      user: {
+        onboardingCompleted: user.onboardingCompleted,
+        interestCategory: user.interestCategory,
+      },
+    });
+  } catch (error) {
+    console.error("[Auth] updateOnboarding error:", error);
+    res
+      .status(500)
+      .json({ ok: false, message: error.message || "Server error" });
   }
 };
