@@ -213,7 +213,7 @@ exports.createService = async (req, res) => {
   }
 };
 
-// PATCH_18: Filter-safe guided filtering that never loses track
+// PATCH_18/32: Filter-safe guided filtering that never loses track
 exports.getActiveServices = async (req, res) => {
   try {
     setNoCache(res);
@@ -234,11 +234,9 @@ exports.getActiveServices = async (req, res) => {
       sort = "createdAt",
     } = req.query;
 
-    // PATCH_20: Build base filter using $and for proper combination
-    // Active services filter (status=active OR legacy active=true)
-    const statusFilter = {
-      $or: [{ status: "active" }, { active: true, status: { $exists: false } }],
-    };
+    // PATCH_32: Simplified status filter - only use status: "active"
+    // This ensures users can see services that admin has activated
+    const statusFilter = { status: "active" };
 
     // We'll build conditions and combine them with $and at the end
     const conditions = [statusFilter];

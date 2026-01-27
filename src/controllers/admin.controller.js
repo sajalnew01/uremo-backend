@@ -28,11 +28,14 @@ exports.getAllOrders = async (req, res) => {
     const query = { isRejectedArchive: { $ne: true } };
 
     // Optional status filter from UI tabs.
-    // UI values: pending | submitted | processing | all
+    // PATCH_32: Added completed and rejected filters
+    // UI values: pending | submitted | processing | completed | rejected | all
     const statusMap = {
       pending: "payment_pending",
       submitted: ["payment_submitted", "pending_review"],
       processing: "processing",
+      completed: "completed",
+      rejected: "rejected",
     };
 
     if (statusQuery && statusQuery !== "all") {

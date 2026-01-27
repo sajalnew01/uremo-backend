@@ -416,17 +416,18 @@ exports.adminSearchUsers = async (req, res) => {
       });
     }
 
-    // Balance tier filter
+    // PATCH_32: Balance tier filter with updated thresholds
+    // High: >= $500, Medium: $100-499, Low: < $100
     if (tier) {
       switch (tier) {
         case "high":
-          conditions.push({ walletBalance: { $gte: 100 } });
+          conditions.push({ walletBalance: { $gte: 500 } });
           break;
         case "medium":
-          conditions.push({ walletBalance: { $gte: 20, $lt: 100 } });
+          conditions.push({ walletBalance: { $gte: 100, $lt: 500 } });
           break;
         case "low":
-          conditions.push({ walletBalance: { $lt: 20 } });
+          conditions.push({ walletBalance: { $lt: 100 } });
           break;
       }
     }
