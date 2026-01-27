@@ -120,6 +120,42 @@ const rentalSchema = new mongoose.Schema(
         note: String,
       },
     ],
+
+    // PATCH_31: FlowEngine timeline tracking
+    timeline: [
+      {
+        event: String,
+        from: String,
+        at: {
+          type: Date,
+          default: Date.now,
+        },
+        actor: {
+          type: String,
+          enum: ["system", "admin", "user"],
+          default: "system",
+        },
+        reason: String,
+        meta: {
+          type: Object,
+          default: {},
+        },
+      },
+    ],
+
+    // PATCH_31: Additional timestamps for FlowEngine
+    activatedAt: {
+      type: Date,
+      default: null,
+    },
+    expiredAt: {
+      type: Date,
+      default: null,
+    },
+    cancelledAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true },
 );

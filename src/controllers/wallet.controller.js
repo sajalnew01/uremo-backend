@@ -4,7 +4,11 @@
  */
 const User = require("../models/User");
 const WalletTransaction = require("../models/WalletTransaction");
+const Order = require("../models/Order");
 const { sendNotification } = require("../services/notification.service");
+
+// PATCH_31: FlowEngine for orchestrated state transitions
+const FlowEngine = require("../core/flowEngine");
 
 /**
  * Get current wallet balance
@@ -201,32 +205,50 @@ exports.payWithWallet = async (req, res) => {
       balanceAfter: updateResult.walletBalance,
     });
 
-    // Mark order as paid
-    order.paymentStatus = "paid";
-    order.paymentMethod = "wallet";
-    order.status = "processing";
-    order.paidAt = new Date();
-    await order.save();
-
-    // Process affiliate commission if applicable (using new service)
+    // PATCH_31: Use FlowEngine for status transition
+    // FlowEngine handles: status update, timeline, affiliate commission (via hooks)
     try {
-      const {
-        processAffiliateCommission,
-      } = require("../services/affiliateCommission.service");
-      await processAffiliateCommission(order._id, "wallet");
-    } catch (affErr) {
-      console.error("Affiliate commission processing error:", affErr);
+      await FlowEngine.transition("order", order._id, "processing", {
+        actor: "system",
+        reason: "Payment completed via wallet",
+        paymentMethod: "wallet",
+        data: { walletBalance: updateResult.walletBalance },
+      });
+    } catch (flowErr) {
+      // If FlowEngine fails, fall back to direct update for critical payment flow
+      console.error(
+        "[FlowEngine] wallet payment transition failed:",
+        flowErr.message,
+      );
+      order.paymentStatus = "paid";
+      order.paymentMethod = "wallet";
+      order.status = "processing";
+      order.paidAt = new Date();
+      await order.save();
+
+      // Process affiliate commission manually if FlowEngine failed
+      try {
+        const {
+          processAffiliateCommission,
+        } = require("../services/affiliateCommission.service");
+        await processAffiliateCommission(order._id, "wallet");
+      } catch (affErr) {
+        console.error("Affiliate commission processing error:", affErr);
+      }
     }
+
+    // Refresh order data
+    const updatedOrder = await Order.findById(order._id).lean();
 
     res.json({
       success: true,
       message: "Payment successful",
       order: {
-        _id: order._id,
-        paymentStatus: order.paymentStatus,
-        status: order.status,
+        _id: updatedOrder._id,
+        paymentStatus: updatedOrder.paymentStatus || "paid",
+        status: updatedOrder.status,
       },
-      walletBalance: user.walletBalance,
+      walletBalance: updateResult.walletBalance,
     });
   } catch (err) {
     console.error("payWithWallet error:", err);

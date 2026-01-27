@@ -1,6 +1,10 @@
 const Ticket = require("../models/Ticket");
 const TicketMessage = require("../models/TicketMessage");
+const Order = require("../models/Order");
 const { sendNotification } = require("../services/notification.service");
+
+// PATCH_31: FlowEngine for orchestrated state transitions
+const FlowEngine = require("../core/flowEngine");
 
 // Create a new ticket
 exports.createTicket = async (req, res) => {
@@ -12,6 +16,39 @@ exports.createTicket = async (req, res) => {
       return res
         .status(400)
         .json({ message: "Subject and message are required" });
+    }
+
+    // PATCH_31: GUARDRAIL - Order-related tickets require a valid paid order
+    if (category === "order" && orderId) {
+      const order = await Order.findById(orderId);
+      if (!order) {
+        return res.status(400).json({
+          message: "Invalid order ID provided",
+        });
+      }
+
+      // Check if order belongs to this user
+      if (order.userId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          message: "You can only create tickets for your own orders",
+        });
+      }
+
+      // For order-related tickets, order must be in a paid/processing state
+      const paidStatuses = [
+        "processing",
+        "completed",
+        "approved",
+        "pending_review",
+        "assistance_required",
+      ];
+      if (!paidStatuses.includes(order.status)) {
+        return res.status(400).json({
+          message:
+            "You can only create support tickets for orders that are being processed or completed. Please complete payment first.",
+          orderStatus: order.status,
+        });
+      }
     }
 
     const ticket = await Ticket.create({

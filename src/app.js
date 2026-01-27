@@ -4,6 +4,9 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const cookieParser = require("cookie-parser");
 
+// PATCH_31: Load FlowEngine hooks (side-effect module)
+require("./core/flowHooks");
+
 const app = express();
 
 const isAllowedOrigin = (origin) => {

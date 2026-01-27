@@ -82,6 +82,28 @@ const ticketSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+
+    // PATCH_31: Timeline for FlowEngine state tracking
+    timeline: [
+      {
+        event: String,
+        from: String,
+        at: {
+          type: Date,
+          default: Date.now,
+        },
+        actor: {
+          type: String,
+          enum: ["system", "admin", "user"],
+          default: "system",
+        },
+        reason: String,
+        meta: {
+          type: Object,
+          default: {},
+        },
+      },
+    ],
   },
   { timestamps: true },
 );

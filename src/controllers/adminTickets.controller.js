@@ -2,6 +2,9 @@ const Ticket = require("../models/Ticket");
 const TicketMessage = require("../models/TicketMessage");
 const { sendNotification } = require("../services/notification.service");
 
+// PATCH_31: FlowEngine for orchestrated state transitions
+const FlowEngine = require("../core/flowEngine");
+
 // Get all tickets with filters
 exports.getAllTickets = async (req, res) => {
   try {
@@ -209,31 +212,70 @@ exports.replyTicketAdmin = async (req, res) => {
 // Update ticket status
 exports.updateTicketStatus = async (req, res) => {
   try {
-    const { status, priority } = req.body;
+    const { status, priority, reason } = req.body;
 
-    const updateData = {};
-    if (status) {
-      updateData.status = status;
-      // Track resolved time when closing
-      if (status === "closed") {
-        updateData.resolvedAt = new Date();
+    // Handle priority-only update
+    if (!status && priority) {
+      const ticket = await Ticket.findByIdAndUpdate(
+        req.params.id,
+        { priority },
+        { new: true },
+      )
+        .populate("user", "firstName lastName name email")
+        .populate("assignedAdmin", "firstName lastName name email");
+
+      if (!ticket) {
+        return res.status(404).json({ message: "Ticket not found" });
       }
-    }
-    if (priority) updateData.priority = priority;
-
-    const ticket = await Ticket.findByIdAndUpdate(req.params.id, updateData, {
-      new: true,
-    })
-      .populate("user", "firstName lastName name email")
-      .populate("assignedAdmin", "firstName lastName name email");
-
-    if (!ticket) {
-      return res.status(404).json({ message: "Ticket not found" });
+      return res.json({ ok: true, ticket });
     }
 
-    res.json({ ok: true, ticket });
+    // PATCH_31: Use FlowEngine for status transitions
+    if (status) {
+      const canTransitionResult = await FlowEngine.canTransition(
+        "ticket",
+        req.params.id,
+        status,
+      );
+
+      if (!canTransitionResult.allowed) {
+        return res.status(400).json({
+          message: canTransitionResult.reason || "Invalid status transition",
+          currentStatus: canTransitionResult.currentState,
+        });
+      }
+
+      const ticket = await FlowEngine.transition(
+        "ticket",
+        req.params.id,
+        status,
+        {
+          actor: "admin",
+          adminId: req.user?._id || req.user?.id,
+          reason: reason || `Status changed to ${status}`,
+        },
+      );
+
+      // Update priority if provided
+      if (priority) {
+        ticket.priority = priority;
+        await ticket.save();
+      }
+
+      await ticket.populate([
+        { path: "user", select: "firstName lastName name email" },
+        { path: "assignedAdmin", select: "firstName lastName name email" },
+      ]);
+
+      return res.json({ ok: true, ticket });
+    }
+
+    return res.status(400).json({ message: "Status or priority required" });
   } catch (err) {
     console.error("updateTicketStatus error:", err);
+    if (err.message?.includes("Invalid transition")) {
+      return res.status(400).json({ message: err.message });
+    }
     res.status(500).json({ message: err.message });
   }
 };
@@ -265,22 +307,41 @@ exports.assignTicket = async (req, res) => {
 // Close ticket
 exports.closeTicket = async (req, res) => {
   try {
-    const ticket = await Ticket.findByIdAndUpdate(
-      req.params.id,
-      {
-        status: "closed",
-        resolvedAt: new Date(),
-      },
-      { new: true },
-    ).populate("user", "name email");
+    const { reason } = req.body;
 
-    if (!ticket) {
-      return res.status(404).json({ message: "Ticket not found" });
+    // PATCH_31: Use FlowEngine for status transition
+    const canTransitionResult = await FlowEngine.canTransition(
+      "ticket",
+      req.params.id,
+      "closed",
+    );
+
+    if (!canTransitionResult.allowed) {
+      return res.status(400).json({
+        message: canTransitionResult.reason || "Cannot close this ticket",
+        currentStatus: canTransitionResult.currentState,
+      });
     }
+
+    const ticket = await FlowEngine.transition(
+      "ticket",
+      req.params.id,
+      "closed",
+      {
+        actor: "admin",
+        adminId: req.user?._id || req.user?.id,
+        reason: reason || "Ticket closed by admin",
+      },
+    );
+
+    await ticket.populate("user", "name email");
 
     res.json({ ok: true, ticket });
   } catch (err) {
     console.error("closeTicket error:", err);
+    if (err.message?.includes("Invalid transition")) {
+      return res.status(400).json({ message: err.message });
+    }
     res.status(500).json({ message: err.message });
   }
 };

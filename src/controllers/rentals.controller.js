@@ -8,6 +8,9 @@ const Service = require("../models/Service");
 const Order = require("../models/Order");
 const { sendNotification } = require("../services/notification.service");
 
+// PATCH_31: FlowEngine for orchestrated state transitions
+const FlowEngine = require("../core/flowEngine");
+
 // Helper to calculate end date
 const calculateEndDate = (startDate, duration, unit) => {
   const start = new Date(startDate);
@@ -324,17 +327,28 @@ exports.getRentalById = async (req, res) => {
 exports.activateRental = async (req, res) => {
   try {
     const { id } = req.params;
+    const { reason } = req.body;
 
+    // PATCH_31: Use FlowEngine for status transition
+    const canTransitionResult = await FlowEngine.canTransition(
+      "rental",
+      id,
+      "active",
+    );
+
+    if (!canTransitionResult.allowed) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          canTransitionResult.reason ||
+          `Cannot activate rental with status: ${canTransitionResult.currentState}`,
+      });
+    }
+
+    // Get rental to update dates
     const rental = await Rental.findById(id);
     if (!rental) {
       return res.status(404).json({ ok: false, message: "Rental not found" });
-    }
-
-    if (rental.status !== "pending") {
-      return res.status(400).json({
-        ok: false,
-        message: `Cannot activate rental with status: ${rental.status}`,
-      });
     }
 
     // Reset dates from now
@@ -345,52 +359,48 @@ exports.activateRental = async (req, res) => {
       rental.rentalType,
     );
 
-    rental.status = "active";
+    // Update dates first
     rental.startDate = startDate;
     rental.endDate = endDate;
-    rental.statusLog.push({
-      status: "active",
-      at: new Date(),
-      by: "admin",
-      note: "Payment verified, rental activated",
-    });
-
     await rental.save();
+
+    // PATCH_31: Use FlowEngine for status transition
+    // FlowEngine handles: status update, timeline, notification (via hooks)
+    const activatedRental = await FlowEngine.transition(
+      "rental",
+      id,
+      "active",
+      {
+        actor: "admin",
+        adminId: req.user?._id || req.user?.id,
+        reason: reason || "Payment verified, rental activated",
+        data: { startDate, endDate },
+      },
+    );
+
+    // Attach service name for notification
+    activatedRental.serviceName = rental.serviceName;
 
     // Update service's active rental count
     await Service.findByIdAndUpdate(rental.service, {
       $inc: { currentActiveRentals: 1 },
     });
 
-    // PATCH_29: Notify user about rental activation
-    try {
-      await sendNotification({
-        userId: rental.user,
-        title: "Rental Activated",
-        message: `Your rental subscription is now active! Access has been enabled until ${endDate.toLocaleDateString()}.`,
-        type: "rental",
-        resourceType: "rental",
-        resourceId: rental._id,
-      });
-    } catch (notifErr) {
-      console.error(
-        "[notification] rental activated failed:",
-        notifErr.message,
-      );
-    }
-
     res.json({
       ok: true,
       message: "Rental activated successfully",
       rental: {
-        _id: rental._id,
-        status: rental.status,
-        startDate: rental.startDate,
-        endDate: rental.endDate,
+        _id: activatedRental._id,
+        status: activatedRental.status,
+        startDate: activatedRental.startDate,
+        endDate: activatedRental.endDate,
       },
     });
   } catch (err) {
     console.error("[ACTIVATE_RENTAL_ERROR]", err.message);
+    if (err.message?.includes("Invalid transition")) {
+      return res.status(400).json({ ok: false, message: err.message });
+    }
     res.status(500).json({ ok: false, message: "Failed to activate rental" });
   }
 };
@@ -406,6 +416,22 @@ exports.cancelRental = async (req, res) => {
     const { id } = req.params;
     const { reason } = req.body;
 
+    // PATCH_31: Use FlowEngine for status transition
+    const canTransitionResult = await FlowEngine.canTransition(
+      "rental",
+      id,
+      "cancelled",
+    );
+
+    if (!canTransitionResult.allowed) {
+      return res.status(400).json({
+        ok: false,
+        message:
+          canTransitionResult.reason ||
+          `Rental is already ${canTransitionResult.currentState}`,
+      });
+    }
+
     const rental = await Rental.findById(id);
     if (!rental) {
       return res.status(404).json({ ok: false, message: "Rental not found" });
@@ -416,24 +442,19 @@ exports.cancelRental = async (req, res) => {
       return res.status(403).json({ ok: false, message: "Not authorized" });
     }
 
-    if (rental.status === "cancelled" || rental.status === "expired") {
-      return res.status(400).json({
-        ok: false,
-        message: `Rental is already ${rental.status}`,
-      });
-    }
-
     const wasActive = rental.status === "active";
 
-    rental.status = "cancelled";
-    rental.statusLog.push({
-      status: "cancelled",
-      at: new Date(),
-      by: isAdmin ? "admin" : "user",
-      note: reason || "Cancelled by request",
-    });
-
-    await rental.save();
+    // PATCH_31: Use FlowEngine for status transition
+    const cancelledRental = await FlowEngine.transition(
+      "rental",
+      id,
+      "cancelled",
+      {
+        actor: isAdmin ? "admin" : "user",
+        adminId: isAdmin ? req.user?._id : undefined,
+        reason: reason || "Cancelled by request",
+      },
+    );
 
     // Decrement active rental count if was active
     if (wasActive) {
@@ -446,12 +467,15 @@ exports.cancelRental = async (req, res) => {
       ok: true,
       message: "Rental cancelled successfully",
       rental: {
-        _id: rental._id,
-        status: rental.status,
+        _id: cancelledRental._id,
+        status: cancelledRental.status,
       },
     });
   } catch (err) {
     console.error("[CANCEL_RENTAL_ERROR]", err.message);
+    if (err.message?.includes("Invalid transition")) {
+      return res.status(400).json({ ok: false, message: err.message });
+    }
     res.status(500).json({ ok: false, message: "Failed to cancel rental" });
   }
 };

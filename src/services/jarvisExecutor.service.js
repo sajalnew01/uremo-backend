@@ -12,6 +12,9 @@ const cloudinary = require("../config/cloudinary");
 // PATCH_23: Affiliate commission processing
 const { processAffiliateCommission } = require("./affiliateCommission.service");
 
+// PATCH_31: FlowEngine for orchestrated state transitions
+const FlowEngine = require("../core/flowEngine");
+
 const MAX_ACTIONS_PER_PROPOSAL = 10;
 
 function isPlainObject(v) {
@@ -364,6 +367,7 @@ async function executeAction(action, opts) {
     case "order.updateStatus": {
       const id = assertObjectId(payload.id, "order id");
       const status = clampString(payload.status, 40);
+      const reason = clampString(payload.reason || "", 200);
       const allowed = [
         "payment_pending",
         "payment_submitted",
@@ -377,94 +381,67 @@ async function executeAction(action, opts) {
         throw err;
       }
 
-      const order = await Order.findById(id);
-      if (!order) {
-        const err = new Error("Order not found");
-        err.status = 404;
-        throw err;
-      }
-
-      const prevStatus = String(order.status || "");
-      order.status = status;
-
-      order.statusLog = order.statusLog || [];
-      if (
-        prevStatus === "payment_submitted" &&
-        ["processing", "completed"].includes(status)
-      ) {
-        order.statusLog.push({
-          text: "Payment verified by admin",
-          at: new Date(),
-        });
-      }
-
-      if (status === "rejected") {
-        order.statusLog.push({
-          text: "Payment rejected — user must resubmit proof",
-          at: new Date(),
-        });
-      } else {
-        order.statusLog.push({
-          text: `Status changed to: ${status}`,
-          at: new Date(),
-        });
-      }
-
-      order.timeline = order.timeline || [];
-      order.timeline.push({
-        message: `Status updated to ${status}`,
-        by: "admin",
-      });
-
-      await order.save();
-      return { id: String(order._id), status: order.status };
-    }
-
-    case "order.verifyPayment": {
-      const id = assertObjectId(payload.id, "order id");
-      const order = await Order.findById(id);
-      if (!order) {
-        const err = new Error("Order not found");
-        err.status = 404;
-        throw err;
-      }
-
-      if (order.status !== "payment_submitted") {
+      // PATCH_31: Use FlowEngine for orchestrated transition
+      // JarvisX HARD RULE: Must use FlowEngine, never say "I updated" unless success
+      const canTransitionResult = await FlowEngine.canTransition(
+        "order",
+        id,
+        status,
+      );
+      if (!canTransitionResult.allowed) {
         const err = new Error(
-          "Payment can only be verified when status is payment_submitted",
+          canTransitionResult.reason || "Invalid status transition",
         );
         err.status = 400;
         throw err;
       }
 
-      const now = new Date();
-      order.status = "processing";
-      order.payment = order.payment || {};
-      order.payment.verifiedAt = now;
-
-      order.statusLog = order.statusLog || [];
-      order.statusLog.push({ text: "Payment verified by admin", at: now });
-
-      order.timeline = order.timeline || [];
-      order.timeline.push({
-        message: "Payment verified by admin",
-        by: "admin",
-        createdAt: now,
+      const order = await FlowEngine.transition("order", id, status, {
+        actor: "admin",
+        reason: reason || `Status changed to ${status} via JarvisX`,
+        data: { source: "jarvisX" },
       });
 
-      await order.save();
+      return { id: String(order._id), status: order.status };
+    }
 
-      // PATCH_23: Process affiliate commission
-      try {
-        await processAffiliateCommission(order._id, "manual");
-      } catch (affErr) {
-        console.error("[jarvis] affiliate commission error:", affErr.message);
+    case "order.verifyPayment": {
+      const id = assertObjectId(payload.id, "order id");
+
+      // PATCH_31: Use FlowEngine for orchestrated transition
+      // FlowEngine handles: status update, timeline, affiliate commission (via hooks)
+      const canTransitionResult = await FlowEngine.canTransition(
+        "order",
+        id,
+        "processing",
+      );
+
+      if (!canTransitionResult.allowed) {
+        if (canTransitionResult.currentState !== "payment_submitted") {
+          const err = new Error(
+            "Payment can only be verified when status is payment_submitted",
+          );
+          err.status = 400;
+          throw err;
+        }
+        const err = new Error(
+          canTransitionResult.reason || "Invalid status transition",
+        );
+        err.status = 400;
+        throw err;
       }
+
+      const order = await FlowEngine.transition("order", id, "processing", {
+        actor: "admin",
+        reason: "Payment verified by admin via JarvisX",
+        paymentMethod: "manual",
+        data: { source: "jarvisX" },
+      });
 
       return {
         id: String(order._id),
         status: order.status,
-        verifiedAt: now.toISOString(),
+        verifiedAt: new Date().toISOString(),
       };
     }
 

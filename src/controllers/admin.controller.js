@@ -10,6 +10,9 @@ const {
   welcomeEmail,
 } = require("../emails/templates");
 
+// PATCH_31: FlowEngine for orchestrated state transitions
+const FlowEngine = require("../core/flowEngine");
+
 // PATCH_23: Affiliate commission processing (using new service)
 const {
   processAffiliateCommission,
@@ -132,7 +135,7 @@ exports.unarchiveRejectedOrder = async (req, res) => {
 
 exports.updateOrderStatus = async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, reason } = req.body;
 
     const allowed = [
       "payment_pending",
@@ -146,63 +149,49 @@ exports.updateOrderStatus = async (req, res) => {
       return res.status(400).json({ message: "Invalid status" });
     }
 
-    const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ message: "Order not found" });
-
-    const prevStatus = order.status;
-
-    order.status = status;
-
-    order.statusLog = order.statusLog || [];
-    if (
-      prevStatus === "payment_submitted" &&
-      ["processing", "completed"].includes(status)
-    ) {
-      order.statusLog.push({
-        text: "Payment verified by admin",
-        at: new Date(),
+    // PATCH_31: Check if transition is allowed via FlowEngine
+    const canTransitionResult = await FlowEngine.canTransition(
+      "order",
+      req.params.id,
+      status,
+    );
+    if (!canTransitionResult.allowed) {
+      return res.status(400).json({
+        message: canTransitionResult.reason || "Invalid status transition",
+        currentStatus: canTransitionResult.currentState,
       });
     }
 
-    if (status === "rejected") {
-      order.statusLog.push({
-        text: "Payment rejected — user must resubmit proof",
-        at: new Date(),
-      });
-    } else {
-      order.statusLog.push({
-        text: `Status changed to: ${status}`,
-        at: new Date(),
-      });
+    // PATCH_31: Use FlowEngine for orchestrated transition
+    const prevStatus = canTransitionResult.currentState;
+    let transitionReason = reason;
+
+    if (!transitionReason) {
+      if (
+        prevStatus === "payment_submitted" &&
+        ["processing", "completed"].includes(status)
+      ) {
+        transitionReason = "Payment verified by admin";
+      } else if (status === "rejected") {
+        transitionReason = "Payment rejected — user must resubmit proof";
+      } else {
+        transitionReason = `Status changed to: ${status}`;
+      }
     }
 
-    order.timeline.push({
-      message: `Status updated to ${status}`,
-      by: "admin",
+    const order = await FlowEngine.transition("order", req.params.id, status, {
+      actor: "admin",
+      adminId: req.user?._id || req.user?.id,
+      reason: transitionReason,
     });
-    await order.save();
 
-    // In-app notification + email (best-effort)
+    // Send custom email notification (FlowEngine hooks handle in-app notifications)
     if (prevStatus !== status) {
       try {
         await order.populate([
           { path: "userId", select: "email name" },
           { path: "serviceId", select: "title" },
         ]);
-
-        // PATCH_29: Send in-app notification (no email copy - we send custom email below)
-        if (order.userId?._id) {
-          const statusLabel = status.replace(/_/g, " ");
-          await sendNotification({
-            userId: order.userId._id,
-            title: "Order Status Updated",
-            message: `Your order #${order.orderNumber || order._id} is now ${statusLabel}`,
-            type: "order",
-            resourceType: "order",
-            resourceId: order._id,
-            sendEmailCopy: false, // Using custom email template below
-          });
-        }
 
         const userEmail = order.userId?.email;
         if (userEmail) {
@@ -220,66 +209,61 @@ exports.updateOrderStatus = async (req, res) => {
       }
     }
 
-    res.json({ message: "Order status updated" });
+    res.json({ message: "Order status updated", order });
   } catch (err) {
     console.error(err);
+    // PATCH_31: Return FlowEngine validation errors clearly
+    if (err.message?.includes("Invalid transition")) {
+      return res.status(400).json({ message: err.message });
+    }
     res.status(500).json({ message: "Server error" });
   }
 };
 
 exports.verifyPayment = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id).populate([
+    // PATCH_31: Check if transition is allowed via FlowEngine
+    const canTransitionResult = await FlowEngine.canTransition(
+      "order",
+      req.params.id,
+      "processing",
+    );
+
+    if (!canTransitionResult.allowed) {
+      if (canTransitionResult.currentState !== "payment_submitted") {
+        return res.status(400).json({
+          message:
+            "Payment can only be verified when status is payment_submitted",
+          currentStatus: canTransitionResult.currentState,
+        });
+      }
+      return res.status(400).json({
+        message: canTransitionResult.reason || "Invalid status transition",
+      });
+    }
+
+    // PATCH_31: Use FlowEngine for orchestrated transition
+    // FlowEngine handles: status update, timeline, affiliate commission (via hooks)
+    const order = await FlowEngine.transition(
+      "order",
+      req.params.id,
+      "processing",
+      {
+        actor: "admin",
+        adminId: req.user?._id || req.user?.id,
+        reason: "Payment verified by admin",
+        paymentMethod: "manual",
+      },
+    );
+
+    // Email notification (best-effort, non-blocking)
+    // Note: FlowEngine hooks handle in-app notification
+    await order.populate([
       { path: "userId", select: "email name role" },
       { path: "serviceId", select: "title price" },
       { path: "payment.methodId", select: "name type details instructions" },
     ]);
 
-    if (!order) return res.status(404).json({ message: "Order not found" });
-
-    if (order.status !== "payment_submitted") {
-      return res.status(400).json({
-        message:
-          "Payment can only be verified when status is payment_submitted",
-      });
-    }
-
-    const now = new Date();
-
-    order.status = "processing";
-    order.payment = order.payment || {};
-    order.payment.verifiedAt = now;
-
-    order.statusLog = order.statusLog || [];
-    order.statusLog.push({
-      text: "Payment verified by admin",
-      at: now,
-    });
-
-    order.timeline = order.timeline || [];
-    order.timeline.push({
-      message: "Payment verified by admin",
-      by: "admin",
-      createdAt: now,
-    });
-
-    await order.save();
-
-    // PATCH_23: Process affiliate commission when payment is verified
-    if (order.userId?._id) {
-      setImmediate(async () => {
-        try {
-          await processAffiliateCommission(order._id, "manual");
-        } catch (err) {
-          console.error("[affiliate] commission processing failed", {
-            orderId: String(order?._id),
-            message: err?.message || String(err),
-          });
-        }
-      });
-    }
-
-    // Email notification (best-effort, non-blocking)
     const userEmail = order.userId?.email;
     if (userEmail) {
       setImmediate(async () => {

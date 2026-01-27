@@ -39,6 +39,13 @@ const orderSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+
+    // PATCH_31: Track when order was completed
+    completedAt: {
+      type: Date,
+      default: null,
+    },
+
     payment: {
       methodId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -109,7 +116,7 @@ const orderSchema = new mongoose.Schema(
       index: true,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 module.exports = mongoose.model("Order", orderSchema);
