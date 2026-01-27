@@ -211,3 +211,20 @@ exports.getUnreadCount = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// Get user's orders for ticket linking dropdown
+exports.getUserOrdersForTicket = async (req, res) => {
+  try {
+    const Order = require("../models/Order");
+    const orders = await Order.find({ user: req.user._id })
+      .select("orderNumber status")
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+
+    res.json({ ok: true, orders });
+  } catch (err) {
+    console.error("getUserOrdersForTicket error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};

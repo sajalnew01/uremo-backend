@@ -8,6 +8,7 @@ const {
   getTicketMessages,
   replyTicket,
   getUnreadCount,
+  getUserOrdersForTicket,
 } = require("../controllers/tickets.controller");
 
 // All routes require authentication
@@ -21,6 +22,9 @@ router.get("/", getUserTickets);
 
 // Get unread count
 router.get("/unread", getUnreadCount);
+
+// Get user's orders for ticket linking
+router.get("/orders", getUserOrdersForTicket);
 
 // Get single ticket
 router.get("/:id", getTicketById);

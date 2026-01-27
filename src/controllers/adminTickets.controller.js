@@ -32,8 +32,9 @@ exports.getAllTickets = async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     let ticketsQuery = Ticket.find(filter)
-      .populate("user", "name email")
+      .populate("user", "firstName lastName name email")
       .populate("order", "orderNumber status")
+      .populate("assignedAdmin", "firstName lastName name email")
       .sort({ hasUnreadAdmin: -1, lastMessageAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
@@ -48,6 +49,9 @@ exports.getAllTickets = async (req, res) => {
             open: { $sum: { $cond: [{ $eq: ["$status", "open"] }, 1, 0] } },
             inProgress: {
               $sum: { $cond: [{ $eq: ["$status", "in_progress"] }, 1, 0] },
+            },
+            waitingUser: {
+              $sum: { $cond: [{ $eq: ["$status", "waiting_user"] }, 1, 0] },
             },
             closed: { $sum: { $cond: [{ $eq: ["$status", "closed"] }, 1, 0] } },
             unread: { $sum: { $cond: ["$hasUnreadAdmin", 1, 0] } },
@@ -74,7 +78,13 @@ exports.getAllTickets = async (req, res) => {
       total,
       page: parseInt(page),
       pages: Math.ceil(total / parseInt(limit)),
-      stats: stats[0] || { open: 0, inProgress: 0, closed: 0, unread: 0 },
+      stats: stats[0] || {
+        open: 0,
+        inProgress: 0,
+        waitingUser: 0,
+        closed: 0,
+        unread: 0,
+      },
     });
   } catch (err) {
     console.error("getAllTickets error:", err);
@@ -86,8 +96,9 @@ exports.getAllTickets = async (req, res) => {
 exports.getTicketById = async (req, res) => {
   try {
     const ticket = await Ticket.findById(req.params.id)
-      .populate("user", "name email")
+      .populate("user", "firstName lastName name email")
       .populate("order", "orderNumber status totalAmount")
+      .populate("assignedAdmin", "firstName lastName name email")
       .lean();
 
     if (!ticket) {
@@ -108,7 +119,7 @@ exports.getTicketById = async (req, res) => {
 exports.getTicketMessages = async (req, res) => {
   try {
     const messages = await TicketMessage.find({ ticket: req.params.id })
-      .populate("sender", "name email")
+      .populate("sender", "firstName lastName name email")
       .sort({ createdAt: 1 })
       .lean();
 
@@ -157,13 +168,21 @@ exports.replyTicketAdmin = async (req, res) => {
       attachment: attachment || null,
     });
 
-    // Update ticket
-    await Ticket.findByIdAndUpdate(req.params.id, {
+    // Build update data
+    const updateData = {
       lastMessageAt: new Date(),
       hasUnreadAdmin: false,
       hasUnreadUser: true,
       status: ticket.status === "open" ? "in_progress" : ticket.status,
-    });
+    };
+
+    // Track first admin response for SLA
+    if (!ticket.firstResponseAt) {
+      updateData.firstResponseAt = new Date();
+    }
+
+    // Update ticket
+    await Ticket.findByIdAndUpdate(req.params.id, updateData);
 
     res.json({ ok: true, message: msg });
   } catch (err) {
@@ -178,12 +197,20 @@ exports.updateTicketStatus = async (req, res) => {
     const { status, priority } = req.body;
 
     const updateData = {};
-    if (status) updateData.status = status;
+    if (status) {
+      updateData.status = status;
+      // Track resolved time when closing
+      if (status === "closed") {
+        updateData.resolvedAt = new Date();
+      }
+    }
     if (priority) updateData.priority = priority;
 
     const ticket = await Ticket.findByIdAndUpdate(req.params.id, updateData, {
       new: true,
-    }).populate("user", "name email");
+    })
+      .populate("user", "firstName lastName name email")
+      .populate("assignedAdmin", "firstName lastName name email");
 
     if (!ticket) {
       return res.status(404).json({ message: "Ticket not found" });
@@ -192,6 +219,69 @@ exports.updateTicketStatus = async (req, res) => {
     res.json({ ok: true, ticket });
   } catch (err) {
     console.error("updateTicketStatus error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Assign ticket to admin
+exports.assignTicket = async (req, res) => {
+  try {
+    const { adminId } = req.body;
+
+    const ticket = await Ticket.findByIdAndUpdate(
+      req.params.id,
+      { assignedAdmin: adminId || null },
+      { new: true },
+    )
+      .populate("user", "firstName lastName name email")
+      .populate("assignedAdmin", "firstName lastName name email");
+
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+
+    res.json({ ok: true, ticket });
+  } catch (err) {
+    console.error("assignTicket error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Close ticket
+exports.closeTicket = async (req, res) => {
+  try {
+    const ticket = await Ticket.findByIdAndUpdate(
+      req.params.id,
+      {
+        status: "closed",
+        resolvedAt: new Date(),
+      },
+      { new: true },
+    ).populate("user", "name email");
+
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+
+    res.json({ ok: true, ticket });
+  } catch (err) {
+    console.error("closeTicket error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Get admin users list (for assignment dropdown)
+exports.getAdminUsers = async (req, res) => {
+  try {
+    const User = require("../models/User");
+    const admins = await User.find({ role: "admin" })
+      .select("firstName lastName name email")
+      .sort({ firstName: 1, lastName: 1 })
+      .lean();
+
+    res.json({ ok: true, admins });
+  } catch (err) {
+    console.error("getAdminUsers error:", err);
     res.status(500).json({ message: err.message });
   }
 };
