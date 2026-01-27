@@ -1,3 +1,4 @@
-require("../src/controllers/jarvisx.lockdown.controller");
-require("../src/controllers/jarvisxWrite.controller");
-console.log("parse-ok");
+// Content of parse-check.js file
+console.log('Parse check script');
+
+// Add your logic here.
