@@ -20,8 +20,13 @@ module.exports = (req, res, next) => {
     return res.status(401).json({ message: "No token provided" });
   }
 
+  if (!process.env.JWT_SECRET) {
+    console.error("[AUTH] FATAL: JWT_SECRET environment variable is not set");
+    return res.status(500).json({ message: "Server configuration error" });
+  }
+
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret");
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     // Normalize legacy token shapes to a stable contract.
     // Controllers expect: req.user.id and req.user.role
     const normalized = {

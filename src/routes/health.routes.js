@@ -6,6 +6,11 @@ const Service = require("../models/Service");
 
 const router = express.Router();
 
+// Simple health check - no auth required
+router.get("/", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
 function hasDebugAccess(req) {
   // In production, require either:
   // - a matching header token, or

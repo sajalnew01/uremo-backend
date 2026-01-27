@@ -50,9 +50,14 @@ exports.signup = async (req, res, next) => {
       referredBy,
     });
 
+    if (!process.env.JWT_SECRET) {
+      console.error("[AUTH] FATAL: JWT_SECRET environment variable is not set");
+      return res.status(500).json({ message: "Server configuration error" });
+    }
+
     const token = jwt.sign(
       { id: user._id, email: user.email, role: user.role },
-      process.env.JWT_SECRET || "secret",
+      process.env.JWT_SECRET,
       { expiresIn: "7d" },
     );
 
@@ -149,9 +154,14 @@ exports.login = async (req, res) => {
       }
     }
 
+    if (!process.env.JWT_SECRET) {
+      console.error("[AUTH] FATAL: JWT_SECRET environment variable is not set");
+      return res.status(500).json({ message: "Server configuration error" });
+    }
+
     const token = jwt.sign(
       { id: user._id, email: user.email, role: user.role },
-      process.env.JWT_SECRET || "secret",
+      process.env.JWT_SECRET,
       { expiresIn: "7d" },
     );
 

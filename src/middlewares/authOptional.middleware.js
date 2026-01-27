@@ -10,8 +10,10 @@ module.exports = (req, _res, next) => {
   const token = extractToken(req);
   if (!token) return next();
 
+  if (!process.env.JWT_SECRET) return next();
+
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret");
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const normalized = {
       ...(decoded && typeof decoded === "object" ? decoded : {}),
     };

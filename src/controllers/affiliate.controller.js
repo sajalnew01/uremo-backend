@@ -205,20 +205,7 @@ exports.withdrawAffiliateBalance = async (req, res) => {
       });
     }
 
-    // Get user balance
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ ok: false, message: "User not found" });
-    }
-
-    if (user.affiliateBalance < withdrawAmount) {
-      return res.status(400).json({
-        ok: false,
-        message: `Insufficient balance. Available: $${user.affiliateBalance.toFixed(2)}`,
-      });
-    }
-
-    // Check for pending withdrawals
+    // Check for pending withdrawals first
     const pendingWithdrawal = await AffiliateWithdrawal.findOne({
       user: userId,
       status: "pending",
@@ -231,6 +218,20 @@ exports.withdrawAffiliateBalance = async (req, res) => {
       });
     }
 
+    // ATOMIC: Deduct from balance using findOneAndUpdate to prevent race conditions
+    const updateResult = await User.findOneAndUpdate(
+      { _id: userId, affiliateBalance: { $gte: withdrawAmount } },
+      { $inc: { affiliateBalance: -withdrawAmount } },
+      { new: true },
+    );
+
+    if (!updateResult) {
+      return res.status(400).json({
+        ok: false,
+        message: "Insufficient balance or concurrent transaction",
+      });
+    }
+
     // Create withdrawal request
     const withdrawal = await AffiliateWithdrawal.create({
       user: userId,
@@ -239,10 +240,6 @@ exports.withdrawAffiliateBalance = async (req, res) => {
       paymentDetails,
       status: "pending",
     });
-
-    // Deduct from balance (will be refunded if rejected)
-    user.affiliateBalance -= withdrawAmount;
-    await user.save();
 
     res.json({
       ok: true,

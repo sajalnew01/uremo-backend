@@ -174,9 +174,18 @@ exports.payWithWallet = async (req, res) => {
       });
     }
 
-    // Deduct from wallet
-    user.walletBalance -= orderAmount;
-    await user.save();
+    // ATOMIC: Deduct from wallet using findOneAndUpdate to prevent race conditions
+    const updateResult = await User.findOneAndUpdate(
+      { _id: userId, walletBalance: { $gte: orderAmount } },
+      { $inc: { walletBalance: -orderAmount } },
+      { new: true },
+    );
+
+    if (!updateResult) {
+      return res.status(400).json({
+        error: "Insufficient wallet balance or concurrent transaction",
+      });
+    }
 
     // Create debit transaction
     const source =
@@ -188,7 +197,7 @@ exports.payWithWallet = async (req, res) => {
       source,
       referenceId: order._id,
       description: `Payment for order #${order._id.toString().slice(-6)}`,
-      balanceAfter: user.walletBalance,
+      balanceAfter: updateResult.walletBalance,
     });
 
     // Mark order as paid

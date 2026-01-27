@@ -82,7 +82,10 @@ function initSocket(httpServer) {
         return next(new Error("No token provided"));
       }
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret");
+      if (!process.env.JWT_SECRET) {
+        return next(new Error("Server configuration error"));
+      }
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const normalized = {
         ...(decoded && typeof decoded === "object" ? decoded : {}),
       };
@@ -217,7 +220,7 @@ async function handleConnection(socket) {
     if (socket.currentOrderRoom) {
       socket.leave(socket.currentOrderRoom);
       console.log(
-        `[Socket.io] User ${userId} left room ${socket.currentOrderRoom}`
+        `[Socket.io] User ${userId} left room ${socket.currentOrderRoom}`,
       );
       socket.currentOrderRoom = null;
       socket.currentOrderId = null;
@@ -376,7 +379,7 @@ async function handleConnection(socket) {
           orderId,
           status: "sent",
         },
-        { $set: { status: "delivered", deliveredAt: new Date() } }
+        { $set: { status: "delivered", deliveredAt: new Date() } },
       );
 
       const room = `order:${orderId}`;
@@ -403,7 +406,7 @@ async function handleConnection(socket) {
           orderId,
           status: { $in: ["sent", "delivered"] },
         },
-        { $set: { status: "seen", seenAt: new Date() } }
+        { $set: { status: "seen", seenAt: new Date() } },
       );
 
       const room = `order:${orderId}`;

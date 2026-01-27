@@ -249,8 +249,10 @@ function tryAttachUser(req) {
   const token = extractToken(req);
   if (!token) return;
 
+  if (!process.env.JWT_SECRET) return;
+
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret");
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const normalized = {
       ...(decoded && typeof decoded === "object" ? decoded : {}),
     };
