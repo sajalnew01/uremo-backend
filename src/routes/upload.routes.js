@@ -8,6 +8,7 @@ const {
   uploadPayment,
   uploadChatAttachment,
   uploadChatAttachments,
+  uploadSingleImage,
 } = require("../controllers/upload.controller");
 const { CHAT_ALLOWED_TYPES } = require("../middlewares/upload.middleware");
 
@@ -62,6 +63,9 @@ router.post(
   chatMemoryUpload.array("files", 5),
   uploadChatAttachments,
 );
+
+// Single image upload (for blogs, profiles, etc.)
+router.post("/image", auth, memoryUpload.single("image"), uploadSingleImage);
 
 router.post(
   "/payment-proof",

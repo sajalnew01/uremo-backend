@@ -397,31 +397,60 @@ exports.adminGetUserWallet = async (req, res) => {
 
 /**
  * Admin: Search users for wallet tool
- * GET /api/admin/wallet/search?q=email
+ * GET /api/admin/wallet/search?q=email&tier=high|medium|low
  */
 exports.adminSearchUsers = async (req, res) => {
   try {
-    const { q } = req.query;
+    const { q, tier } = req.query;
 
-    if (!q || q.length < 2) {
-      return res
-        .status(400)
-        .json({ error: "Search query must be at least 2 characters" });
+    // Build query conditions
+    const conditions = [];
+
+    // Text search if provided
+    if (q && q.length >= 2) {
+      conditions.push({
+        $or: [
+          { email: { $regex: q, $options: "i" } },
+          { name: { $regex: q, $options: "i" } },
+        ],
+      });
     }
 
-    const users = await User.find({
-      $or: [
-        { email: { $regex: q, $options: "i" } },
-        { name: { $regex: q, $options: "i" } },
-      ],
-    })
+    // Balance tier filter
+    if (tier) {
+      switch (tier) {
+        case "high":
+          conditions.push({ walletBalance: { $gte: 100 } });
+          break;
+        case "medium":
+          conditions.push({ walletBalance: { $gte: 20, $lt: 100 } });
+          break;
+        case "low":
+          conditions.push({ walletBalance: { $lt: 20 } });
+          break;
+      }
+    }
+
+    // If no conditions, require at least one filter
+    if (conditions.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "Provide search query (min 2 chars) or tier filter" });
+    }
+
+    const query =
+      conditions.length === 1 ? conditions[0] : { $and: conditions };
+
+    const users = await User.find(query)
       .select("name email walletBalance")
-      .limit(10)
+      .sort({ walletBalance: -1 })
+      .limit(20)
       .lean();
 
     res.json({
       success: true,
       users,
+      filter: { q, tier },
     });
   } catch (err) {
     console.error("adminSearchUsers error:", err);

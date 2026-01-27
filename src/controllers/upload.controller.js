@@ -244,3 +244,46 @@ exports.uploadProofs = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+/**
+ * Upload a single image (for blogs, profiles, etc.)
+ * POST /api/upload/image
+ * Returns: { ok, url, publicId }
+ */
+exports.uploadSingleImage = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ ok: false, message: "Image required" });
+    }
+
+    const file = req.file;
+    const resourceType = inferResourceType({ mimeType: file.mimetype });
+
+    // Use stream upload for buffer
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: "uremo/images",
+        resource_type: resourceType,
+      },
+      (error, uploadResult) => {
+        if (error) {
+          console.error("Image upload error:", error);
+          return res.status(500).json({ ok: false, message: "Upload failed" });
+        }
+
+        const result = serializeUpload(uploadResult);
+        res.json({
+          ok: true,
+          url: result.url,
+          publicId: result.publicId,
+          format: result.format,
+        });
+      },
+    );
+
+    uploadStream.end(file.buffer);
+  } catch (err) {
+    console.error("uploadSingleImage error:", err);
+    res.status(500).json({ ok: false, message: "Server error" });
+  }
+};

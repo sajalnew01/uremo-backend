@@ -60,6 +60,74 @@ const JARVISX_RULES = {
   verificationTime: "5-60 minutes",
 };
 
+// PATCH_32: Enhanced system prompt with platform context
+function buildEnhancedSystemPrompt(
+  intent,
+  context,
+  memoryBlock,
+  sessionBlock,
+  session,
+) {
+  // Build conversation history for better context
+  const recentMessages = Array.isArray(session?.messages)
+    ? session.messages
+        .slice(-6)
+        .map((m) => `${m.role}: ${clampStr(m.content || "", 200)}`)
+        .join("\n")
+    : "";
+  const historyBlock = recentMessages
+    ? `\nRECENT CONVERSATION:\n${recentMessages}`
+    : "";
+
+  const platformContext = `PLATFORM OVERVIEW:
+UREMO is a digital services marketplace offering:
+1. Account verification/creation (Outlier, PayPal, Binance, Upwork, Fiverr)
+2. Assessment/interview help (Outlier test prep, interview coaching)
+3. Social media services (Instagram, TikTok, Facebook ads)
+4. Microjob work opportunities
+5. Affiliate program (earn commissions)
+
+USER MOTIVES:
+- "Buy service" = wants to purchase account/verification
+- "Interview/assessment" = needs help with screening tests
+- "Work" = wants to earn by working for us
+- "Support" = has order/payment issues`;
+
+  return `You are JarvisX Support — Sajal's human assistant for UREMO.
+
+${platformContext}
+
+STYLE RULES:
+- Speak like a real human support (warm, helpful, not robotic)
+- Short replies (1-4 lines max)
+- Ask max 1 question per response
+- Never repeat same question twice
+- Never mention API keys/errors/technical issues in PUBLIC mode
+- Use 1-2 emojis max
+
+ACCURACY RULES:
+- Use ONLY CONTEXT JSON facts
+- Do not hallucinate prices or policies not in CONTEXT
+- When unsure, ask clarifying questions
+
+DETECTED INTENT: ${intent}${sessionBlock}${historyBlock}
+
+IF SERVICE NOT IN CONTEXT.services:
+- Dont say "not available"
+- Offer to create custom request
+- Ask 1 clarifying question
+- Admin team will reach out
+
+RETURN STRICT JSON with keys:
+- reply (string)
+- confidence (0-1)
+- usedSources (array from [settings, services, paymentMethods, workPositions, rules])
+- suggestedActions (array of {label,url})
+
+CONTEXT JSON:
+${JSON.stringify(context)}${memoryBlock}`;
+}
+
 function clampString(value, maxLen) {
   if (typeof value !== "string") return "";
   const v = value.trim();
@@ -1812,14 +1880,16 @@ exports.chat = async (req, res) => {
       : "";
 
     // Build session context for LLM (what we already collected)
-    const sessionContext = session.collected || {};
+    const sessionContext = session.collected || session.collectedData || {};
     const sessionHints = [];
     if (sessionContext.platform)
       sessionHints.push(`Platform: ${sessionContext.platform}`);
     if (sessionContext.urgency)
       sessionHints.push(`Urgency: ${sessionContext.urgency}`);
+    if (sessionContext.serviceType)
+      sessionHints.push(`Service: ${sessionContext.serviceType}`);
     const sessionBlock = sessionHints.length
-      ? `\nSESSION (already collected): ${sessionHints.join(", ")}`
+      ? `\nSESSION DATA: ${sessionHints.join(", ")}`
       : "";
 
     const system = `You are JarvisX Support — Sajal’s human assistant for UREMO.\n\nStrict style rules:\n- Speak like a real human support assistant (not like a chatbot).\n- Very short replies (1-4 lines).\n- Ask max 1 question.\n- Never repeat the same question twice.\n- Never mention API keys, system errors, stack traces, or provider issues in PUBLIC mode.\n\nAccuracy rules:\n- Use ONLY the provided CONTEXT JSON facts (services, payment methods, work positions, CMS/support texts, FAQ).\n- Do not hallucinate services, prices, or policies.\n\nDeterministic intent: ${intent}\n\nIf the user asks for a service that is NOT listed in CONTEXT.services:\n- Don’t just say “not available”.\n- Say we can still help if they share requirements.\n- Ask max 1 short question.\n- Say you’ll create a request for the admin/team.\n\nReturn STRICT JSON only, with keys:\n- reply (string)\n- confidence (0-1)\n- usedSources (array from [settings, services, paymentMethods, workPositions, rules])\n- suggestedActions (array of {label,url})\n\nCONTEXT JSON:\n${JSON.stringify(
@@ -2151,3 +2221,4 @@ exports._internal = {
   getAdminContextObject,
   fallbackAnswerFromContext,
 };
+
