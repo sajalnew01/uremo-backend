@@ -3,6 +3,7 @@ const OrderMessage = require("../models/OrderMessage");
 const mongoose = require("mongoose");
 
 const { sendEmail } = require("../services/email.service");
+const { sendNotification } = require("../services/notification.service");
 const {
   orderStatusUpdated,
   paymentVerified,
@@ -181,13 +182,27 @@ exports.updateOrderStatus = async (req, res) => {
     });
     await order.save();
 
-    // Email notification (best-effort)
+    // In-app notification + email (best-effort)
     if (prevStatus !== status) {
       try {
         await order.populate([
           { path: "userId", select: "email name" },
           { path: "serviceId", select: "title" },
         ]);
+
+        // PATCH_29: Send in-app notification (no email copy - we send custom email below)
+        if (order.userId?._id) {
+          const statusLabel = status.replace(/_/g, " ");
+          await sendNotification({
+            userId: order.userId._id,
+            title: "Order Status Updated",
+            message: `Your order #${order.orderNumber || order._id} is now ${statusLabel}`,
+            type: "order",
+            resourceType: "order",
+            resourceId: order._id,
+            sendEmailCopy: false, // Using custom email template below
+          });
+        }
 
         const userEmail = order.userId?.email;
         if (userEmail) {

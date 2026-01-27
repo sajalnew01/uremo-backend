@@ -4,6 +4,7 @@
  */
 const User = require("../models/User");
 const WalletTransaction = require("../models/WalletTransaction");
+const { sendNotification } = require("../services/notification.service");
 
 /**
  * Get current wallet balance
@@ -292,6 +293,22 @@ exports.adminAdjustBalance = async (req, res) => {
       description: description || `Admin ${type} by ${req.user.email}`,
       balanceAfter: user.walletBalance,
     });
+
+    // PATCH_29: Notify user about wallet update
+    try {
+      const action = type === "credit" ? "credited" : "debited";
+      await sendNotification({
+        userId: userId,
+        title: "Wallet Update",
+        message: `Your wallet has been ${action} $${numAmount.toFixed(2)}. New balance: $${user.walletBalance.toFixed(2)}`,
+        type: "wallet",
+      });
+    } catch (notifErr) {
+      console.error(
+        "[notification] wallet adjustment failed:",
+        notifErr.message,
+      );
+    }
 
     res.json({
       success: true,

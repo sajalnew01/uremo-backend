@@ -1,5 +1,6 @@
 const Ticket = require("../models/Ticket");
 const TicketMessage = require("../models/TicketMessage");
+const { sendNotification } = require("../services/notification.service");
 
 // Get all tickets with filters
 exports.getAllTickets = async (req, res) => {
@@ -183,6 +184,20 @@ exports.replyTicketAdmin = async (req, res) => {
 
     // Update ticket
     await Ticket.findByIdAndUpdate(req.params.id, updateData);
+
+    // PATCH_29: Send notification to user about admin reply
+    try {
+      await sendNotification({
+        userId: ticket.user,
+        title: "Support Reply",
+        message: `Our team has responded to your ticket "${ticket.subject}". Please check your ticket for details.`,
+        type: "ticket",
+        resourceType: "ticket",
+        resourceId: ticket._id,
+      });
+    } catch (notifErr) {
+      console.error("[notification] admin reply failed:", notifErr.message);
+    }
 
     res.json({ ok: true, message: msg });
   } catch (err) {

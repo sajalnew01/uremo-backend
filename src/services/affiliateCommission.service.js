@@ -6,6 +6,7 @@
 const User = require("../models/User");
 const Order = require("../models/Order");
 const AffiliateCommission = require("../models/AffiliateCommission");
+const { sendNotification } = require("./notification.service");
 
 const COMMISSION_PERCENT = 10; // 10% commission rate
 
@@ -100,6 +101,19 @@ exports.processAffiliateCommission = async (
       `[AffiliateCommission] Created: $${commissionAmount.toFixed(2)} for referrer ${referrer.email} ` +
         `(order: ${orderId}, buyer: ${buyer.email})`,
     );
+
+    // PATCH_29: Notify referrer about earned commission
+    try {
+      await sendNotification({
+        userId: referrer._id,
+        title: "Commission Earned",
+        message: `You earned $${commissionAmount.toFixed(2)} commission from a referral purchase!`,
+        type: "affiliate",
+        sendEmailCopy: true,
+      });
+    } catch (notifErr) {
+      console.error("[notification] commission earned failed:", notifErr.message);
+    }
 
     return commission;
   } catch (error) {

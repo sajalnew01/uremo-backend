@@ -6,6 +6,7 @@
 const User = require("../models/User");
 const AffiliateTransaction = require("../models/AffiliateTransaction");
 const AffiliateWithdrawal = require("../models/AffiliateWithdrawal");
+const { sendNotification } = require("../services/notification.service");
 
 // Global commission rate (10%)
 const COMMISSION_RATE = 0.1;
@@ -652,6 +653,23 @@ exports.approveWithdrawal = async (req, res) => {
     withdrawal.processedAt = new Date();
     await withdrawal.save();
 
+    // PATCH_29: Notify user about approved withdrawal
+    try {
+      await sendNotification({
+        userId: withdrawal.user,
+        title: "Withdrawal Approved",
+        message: `Your withdrawal of $${withdrawal.amount.toFixed(2)} has been approved and paid!`,
+        type: "affiliate",
+        resourceType: "withdrawal",
+        resourceId: withdrawal._id,
+      });
+    } catch (notifErr) {
+      console.error(
+        "[notification] withdrawal approved failed:",
+        notifErr.message,
+      );
+    }
+
     res.json({
       ok: true,
       message: "Withdrawal approved and marked as paid",
@@ -700,6 +718,23 @@ exports.rejectWithdrawal = async (req, res) => {
     withdrawal.processedBy = req.user.id || req.user._id;
     withdrawal.processedAt = new Date();
     await withdrawal.save();
+
+    // PATCH_29: Notify user about rejected withdrawal
+    try {
+      await sendNotification({
+        userId: withdrawal.user,
+        title: "Withdrawal Rejected",
+        message: `Your withdrawal request of $${withdrawal.amount.toFixed(2)} was rejected. The balance has been refunded to your account.`,
+        type: "affiliate",
+        resourceType: "withdrawal",
+        resourceId: withdrawal._id,
+      });
+    } catch (notifErr) {
+      console.error(
+        "[notification] withdrawal rejected failed:",
+        notifErr.message,
+      );
+    }
 
     res.json({
       ok: true,

@@ -6,6 +6,7 @@
 const Rental = require("../models/Rental");
 const Service = require("../models/Service");
 const Order = require("../models/Order");
+const { sendNotification } = require("../services/notification.service");
 
 // Helper to calculate end date
 const calculateEndDate = (startDate, duration, unit) => {
@@ -360,6 +361,23 @@ exports.activateRental = async (req, res) => {
     await Service.findByIdAndUpdate(rental.service, {
       $inc: { currentActiveRentals: 1 },
     });
+
+    // PATCH_29: Notify user about rental activation
+    try {
+      await sendNotification({
+        userId: rental.user,
+        title: "Rental Activated",
+        message: `Your rental subscription is now active! Access has been enabled until ${endDate.toLocaleDateString()}.`,
+        type: "rental",
+        resourceType: "rental",
+        resourceId: rental._id,
+      });
+    } catch (notifErr) {
+      console.error(
+        "[notification] rental activated failed:",
+        notifErr.message,
+      );
+    }
 
     res.json({
       ok: true,

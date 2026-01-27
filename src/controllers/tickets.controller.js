@@ -1,5 +1,6 @@
 const Ticket = require("../models/Ticket");
 const TicketMessage = require("../models/TicketMessage");
+const { sendNotification } = require("../services/notification.service");
 
 // Create a new ticket
 exports.createTicket = async (req, res) => {
@@ -42,6 +43,20 @@ exports.createTicket = async (req, res) => {
       message,
       attachments: validAttachments,
     });
+
+    // PATCH_29: Send notification to user confirming ticket creation
+    try {
+      await sendNotification({
+        userId: req.user._id,
+        title: "Support Ticket Created",
+        message: `Your support ticket "${subject}" has been submitted. Our team will respond shortly.`,
+        type: "ticket",
+        resourceType: "ticket",
+        resourceId: ticket._id,
+      });
+    } catch (notifErr) {
+      console.error("[notification] ticket created failed:", notifErr.message);
+    }
 
     res.status(201).json({ ok: true, ticket });
   } catch (err) {
