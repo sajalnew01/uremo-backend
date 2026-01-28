@@ -2,7 +2,8 @@ const express = require("express");
 
 const auth = require("../middlewares/auth.middleware");
 const admin = require("../middlewares/admin.middleware");
-const JarvisWrite = require("../controllers/jarvisxWrite.controller");
+// PATCH_36: JarvisWrite controller is a stub - routes commented out until implemented
+// const JarvisWrite = require("../controllers/jarvisxWrite.controller");
 const Service = require("../models/Service");
 
 const router = express.Router();
@@ -144,33 +145,25 @@ router.post("/execute", auth, admin, async (req, res) => {
   }
 });
 
+// PATCH_36: Routes below commented out - JarvisWrite controller is a stub
+// These will be re-enabled when the controller is implemented
+
 // Admin-only health
-router.get("/health", auth, admin, JarvisWrite.health);
+// router.get("/health", auth, admin, JarvisWrite.health);
 
 // Propose (admin-only)
-router.post(
-  "/propose",
-  auth,
-  admin,
-  JarvisWrite.proposeLimiter,
-  JarvisWrite.propose,
-);
+// router.post("/propose", auth, admin, JarvisWrite.proposeLimiter, JarvisWrite.propose);
 
 // Proposals
-router.get("/proposals", auth, admin, JarvisWrite.listProposals);
-router.get("/proposals/:id", auth, admin, JarvisWrite.getProposal);
-router.patch("/proposals/:id", auth, admin, JarvisWrite.updateProposal);
-router.put("/proposals/:id", auth, admin, JarvisWrite.updateProposal);
-router.post(
-  "/proposals/:id/approve",
-  auth,
-  admin,
-  JarvisWrite.approveAndExecute,
-);
-router.post("/proposals/:id/reject", auth, admin, JarvisWrite.reject);
+// router.get("/proposals", auth, admin, JarvisWrite.listProposals);
+// router.get("/proposals/:id", auth, admin, JarvisWrite.getProposal);
+// router.patch("/proposals/:id", auth, admin, JarvisWrite.updateProposal);
+// router.put("/proposals/:id", auth, admin, JarvisWrite.updateProposal);
+// router.post("/proposals/:id/approve", auth, admin, JarvisWrite.approveAndExecute);
+// router.post("/proposals/:id/reject", auth, admin, JarvisWrite.reject);
 
 // Memory (admin-only)
-router.get("/memory", auth, admin, JarvisWrite.listMemory);
-router.delete("/memory/:id", auth, admin, JarvisWrite.deleteMemory);
+// router.get("/memory", auth, admin, JarvisWrite.listMemory);
+// router.delete("/memory/:id", auth, admin, JarvisWrite.deleteMemory);
 
 module.exports = router;
