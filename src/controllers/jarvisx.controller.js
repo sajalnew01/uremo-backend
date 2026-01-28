@@ -1045,9 +1045,6 @@ exports.getAdminContext = async (req, res) => {
 };
 
 exports.chat = async (req, res) => {
-  // PATCH_36 DEBUG: Confirm deployment
-  console.log(`[PATCH36_DEPLOY] Build timestamp: ${new Date().toISOString()}`);
-
   // Optional auth: if token present, attach req.user
   tryAttachUser(req);
 
@@ -1258,11 +1255,6 @@ exports.chat = async (req, res) => {
   }
 
   // PATCH_36: Tool-based system routing - PRIORITY before deterministic intents
-  // Route message to tools if pattern matches
-  console.log(
-    `[JARVISX_TOOL_CHECK] Entering tool routing for message="${message.slice(0, 50)}"`,
-  );
-
   const toolContext = {
     userId: req.user?.id || null,
     userRole: req.user?.role || "guest",
@@ -1270,28 +1262,6 @@ exports.chat = async (req, res) => {
   };
 
   const toolRoute = routeToTool(message, toolContext);
-  console.log(
-    `[JARVISX_TOOL_ROUTE] message="${message.slice(0, 50)}" route=${JSON.stringify(toolRoute)}`,
-  );
-
-  // DEBUG: Test endpoint to confirm code is deployed and show route result
-  if (message.toUpperCase().includes("DEBUGTOOLS")) {
-    return res.json({
-      ok: true,
-      reply: "🔧 PATCH_36 Tool routing code confirmed deployed!",
-      intent: "DEBUG_TOOLS",
-      toolsAvailable: [
-        "getServices",
-        "getOrders",
-        "getWallet",
-        "createTicket",
-        "getRentals",
-      ],
-      routeResult: toolRoute,
-      messageReceived: message,
-      buildTime: new Date().toISOString(),
-    });
-  }
 
   if (toolRoute && toolRoute.tool) {
     try {
@@ -1300,25 +1270,6 @@ exports.chat = async (req, res) => {
         toolRoute.params || {},
         toolContext,
       );
-      console.log(
-        `[JARVISX_TOOL_EXEC] tool=${toolRoute.tool} success=${toolResult.success} result=${JSON.stringify(toolResult).slice(0, 200)}`,
-      );
-
-      // DEBUG: Return early with tool result details
-      if (toolRoute.tool === "getServices") {
-        return res.json({
-          ok: true,
-          reply: `Tool executed: ${toolRoute.tool}`,
-          toolResult: {
-            success: toolResult.success,
-            hasData: !!toolResult.data,
-            dataLength: toolResult.data?.length,
-            message: toolResult.message,
-            error: toolResult.error,
-          },
-          intent: "TOOL_DEBUG",
-        });
-      }
 
       if (toolResult.success) {
         // Format tool result into human-readable reply
