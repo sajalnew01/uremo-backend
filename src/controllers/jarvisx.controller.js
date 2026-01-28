@@ -1255,7 +1255,6 @@ exports.chat = async (req, res) => {
   }
 
   // PATCH_36: Tool-based system routing - PRIORITY before deterministic intents
-  // TEMP DEBUG: Return immediately to confirm code path is reached
   const toolContext = {
     userId: req.user?.id || null,
     userRole: req.user?.role || "guest",
@@ -1264,18 +1263,6 @@ exports.chat = async (req, res) => {
 
   const toolRoute = routeToTool(message, toolContext);
 
-  // TEMP: Force return if tool matched
-  if (toolRoute && toolRoute.tool) {
-    return res.json({
-      ok: true,
-      reply: `🛠️ TOOL MATCHED: ${toolRoute.tool} | Message: ${message}`,
-      intent: `TOOL_${toolRoute.tool.toUpperCase()}`,
-      toolRoute: toolRoute,
-    });
-  }
-
-  // Original tool execution (temporarily disabled)
-  /*
   if (toolRoute && toolRoute.tool) {
     try {
       const toolResult = await executeTool(
@@ -1384,7 +1371,6 @@ exports.chat = async (req, res) => {
       // Fall through to normal handlers on tool error
     }
   }
-  */
 
   if (mode === "admin") {
     if (!req.user?.id) {
