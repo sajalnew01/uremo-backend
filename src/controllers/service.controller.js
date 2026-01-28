@@ -5,6 +5,12 @@ const {
   ALL_SUBCATEGORIES,
 } = require("../models/Service");
 
+// PATCH_38: Central action rules
+const {
+  getAllowedActionsForService,
+  getEffectiveCategoryFromService,
+} = require("../config/categoryActions");
+
 function setNoCache(res) {
   res.set(
     "Cache-Control",
@@ -458,6 +464,11 @@ exports.getActiveServices = async (req, res) => {
           s.countryPricing instanceof Map
             ? Object.fromEntries(s.countryPricing)
             : s.countryPricing || {},
+        // PATCH_38: Ensure allowedActions always present
+        allowedActions:
+          s.allowedActions && typeof s.allowedActions === "object"
+            ? s.allowedActions
+            : getAllowedActionsForService(s),
         // PATCH_21: Availability flag for selected country
         availableForCountry,
         selectedCountry: selectedCountry || null,
@@ -667,6 +678,11 @@ exports.getServiceById = async (req, res) => {
         service.countryPricing instanceof Map
           ? Object.fromEntries(service.countryPricing)
           : service.countryPricing || {},
+      // PATCH_38: Action rules
+      allowedActions:
+        service.allowedActions && typeof service.allowedActions === "object"
+          ? service.allowedActions
+          : getAllowedActionsForService(service),
     };
 
     // Wrap in service object for consistent API
@@ -683,6 +699,73 @@ exports.getAllServices = async (req, res) => {
     res.json(services);
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+};
+
+// PATCH_38: GET /api/services/:id/actions
+exports.getServiceActions = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const service = await Service.findById(id)
+      .select("category subcategory allowedActions")
+      .lean();
+
+    if (!service) {
+      return res.status(404).json({ message: "Service not found" });
+    }
+
+    const allowedActions =
+      service.allowedActions && typeof service.allowedActions === "object"
+        ? service.allowedActions
+        : getAllowedActionsForService(service);
+
+    res.json({ allowedActions, category: service.category || "general" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// PATCH_38: Workspace guard (microjobs/writing/online_gigs only)
+exports.getWorkspaceServices = async (req, res) => {
+  try {
+    setNoCache(res);
+    const services = await Service.find({
+      status: "active",
+      category: { $in: ["microjobs", "writing", "online_gigs"] },
+    })
+      .select(
+        "title slug description price currency imageUrl images category subcategory allowedActions updatedAt active status",
+      )
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({ ok: true, services });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: err.message });
+  }
+};
+
+// PATCH_38: Deal portal guard (banks_wallets + crypto_accounts only)
+exports.getDealPortalServices = async (req, res) => {
+  try {
+    setNoCache(res);
+
+    // Fetch a superset then filter by effective category.
+    const raw = await Service.find({ status: "active" })
+      .select(
+        "title slug description price currency imageUrl images category subcategory allowedActions updatedAt active status",
+      )
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const services = (raw || []).filter((s) => {
+      const effective = getEffectiveCategoryFromService(s);
+      return effective === "banks_wallets" || effective === "crypto_accounts";
+    });
+
+    res.json({ ok: true, services });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: err.message });
   }
 };
 

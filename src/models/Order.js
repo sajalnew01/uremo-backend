@@ -24,6 +24,22 @@ const orderSchema = new mongoose.Schema(
       default: "pending",
     },
 
+    // PATCH_38: Action type (buy / rental / deal)
+    orderType: {
+      type: String,
+      enum: ["buy", "rental", "deal"],
+      default: "buy",
+      index: true,
+    },
+
+    // PATCH_38: Deal metadata
+    dealPercent: {
+      type: Number,
+      default: null,
+      min: 0,
+      max: 100,
+    },
+
     // Draft orders (pending) can expire automatically (cleanup job can remove them later)
     expiresAt: {
       type: Date,

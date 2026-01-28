@@ -115,6 +115,14 @@ async function fetchJson(url, init, timeoutMs = 8000) {
   return { res, body, text };
 }
 
+function extractServicesArray(body) {
+  if (Array.isArray(body)) return body;
+  if (body && typeof body === "object" && Array.isArray(body.services)) {
+    return body.services;
+  }
+  return null;
+}
+
 async function canReach(base) {
   try {
     const { res, body } = await fetchJson(
@@ -191,11 +199,12 @@ async function testServices(base) {
     fail(`/api/services returned HTTP ${res.status}`, text);
     return;
   }
-  if (!Array.isArray(body)) {
-    fail(`/api/services expected JSON array`, text);
+  const services = extractServicesArray(body);
+  if (!services) {
+    fail(`/api/services expected JSON array or { services: [...] }`, text);
     return;
   }
-  pass(`/api/services ok (${body.length} items)`);
+  pass(`/api/services ok (${services.length} items)`);
 }
 
 async function testAuthOrdersMy(base, creds) {
@@ -279,12 +288,13 @@ async function testAuthOrdersMy(base, creds) {
       body: servicesBody,
       text: servicesText,
     } = await fetchJson(`${base}/api/services`, { method: "GET" }, 12000);
-    if (!servicesRes.ok || !Array.isArray(servicesBody) || !servicesBody[0]) {
+    const services = servicesRes.ok ? extractServicesArray(servicesBody) : null;
+    if (!services || !services[0]) {
       fail("Could not fetch services for JarvisX admin test", servicesText);
       return;
     }
 
-    const serviceId = servicesBody[0]._id;
+    const serviceId = services[0]._id;
     if (!serviceId || typeof serviceId !== "string") {
       fail("Service item missing _id for JarvisX admin test");
       return;

@@ -4,6 +4,12 @@ const User = require("../models/User");
 const OrderMessage = require("../models/OrderMessage");
 const mongoose = require("mongoose");
 
+// PATCH_38: Action rules enforcement
+const {
+  getAllowedActionsForService,
+  getEffectiveCategoryFromService,
+} = require("../config/categoryActions");
+
 const { sendEmail, getAdminEmails } = require("../services/email.service");
 const {
   paymentSubmitted,
@@ -33,10 +39,21 @@ exports.createOrder = async (req, res) => {
       return res.status(404).json({ message: "Service not found" });
     }
 
+    const allowed =
+      service.allowedActions && typeof service.allowedActions === "object"
+        ? service.allowedActions
+        : getAllowedActionsForService(service);
+    if (!allowed.buy) {
+      return res
+        .status(403)
+        .json({ message: "Buying is not allowed for this service" });
+    }
+
     const order = await Order.create({
       userId: req.user.id,
       serviceId: req.body.serviceId,
       status: "pending",
+      orderType: "buy",
       reminderSent: false,
       payment: null,
       paidAt: null,
@@ -78,6 +95,71 @@ exports.createOrder = async (req, res) => {
       },
       { hook: "adminNewOrderAlert", orderId },
     );
+
+    res.json({ orderId: order._id });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// PATCH_38: Create Deal Order
+// POST /api/orders/deal
+// Body: { serviceId, dealPercent }
+exports.createDealOrder = async (req, res) => {
+  try {
+    const { serviceId, dealPercent } = req.body || {};
+    const service = await Service.findById(serviceId);
+    if (!service) return res.status(404).json({ message: "Service not found" });
+
+    const allowed =
+      service.allowedActions && typeof service.allowedActions === "object"
+        ? service.allowedActions
+        : getAllowedActionsForService(service);
+    if (!allowed.deal) {
+      return res
+        .status(403)
+        .json({ message: "Deal is not allowed for this service" });
+    }
+
+    // Extra safety: forex must never be eligible
+    const effectiveCategory = getEffectiveCategoryFromService(service);
+    if (effectiveCategory === "forex_accounts") {
+      return res
+        .status(403)
+        .json({ message: "Deal is not allowed for forex services" });
+    }
+
+    const pct = Number(dealPercent);
+    if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+      return res
+        .status(400)
+        .json({ message: "dealPercent must be a number between 1 and 100" });
+    }
+
+    const order = await Order.create({
+      userId: req.user.id,
+      serviceId,
+      status: "pending",
+      orderType: "deal",
+      dealPercent: pct,
+      notes: `Deal: ${pct}% - ${service.title}`,
+      reminderSent: false,
+      payment: null,
+      paidAt: null,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      statusLog: [
+        {
+          text: `Deal order created (${pct}%)`,
+          at: new Date(),
+        },
+      ],
+      timeline: [
+        {
+          message: `Deal order created (${pct}%)`,
+          by: "system",
+        },
+      ],
+    });
 
     res.json({ orderId: order._id });
   } catch (err) {

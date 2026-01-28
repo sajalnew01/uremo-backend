@@ -8,6 +8,9 @@ const Service = require("../models/Service");
 const Order = require("../models/Order");
 const { sendNotification } = require("../services/notification.service");
 
+// PATCH_38: Action rules enforcement
+const { getAllowedActionsForService } = require("../config/categoryActions");
+
 // PATCH_31: FlowEngine for orchestrated state transitions
 const FlowEngine = require("../core/flowEngine");
 
@@ -101,6 +104,16 @@ exports.createRentalOrder = async (req, res) => {
       return res.status(404).json({ ok: false, message: "Service not found" });
     }
 
+    const allowed =
+      service.allowedActions && typeof service.allowedActions === "object"
+        ? service.allowedActions
+        : getAllowedActionsForService(service);
+    if (!allowed.rent) {
+      return res
+        .status(403)
+        .json({ ok: false, message: "Rent is not allowed for this service" });
+    }
+
     if (!service.isRental) {
       return res.status(400).json({
         ok: false,
@@ -154,6 +167,7 @@ exports.createRentalOrder = async (req, res) => {
       userId,
       serviceId,
       status: "pending",
+      orderType: "rental",
       notes: `Rental: ${plan.duration} ${plan.unit} - ${service.title}`,
       statusLog: [{ text: "Rental order created", at: new Date() }],
     });
