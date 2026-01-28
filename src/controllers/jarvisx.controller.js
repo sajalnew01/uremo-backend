@@ -1845,6 +1845,9 @@ exports.chat = async (req, res) => {
     };
 
     const toolRoute = routeToTool(message, toolContext);
+    console.log(
+      `[JARVISX_TOOL_ROUTE] message="${message.slice(0, 50)}" route=${toolRoute?.tool || "none"}`,
+    );
 
     if (toolRoute && toolRoute.tool) {
       try {
@@ -1852,6 +1855,9 @@ exports.chat = async (req, res) => {
           toolRoute.tool,
           toolRoute.params || {},
           toolContext,
+        );
+        console.log(
+          `[JARVISX_TOOL_EXEC] tool=${toolRoute.tool} success=${toolResult.success}`,
         );
 
         if (toolResult.success) {
