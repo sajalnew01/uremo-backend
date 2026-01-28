@@ -1301,8 +1301,24 @@ exports.chat = async (req, res) => {
         toolContext,
       );
       console.log(
-        `[JARVISX_TOOL_EXEC] tool=${toolRoute.tool} success=${toolResult.success}`,
+        `[JARVISX_TOOL_EXEC] tool=${toolRoute.tool} success=${toolResult.success} result=${JSON.stringify(toolResult).slice(0, 200)}`,
       );
+
+      // DEBUG: Return early with tool result details
+      if (toolRoute.tool === "getServices") {
+        return res.json({
+          ok: true,
+          reply: `Tool executed: ${toolRoute.tool}`,
+          toolResult: {
+            success: toolResult.success,
+            hasData: !!toolResult.data,
+            dataLength: toolResult.data?.length,
+            message: toolResult.message,
+            error: toolResult.error,
+          },
+          intent: "TOOL_DEBUG",
+        });
+      }
 
       if (toolResult.success) {
         // Format tool result into human-readable reply
