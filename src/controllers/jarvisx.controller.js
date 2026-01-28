@@ -1045,6 +1045,9 @@ exports.getAdminContext = async (req, res) => {
 };
 
 exports.chat = async (req, res) => {
+  // PATCH_36 DEBUG: Confirm deployment
+  console.log(`[PATCH36_DEPLOY] Build timestamp: ${new Date().toISOString()}`);
+
   // Optional auth: if token present, attach req.user
   tryAttachUser(req);
 
