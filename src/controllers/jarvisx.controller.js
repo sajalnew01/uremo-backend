@@ -1254,6 +1254,131 @@ exports.chat = async (req, res) => {
     }
   }
 
+  // PATCH_36: Tool-based system routing - PRIORITY before deterministic intents
+  // Route message to tools if pattern matches
+  const toolContext = {
+    userId: req.user?.id || null,
+    userRole: req.user?.role || "guest",
+    isAdmin: isAdminUser(req),
+  };
+
+  const toolRoute = routeToTool(message, toolContext);
+  console.log(
+    `[JARVISX_TOOL_ROUTE] message="${message.slice(0, 50)}" route=${toolRoute?.tool || "none"}`,
+  );
+
+  if (toolRoute && toolRoute.tool) {
+    try {
+      const toolResult = await executeTool(
+        toolRoute.tool,
+        toolRoute.params || {},
+        toolContext,
+      );
+      console.log(
+        `[JARVISX_TOOL_EXEC] tool=${toolRoute.tool} success=${toolResult.success}`,
+      );
+
+      if (toolResult.success) {
+        // Format tool result into human-readable reply
+        let reply = toolResult.message || "Done!";
+
+        // Add data summary if present
+        if (toolResult.data) {
+          if (Array.isArray(toolResult.data) && toolResult.data.length > 0) {
+            // Format array data as bullet list
+            const items = toolResult.data.slice(0, 5).map((item) => {
+              if (item.service && item.status) {
+                return `• ${item.service} - ${item.status}`;
+              }
+              if (item.title && item.price !== undefined) {
+                return `• ${item.title} - $${item.price}`;
+              }
+              if (item.ticketNumber) {
+                return `• ${item.ticketNumber}: ${item.subject || "No subject"}`;
+              }
+              return `• ${JSON.stringify(item).slice(0, 100)}`;
+            });
+            if (items.length > 0) {
+              reply += "\n\n" + items.join("\n");
+            }
+            if (toolResult.data.length > 5) {
+              reply += `\n... and ${toolResult.data.length - 5} more`;
+            }
+          } else if (typeof toolResult.data === "object") {
+            // Format object data as key-value
+            const { walletBalance, affiliateBalance, totalBalance } =
+              toolResult.data;
+            if (walletBalance !== undefined) {
+              reply = `💰 Wallet: $${walletBalance.toFixed(2)}\n💎 Affiliate: $${(affiliateBalance || 0).toFixed(2)}\n📊 Total: $${(totalBalance || 0).toFixed(2)}`;
+            }
+          }
+        }
+
+        // Build suggested actions
+        const suggestedActions = [];
+        if (toolResult.action?.url) {
+          suggestedActions.push({
+            label:
+              toolResult.action.type === "order_updated"
+                ? "View Order"
+                : "View Details",
+            url: toolResult.action.url,
+          });
+        }
+
+        appendMessage(session, "user", message);
+        appendMessage(session, "assistant", reply);
+        await saveSession(session);
+
+        console.log(
+          `[JARVISX_CHAT_OK] key=${sessionKey.slice(0, 12)}... tool=${toolRoute.tool} mode=tool_execution`,
+        );
+
+        return res.json(
+          withBrainEnvelope(
+            {
+              reply,
+              confidence: toolRoute.confidence || 0.9,
+              usedSources: ["tools", "database"],
+              suggestedActions,
+              llm: getJarvisLlmStatus(),
+              toolUsed: toolRoute.tool,
+            },
+            {
+              intent: `TOOL_${toolRoute.tool.toUpperCase()}`,
+              quickReplies: getQuickActions(toolContext).map((a) => a.label),
+            },
+          ),
+        );
+      } else if (toolResult.code === "AUTH_REQUIRED") {
+        // User needs to log in
+        const reply = "Please log in to access this feature.";
+        appendMessage(session, "user", message);
+        appendMessage(session, "assistant", reply);
+        await saveSession(session);
+
+        return res.json(
+          withBrainEnvelope(
+            {
+              reply,
+              confidence: 0.95,
+              usedSources: ["rules"],
+              suggestedActions: [{ label: "Log In", url: "/login" }],
+              llm: getJarvisLlmStatus(),
+            },
+            { intent: "AUTH_REQUIRED" },
+          ),
+        );
+      }
+      // Tool execution failed - fall through to normal handlers
+    } catch (toolErr) {
+      console.error(
+        `[JARVISX_TOOL_ERROR] tool=${toolRoute.tool} err=${toolErr?.message}`,
+      );
+      // Fall through to normal handlers on tool error
+    }
+  }
+
   if (mode === "admin") {
     if (!req.user?.id) {
       return res.status(401).json({ message: "Authentication required" });
@@ -1833,131 +1958,6 @@ exports.chat = async (req, res) => {
             },
           ),
         );
-      }
-    }
-
-    // PATCH_36: Tool-based system routing - before LLM fallback
-    // Route message to tools if pattern matches
-    const toolContext = {
-      userId: req.user?.id || null,
-      userRole: req.user?.role || "guest",
-      isAdmin: isAdminUser(req),
-    };
-
-    const toolRoute = routeToTool(message, toolContext);
-    console.log(
-      `[JARVISX_TOOL_ROUTE] message="${message.slice(0, 50)}" route=${toolRoute?.tool || "none"}`,
-    );
-
-    if (toolRoute && toolRoute.tool) {
-      try {
-        const toolResult = await executeTool(
-          toolRoute.tool,
-          toolRoute.params || {},
-          toolContext,
-        );
-        console.log(
-          `[JARVISX_TOOL_EXEC] tool=${toolRoute.tool} success=${toolResult.success}`,
-        );
-
-        if (toolResult.success) {
-          // Format tool result into human-readable reply
-          let reply = toolResult.message || "Done!";
-
-          // Add data summary if present
-          if (toolResult.data) {
-            if (Array.isArray(toolResult.data) && toolResult.data.length > 0) {
-              // Format array data as bullet list
-              const items = toolResult.data.slice(0, 5).map((item) => {
-                if (item.service && item.status) {
-                  return `• ${item.service} - ${item.status}`;
-                }
-                if (item.title && item.price !== undefined) {
-                  return `• ${item.title} - $${item.price}`;
-                }
-                if (item.ticketNumber) {
-                  return `• ${item.ticketNumber}: ${item.subject || "No subject"}`;
-                }
-                return `• ${JSON.stringify(item).slice(0, 100)}`;
-              });
-              if (items.length > 0) {
-                reply += "\n\n" + items.join("\n");
-              }
-              if (toolResult.data.length > 5) {
-                reply += `\n... and ${toolResult.data.length - 5} more`;
-              }
-            } else if (typeof toolResult.data === "object") {
-              // Format object data as key-value
-              const { walletBalance, affiliateBalance, totalBalance } =
-                toolResult.data;
-              if (walletBalance !== undefined) {
-                reply = `💰 Wallet: $${walletBalance.toFixed(2)}\n💎 Affiliate: $${(affiliateBalance || 0).toFixed(2)}\n📊 Total: $${(totalBalance || 0).toFixed(2)}`;
-              }
-            }
-          }
-
-          // Build suggested actions
-          const suggestedActions = [];
-          if (toolResult.action?.url) {
-            suggestedActions.push({
-              label:
-                toolResult.action.type === "order_updated"
-                  ? "View Order"
-                  : "View Details",
-              url: toolResult.action.url,
-            });
-          }
-
-          appendMessage(session, "user", message);
-          appendMessage(session, "assistant", reply);
-          await saveSession(session);
-
-          console.log(
-            `[JARVISX_CHAT_OK] key=${sessionKey.slice(0, 12)}... tool=${toolRoute.tool} mode=tool_execution`,
-          );
-
-          return res.json(
-            withBrainEnvelope(
-              {
-                reply,
-                confidence: toolRoute.confidence || 0.9,
-                usedSources: ["tools", "database"],
-                suggestedActions,
-                llm: getJarvisLlmStatus(),
-                toolUsed: toolRoute.tool,
-              },
-              {
-                intent: `TOOL_${toolRoute.tool.toUpperCase()}`,
-                quickReplies: getQuickActions(toolContext).map((a) => a.label),
-              },
-            ),
-          );
-        } else if (toolResult.code === "AUTH_REQUIRED") {
-          // User needs to log in
-          const reply = "Please log in to access this feature.";
-          appendMessage(session, "user", message);
-          appendMessage(session, "assistant", reply);
-          await saveSession(session);
-
-          return res.json(
-            withBrainEnvelope(
-              {
-                reply,
-                confidence: 0.95,
-                usedSources: ["rules"],
-                suggestedActions: [{ label: "Log In", url: "/login" }],
-                llm: getJarvisLlmStatus(),
-              },
-              { intent: "AUTH_REQUIRED" },
-            ),
-          );
-        }
-        // Tool execution failed - fall through to LLM
-      } catch (toolErr) {
-        console.error(
-          `[JARVISX_TOOL_ERROR] tool=${toolRoute.tool} err=${toolErr?.message}`,
-        );
-        // Fall through to LLM on tool error
       }
     }
 
