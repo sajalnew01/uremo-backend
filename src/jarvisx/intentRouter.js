@@ -71,7 +71,7 @@ const INTENT_PATTERNS = [
   {
     tool: "getServices",
     patterns: [
-      /(?:show|get|list|view|browse|see)\s*(?:all\s*)?services?/i,
+      /(?:show|get|list|view|browse|see)\s+(?:me\s+)?(?:all\s+)?(?:available\s+)?services?/i,
       /(?:available|active)\s*services?/i,
       /(?:what|which)\s*services?\s*(?:do\s*you\s*(?:have|offer)|are\s*available)/i,
       /(?:find|search)\s*(?:a\s*)?service/i,
