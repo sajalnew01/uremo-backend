@@ -1319,9 +1319,12 @@ exports.chat = async (req, res) => {
           });
         }
 
-        appendMessage(session, "user", message);
-        appendMessage(session, "assistant", reply);
-        await saveSession(session);
+        // Only save session if it's a valid Mongoose document
+        if (session && typeof session.save === "function") {
+          appendMessage(session, "user", message);
+          appendMessage(session, "assistant", reply);
+          await saveSession(session);
+        }
 
         console.log(
           `[JARVISX_CHAT_OK] key=${sessionKey.slice(0, 12)}... tool=${toolRoute.tool} mode=tool_execution`,
