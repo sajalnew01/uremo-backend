@@ -1263,7 +1263,18 @@ exports.chat = async (req, res) => {
     `[JARVISX_TOOL_CHECK] Entering tool routing for message="${message.slice(0, 50)}"`,
   );
 
-  // DEBUG: Test endpoint to confirm code is deployed
+  const toolContext = {
+    userId: req.user?.id || null,
+    userRole: req.user?.role || "guest",
+    isAdmin: isAdminUser(req),
+  };
+
+  const toolRoute = routeToTool(message, toolContext);
+  console.log(
+    `[JARVISX_TOOL_ROUTE] message="${message.slice(0, 50)}" route=${JSON.stringify(toolRoute)}`,
+  );
+
+  // DEBUG: Test endpoint to confirm code is deployed and show route result
   if (message.toUpperCase().includes("DEBUGTOOLS")) {
     return res.json({
       ok: true,
@@ -1276,20 +1287,11 @@ exports.chat = async (req, res) => {
         "createTicket",
         "getRentals",
       ],
+      routeResult: toolRoute,
+      messageReceived: message,
       buildTime: new Date().toISOString(),
     });
   }
-
-  const toolContext = {
-    userId: req.user?.id || null,
-    userRole: req.user?.role || "guest",
-    isAdmin: isAdminUser(req),
-  };
-
-  const toolRoute = routeToTool(message, toolContext);
-  console.log(
-    `[JARVISX_TOOL_ROUTE] message="${message.slice(0, 50)}" route=${JSON.stringify(toolRoute)}`,
-  );
 
   if (toolRoute && toolRoute.tool) {
     try {
