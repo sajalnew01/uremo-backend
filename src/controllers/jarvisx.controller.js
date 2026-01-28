@@ -1263,6 +1263,23 @@ exports.chat = async (req, res) => {
     `[JARVISX_TOOL_CHECK] Entering tool routing for message="${message.slice(0, 50)}"`,
   );
 
+  // DEBUG: Test endpoint to confirm code is deployed
+  if (message.toUpperCase().includes("DEBUGTOOLS")) {
+    return res.json({
+      ok: true,
+      reply: "🔧 PATCH_36 Tool routing code confirmed deployed!",
+      intent: "DEBUG_TOOLS",
+      toolsAvailable: [
+        "getServices",
+        "getOrders",
+        "getWallet",
+        "createTicket",
+        "getRentals",
+      ],
+      buildTime: new Date().toISOString(),
+    });
+  }
+
   const toolContext = {
     userId: req.user?.id || null,
     userRole: req.user?.role || "guest",
