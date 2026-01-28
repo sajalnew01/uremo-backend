@@ -373,3 +373,58 @@ exports.getUnreadCount = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// PATCH_35: Add internal note
+exports.addInternalNote = async (req, res) => {
+  try {
+    const { note } = req.body;
+
+    if (!note || !note.trim()) {
+      return res.status(400).json({ message: "Note is required" });
+    }
+
+    const adminId = req.user?.id || req.user?._id;
+
+    const ticket = await Ticket.findByIdAndUpdate(
+      req.params.id,
+      {
+        $push: {
+          internalNotes: {
+            note: note.trim(),
+            createdBy: adminId,
+            createdAt: new Date(),
+          },
+        },
+      },
+      { new: true },
+    ).populate("internalNotes.createdBy", "firstName lastName name email");
+
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+
+    res.json({ ok: true, internalNotes: ticket.internalNotes });
+  } catch (err) {
+    console.error("addInternalNote error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// PATCH_35: Get internal notes
+exports.getInternalNotes = async (req, res) => {
+  try {
+    const ticket = await Ticket.findById(req.params.id)
+      .select("internalNotes")
+      .populate("internalNotes.createdBy", "firstName lastName name email")
+      .lean();
+
+    if (!ticket) {
+      return res.status(404).json({ message: "Ticket not found" });
+    }
+
+    res.json({ ok: true, internalNotes: ticket.internalNotes || [] });
+  } catch (err) {
+    console.error("getInternalNotes error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};

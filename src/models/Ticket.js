@@ -42,9 +42,24 @@ const ticketSchema = new mongoose.Schema(
 
     priority: {
       type: String,
-      enum: ["low", "medium", "high"],
+      enum: ["low", "medium", "high", "urgent"],
       default: "medium",
     },
+
+    // PATCH_35: Internal notes for admin-only communication
+    internalNotes: [
+      {
+        note: String,
+        createdBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+        createdAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
 
     // Track last message time for sorting
     lastMessageAt: {
