@@ -48,9 +48,9 @@ function getSessionKey(req) {
  * @returns {Promise<object>} JarvisSession document
  */
 async function loadSession(key) {
-  const existing = await JarvisSession.findOne({ key });
+  const existing = await JarvisSession.findOne({ sessionKey: key });
   if (existing) return existing;
-  return JarvisSession.create({ key });
+  return JarvisSession.create({ sessionKey: key });
 }
 
 /**
@@ -105,6 +105,10 @@ function appendMessage(session, role, content) {
  * @returns {Promise<object>}
  */
 async function saveSession(session) {
+  // Guard: if session is not a Mongoose document, skip saving
+  if (!session || typeof session.save !== "function") {
+    return session;
+  }
   session.updatedAt = new Date();
   return session.save();
 }
