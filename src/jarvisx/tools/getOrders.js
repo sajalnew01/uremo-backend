@@ -21,15 +21,10 @@ async function getOrders(params, context) {
   if (status && typeof status === "string") {
     const validStatuses = [
       "pending",
-      "payment_pending",
-      "payment_submitted",
-      "review",
-      "processing",
-      "pending_review",
-      "assistance_required",
-      "approved",
+      "in_progress",
+      "waiting_user",
       "completed",
-      "rejected",
+      "cancelled",
     ];
     if (validStatuses.includes(status.toLowerCase())) {
       query.status = status.toLowerCase();
@@ -60,22 +55,23 @@ async function getOrders(params, context) {
     completedAt: o.completedAt,
   }));
 
-  // Summary stats
+  // PATCH_37: Summary stats with normalized statuses
   const totalOrders = orders.length;
   const completed = orders.filter((o) => o.status === "completed").length;
-  const pending = orders.filter((o) =>
-    ["pending", "processing", "review", "payment_submitted"].includes(o.status),
+  const inProgress = orders.filter((o) =>
+    ["pending", "in_progress", "waiting_user"].includes(o.status),
   ).length;
+  const cancelled = orders.filter((o) => o.status === "cancelled").length;
 
   return {
     data: formatted,
     summary: {
       total: totalOrders,
       completed,
-      pending,
-      rejected: orders.filter((o) => o.status === "rejected").length,
+      inProgress,
+      cancelled,
     },
-    message: `Found ${totalOrders} orders: ${completed} completed, ${pending} in progress.`,
+    message: `Found ${totalOrders} orders: ${completed} completed, ${inProgress} in progress.`,
   };
 }
 

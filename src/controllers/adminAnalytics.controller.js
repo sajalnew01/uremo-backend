@@ -38,10 +38,10 @@ exports.getAdminAnalytics = async (req, res) => {
       User.countDocuments(),
       Order.countDocuments(),
       Order.countDocuments({ status: "completed" }),
-      Order.countDocuments({ status: "processing" }),
-      Order.countDocuments({ status: "payment_pending" }),
+      Order.countDocuments({ status: "in_progress" }),
+      Order.countDocuments({ status: "pending" }),
       Order.aggregate([
-        { $match: { status: { $in: ["completed", "processing"] } } },
+        { $match: { status: { $in: ["completed", "in_progress"] } } },
         {
           $lookup: {
             from: "services",
@@ -239,7 +239,7 @@ exports.getSystemHealth = async (req, res) => {
 
     // Check recent errors (last hour of failed orders)
     const recentFailedOrders = await Order.countDocuments({
-      status: "rejected",
+      status: "cancelled",
       updatedAt: { $gte: new Date(Date.now() - 3600000) },
     });
 

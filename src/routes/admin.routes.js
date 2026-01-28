@@ -48,17 +48,25 @@ const router = express.Router();
 
 router.get("/orders", auth, admin, getAllOrders);
 router.get("/orders/rejected", auth, admin, getRejectedArchivedOrders);
+router.get("/orders/cancelled", auth, admin, getRejectedArchivedOrders); // PATCH_37: alias
 router.get("/messages", auth, admin, getAdminInbox);
 router.get("/messages/unread", auth, admin, getAdminUnreadSnapshot);
 router.put("/orders/:id", auth, admin, updateOrderStatus);
 router.put("/orders/:id/verify-payment", auth, admin, verifyPayment);
 router.put("/orders/:id/archive-rejected", auth, admin, archiveRejectedOrder);
+router.put("/orders/:id/archive-cancelled", auth, admin, archiveRejectedOrder); // PATCH_37: alias
 router.put(
   "/orders/:id/unarchive-rejected",
   auth,
   admin,
   unarchiveRejectedOrder,
 );
+router.put(
+  "/orders/:id/unarchive-cancelled",
+  auth,
+  admin,
+  unarchiveRejectedOrder,
+); // PATCH_37: alias
 router.post("/orders/:id/note", auth, admin, addOrderNote);
 router.post("/orders/:id/reply", auth, admin, adminReplyToOrder);
 router.post("/orders/:id/support/mark-read", auth, admin, markOrderSupportRead);

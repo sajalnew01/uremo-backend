@@ -36,7 +36,7 @@ exports.createOrder = async (req, res) => {
     const order = await Order.create({
       userId: req.user.id,
       serviceId: req.body.serviceId,
-      status: "payment_pending",
+      status: "pending",
       reminderSent: false,
       payment: null,
       paidAt: null,
@@ -70,13 +70,13 @@ exports.createOrder = async (req, res) => {
           subject: "Admin alert: new order created",
           html: adminNewOrderAlert({
             _id: orderId,
-            status: "payment_pending",
+            status: "pending",
             userEmail: user?.email || "",
             serviceTitle,
           }),
         });
       },
-      { hook: "adminNewOrderAlert", orderId }
+      { hook: "adminNewOrderAlert", orderId },
     );
 
     res.json({ orderId: order._id });
@@ -124,7 +124,7 @@ exports.myOrders = async (req, res) => {
           {
             resourceType: proofResourceType,
             mimeType,
-          }
+          },
         );
       }
 
@@ -224,21 +224,21 @@ exports.submitPayment = async (req, res) => {
       return res.status(403).json({ message: "Access denied" });
     }
 
-    // Prevent resubmission unless rejected
-    if (order.status === "payment_submitted") {
+    // Prevent resubmission unless cancelled
+    if (order.status === "waiting_user") {
       return res
         .status(400)
         .json({ message: "Payment already submitted for this order" });
     }
 
-    if (!["payment_pending", "rejected"].includes(order.status)) {
+    if (!["pending", "cancelled"].includes(order.status)) {
       return res.status(400).json({
         message: `Cannot submit payment for an order in status: ${order.status}`,
       });
     }
 
     if (
-      order.status === "payment_pending" &&
+      order.status === "pending" &&
       order.expiresAt &&
       Date.now() > new Date(order.expiresAt).getTime()
     ) {
@@ -260,7 +260,7 @@ exports.submitPayment = async (req, res) => {
       resourceType: resolvedResourceType,
     });
 
-    // Update order with payment info
+    // Update order with payment info - status goes to waiting_user (awaiting admin verification)
     order.payment = {
       methodId,
       reference: reference || "",
@@ -270,7 +270,7 @@ exports.submitPayment = async (req, res) => {
       proofFormat: resolvedFormat || undefined,
       submittedAt: new Date(),
     };
-    order.status = "payment_submitted";
+    order.status = "waiting_user";
     order.expiresAt = null;
     order.statusLog = order.statusLog || [];
     order.statusLog.push({
@@ -319,7 +319,7 @@ exports.submitPayment = async (req, res) => {
           });
         }
       },
-      { hook: "paymentSubmitted", orderId }
+      { hook: "paymentSubmitted", orderId },
     );
 
     res.json({

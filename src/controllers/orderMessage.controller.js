@@ -70,18 +70,11 @@ async function assertOrderAccess(req, res) {
     return null;
   }
 
-  // PATCH_31: GUARDRAIL - Users can only chat on orders that have been paid
+  // PATCH_37: GUARDRAIL - Users can only chat on orders that are active
   // Admins can always access chat for any order
   if (!isAdmin) {
-    const paidStatuses = [
-      "processing",
-      "completed",
-      "approved",
-      "pending_review",
-      "assistance_required",
-      "review",
-    ];
-    if (!paidStatuses.includes(order.status)) {
+    const activeStatuses = ["in_progress", "completed", "waiting_user"];
+    if (!activeStatuses.includes(order.status)) {
       res.status(400).json({
         message:
           "Chat is only available for orders that are being processed. Please complete payment first.",

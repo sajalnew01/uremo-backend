@@ -2251,8 +2251,9 @@ exports.healthReport = async (req, res) => {
       safeCount(ServiceRequest, {}),
       safeCount(ServiceRequest, { status: "new" }),
       safeCount(ServiceRequest, { status: "draft" }),
+      // PATCH_37: normalized to waiting_user status
       safeCount(Order, {
-        status: { $in: ["payment_submitted", "pending_review", "review"] },
+        status: "waiting_user",
         "payment.proofUrl": { $exists: true, $ne: "" },
         "payment.verifiedAt": { $in: [null, undefined] },
       }),

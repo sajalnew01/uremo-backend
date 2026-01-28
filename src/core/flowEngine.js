@@ -39,21 +39,13 @@ const loadModels = () => {
  * NOTE: States are adapted to match existing model enums.
  */
 const STATE_MAP = {
-  // Order states matching Order.js enum
+  // PATCH_37: Order states normalized
   order: {
-    pending: ["payment_pending", "cancelled"],
-    payment_pending: ["payment_submitted", "cancelled", "expired"],
-    payment_submitted: ["processing", "rejected", "review"],
-    review: ["processing", "rejected", "pending_review"],
-    pending_review: ["processing", "rejected", "assistance_required"],
-    assistance_required: ["processing", "rejected"],
-    processing: ["completed", "approved", "rejected"],
-    approved: ["completed"],
-    completed: ["closed"],
-    rejected: ["payment_pending", "closed"], // Can retry payment or close
-    closed: [],
+    pending: ["in_progress", "cancelled"],
+    in_progress: ["waiting_user", "completed", "cancelled"],
+    waiting_user: ["in_progress", "completed", "cancelled"],
+    completed: [],
     cancelled: [],
-    expired: [],
   },
 
   // Ticket states matching Ticket.js enum
@@ -210,8 +202,8 @@ async function transition(type, id, nextState, meta = {}) {
       createdAt: new Date(),
     });
 
-    // Handle special order transitions
-    if (nextState === "processing" && previousState === "payment_submitted") {
+    // Handle special order transitions (PATCH_37: normalized statuses)
+    if (nextState === "in_progress" && previousState === "pending") {
       item.payment = item.payment || {};
       item.payment.verifiedAt = new Date();
       item.paidAt = item.paidAt || new Date();

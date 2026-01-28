@@ -149,11 +149,11 @@ exports.createRentalOrder = async (req, res) => {
     const startDate = new Date();
     const endDate = calculateEndDate(startDate, plan.duration, plan.unit);
 
-    // Create the order first
+    // Create the order first (PATCH_37: normalized status)
     const order = await Order.create({
       userId,
       serviceId,
-      status: "payment_pending",
+      status: "pending",
       notes: `Rental: ${plan.duration} ${plan.unit} - ${service.title}`,
       statusLog: [{ text: "Rental order created", at: new Date() }],
     });
@@ -664,11 +664,11 @@ exports.renewRental = async (req, res) => {
         : new Date(); // Start now if expired
     const endDate = calculateEndDate(startDate, plan.duration, plan.unit);
 
-    // Create new order
+    // Create new order (PATCH_37: normalized status)
     const order = await Order.create({
       userId,
       serviceId: service._id,
-      status: "payment_pending",
+      status: "pending",
       notes: `Rental Renewal: ${plan.duration} ${plan.unit} - ${service.title}`,
       statusLog: [{ text: "Rental renewal order created", at: new Date() }],
     });

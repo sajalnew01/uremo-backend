@@ -16,7 +16,7 @@ function humanizeCategory(category) {
 function getFrontendUrl() {
   return String(process.env.FRONTEND_URL || "https://uremo.online").replace(
     /\/$/,
-    ""
+    "",
   );
 }
 
@@ -83,7 +83,7 @@ function kvRow(label, value) {
       <td style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.08);">
         <div style="color:#93A4B8;font-size:12px;">${escapeHtml(label)}</div>
         <div style="color:#E5E7EB;font-size:14px;font-weight:600;">${escapeHtml(
-          value
+          value,
         )}</div>
       </td>
     </tr>
@@ -97,7 +97,7 @@ function welcomeEmail({ name }) {
     <h1 style="margin:0 0 8px 0;font-size:24px;line-height:30px;color:#FFFFFF;">Welcome to UREMO</h1>
     <p style="margin:0 0 16px 0;color:#B6C2D6;font-size:14px;line-height:22px;">
       Hi ${escapeHtml(
-        name || "there"
+        name || "there",
       )}, your account is ready. UREMO is a <b>manual, secure, verified</b> service desk.
     </p>
 
@@ -155,7 +155,7 @@ function welcomeEmailNew(userEmail, topServices) {
               const price = formatMoney(s?.price);
               return kvRow(
                 title,
-                `${category ? category + " • " : ""}${price}`
+                `${category ? category + " • " : ""}${price}`,
               );
             })
             .join("")}
@@ -168,7 +168,7 @@ function welcomeEmailNew(userEmail, topServices) {
     <h1 style="margin:0 0 8px 0;font-size:24px;line-height:30px;color:#FFFFFF;">Welcome to UREMO</h1>
     <p style="margin:0 0 12px 0;color:#B6C2D6;font-size:14px;line-height:22px;">
       Hi ${escapeHtml(
-        nameGuess
+        nameGuess,
       )}, thanks for joining UREMO. Browse trusted onboarding/KYC assistance services and track your order progress.
     </p>
     ${listHtml}
@@ -324,7 +324,7 @@ function adminNewOrderAlert(order) {
   const serviceTitle =
     o?.serviceId?.title || o?.serviceTitle || o?.service?.title || "Service";
   const adminUrl = `${getFrontendUrl()}/admin/orders/${encodeURIComponent(
-    orderId
+    orderId,
   )}`;
 
   const bodyHtml = `
@@ -336,7 +336,7 @@ function adminNewOrderAlert(order) {
       ${kvRow("Order ID", orderId)}
       ${kvRow("User", String(userEmail))}
       ${kvRow("Service", String(serviceTitle))}
-      ${kvRow("Status", String(o.status || "payment_pending"))}
+      ${kvRow("Status", String(o.status || "pending"))}
     </table>
     <div style="margin-top:18px;">${primaryButton({
       href: adminUrl,
@@ -359,7 +359,7 @@ function adminPaymentProofAlert(order) {
   const serviceTitle =
     o?.serviceId?.title || o?.serviceTitle || o?.service?.title || "Service";
   const adminUrl = `${getFrontendUrl()}/admin/orders/${encodeURIComponent(
-    orderId
+    orderId,
   )}`;
 
   const bodyHtml = `
@@ -371,7 +371,7 @@ function adminPaymentProofAlert(order) {
       ${kvRow("Order ID", orderId)}
       ${kvRow("User", String(userEmail))}
       ${kvRow("Service", String(serviceTitle))}
-      ${kvRow("Status", String(o.status || "payment_submitted"))}
+      ${kvRow("Status", String(o.status || "waiting_user"))}
     </table>
     <div style="margin-top:18px;">${primaryButton({
       href: adminUrl,
@@ -419,7 +419,7 @@ function paymentSubmittedEmail({ name, orderId, serviceTitle }) {
     <h1 style="margin:0 0 8px 0;font-size:22px;line-height:28px;color:#FFFFFF;">Payment proof received</h1>
     <p style="margin:0 0 14px 0;color:#B6C2D6;font-size:14px;line-height:22px;">
       Hi ${escapeHtml(
-        name || "there"
+        name || "there",
       )}, we received your payment proof. Our team will review it and update your order shortly.
     </p>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:8px;">
@@ -461,7 +461,7 @@ function applicationSubmittedEmail({ name, category }) {
     <h1 style="margin:0 0 8px 0;font-size:22px;line-height:28px;color:#FFFFFF;">Application submitted</h1>
     <p style="margin:0 0 14px 0;color:#B6C2D6;font-size:14px;line-height:22px;">
       Hi ${escapeHtml(
-        name || "there"
+        name || "there",
       )}, your application has been received. Our team reviews applications manually.
     </p>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:8px;">

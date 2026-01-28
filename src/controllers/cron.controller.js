@@ -20,8 +20,9 @@ exports.paymentPendingReminders = async (req, res) => {
     const now = new Date();
     const cutoff = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
+    // PATCH_37: normalized to "pending" status
     const candidates = await Order.find({
-      status: "payment_pending",
+      status: "pending",
       reminderSent: { $ne: true },
       createdAt: { $lte: cutoff },
       $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
@@ -54,7 +55,7 @@ exports.paymentPendingReminders = async (req, res) => {
 
         await Order.updateOne(
           { _id: order._id, reminderSent: { $ne: true } },
-          { $set: { reminderSent: true } }
+          { $set: { reminderSent: true } },
         );
 
         sent += 1;

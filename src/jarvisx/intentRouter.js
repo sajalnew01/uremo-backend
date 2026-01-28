@@ -44,10 +44,12 @@ const INTENT_PATTERNS = [
     extractParams: (text) => {
       // Extract status filter
       const statusMatch = text.match(
-        /(?:pending|completed|processing|rejected|approved|review)/i,
+        /(?:pending|in\s*_?progress|waiting\s*_?user|completed|cancelled)/i,
       );
       return {
-        status: statusMatch ? statusMatch[0].toLowerCase() : undefined,
+        status: statusMatch
+          ? statusMatch[0].toLowerCase().replace(/\s+/g, "_")
+          : undefined,
         limit: 10,
       };
     },
@@ -168,13 +170,12 @@ const INTENT_PATTERNS = [
       // Extract order ID (MongoDB ObjectId format)
       const idMatch = text.match(/([a-f0-9]{24})/i);
 
-      // Extract status
+      // PATCH_37: Extract normalized status
       let status;
-      if (/approv/i.test(text)) status = "approved";
-      else if (/reject/i.test(text)) status = "rejected";
-      else if (/complet/i.test(text)) status = "completed";
-      else if (/process/i.test(text)) status = "processing";
-      else if (/review/i.test(text)) status = "review";
+      if (/complet/i.test(text)) status = "completed";
+      else if (/cancel/i.test(text)) status = "cancelled";
+      else if (/progress|process/i.test(text)) status = "in_progress";
+      else if (/wait/i.test(text)) status = "waiting_user";
       else if (/pending/i.test(text)) status = "pending";
 
       // Extract note

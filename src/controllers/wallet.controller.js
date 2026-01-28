@@ -208,7 +208,7 @@ exports.payWithWallet = async (req, res) => {
     // PATCH_31: Use FlowEngine for status transition
     // FlowEngine handles: status update, timeline, affiliate commission (via hooks)
     try {
-      await FlowEngine.transition("order", order._id, "processing", {
+      await FlowEngine.transition("order", order._id, "in_progress", {
         actor: "system",
         reason: "Payment completed via wallet",
         paymentMethod: "wallet",
@@ -222,7 +222,7 @@ exports.payWithWallet = async (req, res) => {
       );
       order.paymentStatus = "paid";
       order.paymentMethod = "wallet";
-      order.status = "processing";
+      order.status = "in_progress";
       order.paidAt = new Date();
       await order.save();
 

@@ -37,15 +37,17 @@ const loadServices = () => {
  * Order payment verified → processing
  * - Process affiliate commission
  * - Send notification to user
+ /**
+ * PATCH_37: Order in_progress (renamed from processing)
+ * - Process affiliate commission
+ * - Send processing notification
  */
-on("order.processing", async ({ item, previousState, meta }) => {
+on("order.in_progress", async ({ item, previousState, meta }) => {
   loadServices();
 
   try {
-    // Only process affiliate commission when transitioning from payment states
-    if (
-      ["payment_submitted", "review", "pending_review"].includes(previousState)
-    ) {
+    // Only process affiliate commission when transitioning from waiting_user (payment verified)
+    if (["waiting_user", "pending"].includes(previousState)) {
       // Process affiliate commission
       await processAffiliateCommission(
         item._id,
@@ -60,7 +62,7 @@ on("order.processing", async ({ item, previousState, meta }) => {
     if (item.userId) {
       await sendNotification({
         userId: item.userId,
-        title: "Order Processing",
+        title: "Order In Progress",
         message: `Your order #${item.orderNumber || item._id.toString().slice(-6)} is now being processed.`,
         type: "order",
         resourceType: "order",
@@ -69,7 +71,7 @@ on("order.processing", async ({ item, previousState, meta }) => {
       });
     }
   } catch (err) {
-    console.error("[FlowHooks] order.processing error:", err.message);
+    console.error("[FlowHooks] order.in_progress error:", err.message);
   }
 });
 
@@ -98,44 +100,20 @@ on("order.completed", async ({ item }) => {
 });
 
 /**
- * Order approved
- * - Send approval notification
+ * PATCH_37: Order cancelled (renamed from rejected)
+ * - Send cancellation notification with reason
  */
-on("order.approved", async ({ item }) => {
-  loadServices();
-
-  try {
-    if (item.userId) {
-      await sendNotification({
-        userId: item.userId,
-        title: "Order Approved",
-        message: `Your order #${item.orderNumber || item._id.toString().slice(-6)} has been approved!`,
-        type: "order",
-        resourceType: "order",
-        resourceId: item._id,
-        sendEmailCopy: true,
-      });
-    }
-  } catch (err) {
-    console.error("[FlowHooks] order.approved error:", err.message);
-  }
-});
-
-/**
- * Order rejected
- * - Send rejection notification with reason
- */
-on("order.rejected", async ({ item, meta }) => {
+on("order.cancelled", async ({ item, meta }) => {
   loadServices();
 
   try {
     if (item.userId) {
       const reason =
-        meta.reason || "Please check your order details and resubmit.";
+        meta.reason || "Please check your order details and try again.";
       await sendNotification({
         userId: item.userId,
-        title: "Order Rejected",
-        message: `Your order #${item.orderNumber || item._id.toString().slice(-6)} was rejected. ${reason}`,
+        title: "Order Cancelled",
+        message: `Your order #${item.orderNumber || item._id.toString().slice(-6)} was cancelled. ${reason}`,
         type: "order",
         resourceType: "order",
         resourceId: item._id,
@@ -143,15 +121,15 @@ on("order.rejected", async ({ item, meta }) => {
       });
     }
   } catch (err) {
-    console.error("[FlowHooks] order.rejected error:", err.message);
+    console.error("[FlowHooks] order.cancelled error:", err.message);
   }
 });
 
 /**
- * Payment submitted
+ * PATCH_37: waiting_user - Payment submitted, awaiting verification
  * - Notify user of submission confirmation
  */
-on("order.payment_submitted", async ({ item }) => {
+on("order.waiting_user", async ({ item }) => {
   loadServices();
 
   try {
@@ -167,7 +145,7 @@ on("order.payment_submitted", async ({ item }) => {
       });
     }
   } catch (err) {
-    console.error("[FlowHooks] order.payment_submitted error:", err.message);
+    console.error("[FlowHooks] order.waiting_user error:", err.message);
   }
 });
 

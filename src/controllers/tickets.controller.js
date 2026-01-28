@@ -42,14 +42,8 @@ exports.createTicket = async (req, res) => {
         });
       }
 
-      // For order-related tickets, order must be in a paid/processing state
-      const paidStatuses = [
-        "processing",
-        "completed",
-        "approved",
-        "pending_review",
-        "assistance_required",
-      ];
+      // PATCH_37: For order-related tickets, order must be in active/processing state
+      const paidStatuses = ["in_progress", "completed", "waiting_user"];
       if (!paidStatuses.includes(order.status)) {
         return res.status(400).json({
           message:

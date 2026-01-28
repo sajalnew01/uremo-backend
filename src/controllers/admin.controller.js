@@ -24,18 +24,17 @@ exports.getAllOrders = async (req, res) => {
       .trim()
       .toLowerCase();
 
-    // Exclude archived rejected orders by default.
+    // Exclude archived cancelled orders by default.
     const query = { isRejectedArchive: { $ne: true } };
 
     // Optional status filter from UI tabs.
-    // PATCH_32: Added completed and rejected filters
-    // UI values: pending | submitted | processing | completed | rejected | all
+    // PATCH_37: Normalized to 5 statuses: pending, in_progress, waiting_user, completed, cancelled
     const statusMap = {
-      pending: "payment_pending",
-      submitted: ["payment_submitted", "pending_review"],
-      processing: "processing",
+      pending: "pending",
+      in_progress: "in_progress",
+      waiting_user: "waiting_user",
       completed: "completed",
-      rejected: "rejected",
+      cancelled: "cancelled",
     };
 
     if (statusQuery && statusQuery !== "all") {
@@ -77,10 +76,11 @@ exports.archiveRejectedOrder = async (req, res) => {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    if (order.status !== "rejected") {
+    // PATCH_37: Support both old "rejected" and new "cancelled" statuses
+    if (order.status !== "cancelled" && order.status !== "rejected") {
       return res
         .status(400)
-        .json({ message: "Only rejected orders can be archived" });
+        .json({ message: "Only cancelled orders can be archived" });
     }
 
     if (!order.isRejectedArchive) {
@@ -88,12 +88,12 @@ exports.archiveRejectedOrder = async (req, res) => {
       order.rejectedAt = new Date();
       order.statusLog = order.statusLog || [];
       order.statusLog.push({
-        text: "Order archived to rejected list",
+        text: "Order archived to cancelled list",
         at: new Date(),
       });
       order.timeline = order.timeline || [];
       order.timeline.push({
-        message: "Order moved to rejected list",
+        message: "Order moved to cancelled archive",
         by: "admin",
       });
       await order.save();
@@ -138,18 +138,28 @@ exports.unarchiveRejectedOrder = async (req, res) => {
 
 exports.updateOrderStatus = async (req, res) => {
   try {
-    const { status, reason } = req.body;
+    const { status, reason, note } = req.body;
 
     const allowed = [
-      "payment_pending",
-      "payment_submitted",
-      "processing",
+      "pending",
+      "in_progress",
+      "waiting_user",
       "completed",
-      "rejected",
+      "cancelled",
     ];
 
     if (!allowed.includes(status)) {
       return res.status(400).json({ message: "Invalid status" });
+    }
+
+    // PATCH_37: Admin guardrails - require note for completed
+    if (status === "completed" && !note?.trim()) {
+      return res.status(400).json({ message: "Completion note required" });
+    }
+
+    // PATCH_37: Admin guardrails - require reason for cancelled
+    if (status === "cancelled" && !reason?.trim()) {
+      return res.status(400).json({ message: "Cancellation reason required" });
     }
 
     // PATCH_31: Check if transition is allowed via FlowEngine
@@ -165,18 +175,18 @@ exports.updateOrderStatus = async (req, res) => {
       });
     }
 
-    // PATCH_31: Use FlowEngine for orchestrated transition
+    // PATCH_37: Use FlowEngine for orchestrated transition with normalized statuses
     const prevStatus = canTransitionResult.currentState;
     let transitionReason = reason;
 
     if (!transitionReason) {
       if (
-        prevStatus === "payment_submitted" &&
-        ["processing", "completed"].includes(status)
+        prevStatus === "waiting_user" &&
+        ["in_progress", "completed"].includes(status)
       ) {
         transitionReason = "Payment verified by admin";
-      } else if (status === "rejected") {
-        transitionReason = "Payment rejected — user must resubmit proof";
+      } else if (status === "cancelled") {
+        transitionReason = "Order cancelled — user must resubmit proof";
       } else {
         transitionReason = `Status changed to: ${status}`;
       }
@@ -225,18 +235,18 @@ exports.updateOrderStatus = async (req, res) => {
 
 exports.verifyPayment = async (req, res) => {
   try {
-    // PATCH_31: Check if transition is allowed via FlowEngine
+    // PATCH_37: Check if transition is allowed via FlowEngine (waiting_user → in_progress)
     const canTransitionResult = await FlowEngine.canTransition(
       "order",
       req.params.id,
-      "processing",
+      "in_progress",
     );
 
     if (!canTransitionResult.allowed) {
-      if (canTransitionResult.currentState !== "payment_submitted") {
+      if (canTransitionResult.currentState !== "waiting_user") {
         return res.status(400).json({
           message:
-            "Payment can only be verified when status is payment_submitted",
+            "Payment can only be verified when status is waiting_user (awaiting verification)",
           currentStatus: canTransitionResult.currentState,
         });
       }
@@ -245,12 +255,12 @@ exports.verifyPayment = async (req, res) => {
       });
     }
 
-    // PATCH_31: Use FlowEngine for orchestrated transition
+    // PATCH_37: Use FlowEngine for orchestrated transition to in_progress
     // FlowEngine handles: status update, timeline, affiliate commission (via hooks)
     const order = await FlowEngine.transition(
       "order",
       req.params.id,
-      "processing",
+      "in_progress",
       {
         actor: "admin",
         adminId: req.user?._id || req.user?.id,
@@ -748,12 +758,12 @@ exports.resetAllTestData = async (req, res) => {
       results.commissionsDeleted = commDelete.deletedCount;
     }
 
-    // Optionally delete test orders (only orders from test emails)
+    // Optionally delete test orders (only orders from test emails or pending)
     if (includeOrders) {
       const testOrdersDelete = await Order.deleteMany({
         $or: [
           { "userId.email": { $regex: /@test\.com$/i } },
-          { status: "payment_pending" }, // Only pending orders
+          { status: "pending" }, // PATCH_37: normalized status
         ],
       });
       results.testOrdersDeleted = testOrdersDelete.deletedCount;

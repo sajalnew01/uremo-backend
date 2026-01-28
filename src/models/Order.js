@@ -16,20 +16,15 @@ const orderSchema = new mongoose.Schema(
       type: String,
       enum: [
         "pending",
-        "payment_pending",
-        "payment_submitted",
-        "review",
-        "processing",
-        "pending_review",
-        "assistance_required",
-        "approved",
+        "in_progress",
+        "waiting_user",
         "completed",
-        "rejected",
+        "cancelled",
       ],
       default: "pending",
     },
 
-    // Draft orders (payment_pending) can expire automatically (cleanup job can remove them later)
+    // Draft orders (pending) can expire automatically (cleanup job can remove them later)
     expiresAt: {
       type: Date,
       default: null,
@@ -96,7 +91,7 @@ const orderSchema = new mongoose.Schema(
     },
 
     // FIX_PACK_02_REJECTED_CHAT_ORDERS_GREEN
-    // When true, a rejected order is moved to the admin's "Rejected Orders" list.
+    // When true, a cancelled order is moved to the admin's "Cancelled Orders" list.
     // This does not delete the order; it just hides it from the default admin list.
     isRejectedArchive: {
       type: Boolean,

@@ -30,15 +30,10 @@ async function updateOrderStatus(params, context) {
 
   const validStatuses = [
     "pending",
-    "payment_pending",
-    "payment_submitted",
-    "review",
-    "processing",
-    "pending_review",
-    "assistance_required",
-    "approved",
+    "in_progress",
+    "waiting_user",
     "completed",
-    "rejected",
+    "cancelled",
   ];
 
   const normalizedStatus = String(status).toLowerCase();
