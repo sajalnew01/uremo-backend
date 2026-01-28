@@ -1256,6 +1256,10 @@ exports.chat = async (req, res) => {
 
   // PATCH_36: Tool-based system routing - PRIORITY before deterministic intents
   // Route message to tools if pattern matches
+  console.log(
+    `[JARVISX_TOOL_CHECK] Entering tool routing for message="${message.slice(0, 50)}"`,
+  );
+
   const toolContext = {
     userId: req.user?.id || null,
     userRole: req.user?.role || "guest",
@@ -1264,7 +1268,7 @@ exports.chat = async (req, res) => {
 
   const toolRoute = routeToTool(message, toolContext);
   console.log(
-    `[JARVISX_TOOL_ROUTE] message="${message.slice(0, 50)}" route=${toolRoute?.tool || "none"}`,
+    `[JARVISX_TOOL_ROUTE] message="${message.slice(0, 50)}" route=${JSON.stringify(toolRoute)}`,
   );
 
   if (toolRoute && toolRoute.tool) {
