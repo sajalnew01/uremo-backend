@@ -729,7 +729,7 @@ exports.getServiceActions = async (req, res) => {
 exports.getWorkspaceServices = async (req, res) => {
   try {
     setNoCache(res);
-    const services = await Service.find({
+    const raw = await Service.find({
       status: "active",
       category: { $in: ["microjobs", "writing", "online_gigs"] },
     })
@@ -738,6 +738,15 @@ exports.getWorkspaceServices = async (req, res) => {
       )
       .sort({ createdAt: -1 })
       .lean();
+
+    // Ensure allowedActions is always attached
+    const services = (raw || []).map((s) => ({
+      ...s,
+      allowedActions:
+        s.allowedActions && typeof s.allowedActions === "object"
+          ? s.allowedActions
+          : getAllowedActionsForService(s),
+    }));
 
     res.json({ ok: true, services });
   } catch (err) {
@@ -758,10 +767,18 @@ exports.getDealPortalServices = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    const services = (raw || []).filter((s) => {
-      const effective = getEffectiveCategoryFromService(s);
-      return effective === "banks_wallets" || effective === "crypto_accounts";
-    });
+    const services = (raw || [])
+      .filter((s) => {
+        const effective = getEffectiveCategoryFromService(s);
+        return effective === "banks_wallets" || effective === "crypto_accounts";
+      })
+      .map((s) => ({
+        ...s,
+        allowedActions:
+          s.allowedActions && typeof s.allowedActions === "object"
+            ? s.allowedActions
+            : getAllowedActionsForService(s),
+      }));
 
     res.json({ ok: true, services });
   } catch (err) {

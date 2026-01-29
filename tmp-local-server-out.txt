@@ -1,0 +1,6 @@
+[FlowHooks] Event hooks registered successfully
+Jarvisx providers updated
+[dotenv@17.2.3] injecting env (13) from .env -- tip: 🗂️ backup and recover secrets: https://dotenvx.com/ops
+[Socket.io] Initialized
+UREMO backend running on port 5000
+MongoDB connected successfully to: test

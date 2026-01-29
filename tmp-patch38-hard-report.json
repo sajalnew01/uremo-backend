@@ -1,0 +1,84 @@
+{
+  "patch": "PATCH_38",
+  "startedAt": "2026-01-28T19:21:47.397Z",
+  "base": "http://localhost:5000",
+  "phases": [
+    {
+      "phase": "health",
+      "name": "/api/health reachable",
+      "status": "pass",
+      "at": "2026-01-28T19:21:47.549Z",
+      "details": null
+    },
+    {
+      "phase": "services",
+      "name": "Public services + actions",
+      "status": "fail",
+      "at": "2026-01-28T19:21:48.278Z",
+      "details": "No services returned from /api/services"
+    },
+    {
+      "phase": "guards",
+      "name": "GET /api/services/workspace",
+      "status": "pass",
+      "at": "2026-01-28T19:21:48.379Z",
+      "details": {
+        "count": 0
+      }
+    },
+    {
+      "phase": "guards",
+      "name": "GET /api/services/deals",
+      "status": "pass",
+      "at": "2026-01-28T19:21:48.470Z",
+      "details": {
+        "count": 0
+      }
+    },
+    {
+      "phase": "admin",
+      "name": "Admin flows",
+      "status": "fail",
+      "at": "2026-01-28T19:22:35.041Z",
+      "details": "login failed: HTTP 401 {\"code\":\"USER_NOT_FOUND\",\"message\":\"Invalid email or password\"}"
+    },
+    {
+      "phase": "users",
+      "name": "User signup",
+      "status": "pass",
+      "at": "2026-01-28T19:22:37.944Z",
+      "details": {
+        "created": 5
+      }
+    },
+    {
+      "phase": "users",
+      "name": "Enforcement tests",
+      "status": "warn",
+      "at": "2026-01-28T19:22:37.945Z",
+      "details": "Admin phase failed; no test services"
+    },
+    {
+      "phase": "load",
+      "name": "Simulate 100 users",
+      "status": "pass",
+      "at": "2026-01-28T19:22:46.792Z",
+      "details": null
+    },
+    {
+      "phase": "cleanup",
+      "name": "Delete test services",
+      "status": "warn",
+      "at": "2026-01-28T19:22:46.792Z",
+      "details": "No admin token / no created services"
+    }
+  ],
+  "summary": {
+    "passed": 5,
+    "failed": 2,
+    "warnings": 2
+  },
+  "finishedAt": "2026-01-28T19:22:46.792Z",
+  "durationMs": 59395,
+  "passRate": 71.4
+}
