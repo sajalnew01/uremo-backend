@@ -1,8 +1,9 @@
 const mongoose = require("mongoose");
 
 /**
- * PATCH_38: Enhanced ApplyWork schema with worker status flow
- * Fresh → Screening Available → Ready To Work → Assigned → Earning
+ * PATCH_38/43: Enhanced ApplyWork schema with worker status flow
+ * PATCH_43: Full worker journey states
+ * Applied → Screening Unlocked → Test Submitted → Ready To Work → Assigned → Working
  */
 const applyWorkSchema = new mongoose.Schema(
   {
@@ -47,22 +48,39 @@ const applyWorkSchema = new mongoose.Schema(
     message: {
       type: String,
     },
+    // PATCH_43: Application status (admin review)
     status: {
       type: String,
       enum: ["pending", "approved", "rejected"],
       default: "pending",
     },
-    // PATCH_38: Worker status flow
+    // PATCH_43: Worker journey states (authoritative)
     workerStatus: {
       type: String,
       enum: [
+        "applied", // Just applied, waiting for admin approval
+        "screening_unlocked", // Admin approved + unlocked screening
+        "test_submitted", // Submitted test, awaiting grading
+        "failed", // Failed test (used all attempts)
+        "ready_to_work", // Passed screening, available for projects
+        "assigned", // Has active project assignment
+        "working", // Currently working on project
+        "suspended", // Admin suspended worker
+        // Legacy states for backwards compat
         "fresh",
         "screening_available",
-        "ready_to_work",
-        "assigned",
         "inactive",
       ],
-      default: "fresh",
+      default: "applied",
+    },
+    // PATCH_43: Attempt tracking for retries
+    attemptCount: {
+      type: Number,
+      default: 0,
+    },
+    maxAttempts: {
+      type: Number,
+      default: 2,
     },
     // Screening/Test tracking
     screeningsCompleted: [

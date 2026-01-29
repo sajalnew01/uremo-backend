@@ -1,4 +1,7 @@
 const Service = require("../models/Service");
+// PATCH_43: Auto job role creation
+const WorkPosition = require("../models/WorkPosition");
+const { getAllowedActionsForService } = require("../config/categoryActions");
 
 // PATCH_20: No-cache headers for admin CMS endpoints
 function setNoCache(res) {
@@ -247,11 +250,45 @@ exports.createService = async (req, res) => {
 
     console.log("[ADMIN_SERVICES] Service created:", service._id);
 
+    // PATCH_43: Auto-create WorkPosition (Job Role) if service allows "apply" action
+    let autoJobRole = null;
+    const allowedActions = getAllowedActionsForService(service);
+    if (allowedActions.apply) {
+      // Check if job role already exists for this service
+      const existingJob = await WorkPosition.findOne({
+        serviceId: service._id,
+      });
+      if (!existingJob) {
+        try {
+          autoJobRole = await WorkPosition.create({
+            title: service.title,
+            category: service.category || "microjobs",
+            description: service.description || "",
+            serviceId: service._id,
+            hasScreening: true,
+            active: true,
+          });
+          console.log(
+            "[ADMIN_SERVICES] Auto-created job role:",
+            autoJobRole._id,
+          );
+        } catch (jobErr) {
+          console.error(
+            "[ADMIN_SERVICES] Failed to auto-create job role:",
+            jobErr.message,
+          );
+        }
+      }
+    }
+
     return res.status(201).json({
       ok: true,
       message: "Service created",
       service,
       serviceId: service._id,
+      autoJobRole: autoJobRole
+        ? { _id: autoJobRole._id, title: autoJobRole.title }
+        : null,
     });
   } catch (err) {
     // PATCH_20: Enhanced error logging

@@ -1,94 +1,183 @@
 /**
- * PATCH_38: Workspace Controller
+ * PATCH_38/43: Workspace Controller
  * Handles worker status flow, screenings, projects, and earnings
+ * PATCH_43: Multi-job support, new worker journey states
  */
 const ApplyWork = require("../models/ApplyWork");
 const Screening = require("../models/Screening");
 const Project = require("../models/Project");
 const User = require("../models/User");
-
-// Helper to get worker profile or create fresh one
-const getOrCreateWorkerProfile = async (userId) => {
-  let profile = await ApplyWork.findOne({ user: userId })
-    .populate("position", "_id title category")
-    .populate("currentProject", "title status payRate")
-    .lean();
-
-  return profile;
-};
+const WorkPosition = require("../models/WorkPosition");
 
 /**
- * GET /api/workspace/profile
- * Get current user's workspace profile (worker status, screenings, projects, earnings)
+ * PATCH_43: GET /api/workspace/profile
+ * Get all user's job applications and their status
+ * Supports multi-job with independent status per job
  */
 exports.getWorkspaceProfile = async (req, res) => {
   try {
-    const profile = await getOrCreateWorkerProfile(req.user.id);
+    // PATCH_43: Get ALL job applications for the user (multi-job support)
+    const applications = await ApplyWork.find({ user: req.user.id })
+      .populate(
+        "position",
+        "_id title category description trainingMaterials hasScreening screeningId",
+      )
+      .populate("currentProject", "title status payRate payType")
+      .sort({ createdAt: -1 })
+      .lean();
 
-    if (!profile) {
+    if (!applications || applications.length === 0) {
       return res.json({
         hasProfile: false,
-        workerStatus: null,
+        applications: [],
         message: "No workspace profile. Apply to a position to get started.",
       });
     }
 
-    // Get available screenings for their category
-    const availableScreenings = await Screening.find({
-      category: profile.category,
-      active: true,
-    })
-      .select("title description timeLimit passingScore")
-      .lean();
+    // Enrich each application with screening/project info
+    const enrichedApplications = await Promise.all(
+      applications.map(async (app) => {
+        // Get screening for this position if exists
+        let screening = null;
+        if (app.position?.screeningId) {
+          screening = await Screening.findById(app.position.screeningId)
+            .select(
+              "title description timeLimit passingScore trainingMaterials",
+            )
+            .lean();
+        } else if (app.position?.category) {
+          // Fallback: find screening by category
+          screening = await Screening.findOne({
+            category: app.position.category,
+            active: true,
+          })
+            .select(
+              "title description timeLimit passingScore trainingMaterials",
+            )
+            .lean();
+        }
 
-    // Filter out already completed screenings
-    const completedScreeningIds = (profile.screeningsCompleted || []).map((s) =>
-      s.screeningId?.toString(),
+        // Get assigned projects for this application
+        const assignedProjects = await Project.find({
+          assignedTo: req.user.id,
+          status: { $in: ["assigned", "in_progress"] },
+        })
+          .select("title description payRate payType deadline status")
+          .lean();
+
+        // Get completed projects
+        const completedProjects = await Project.find({
+          assignedTo: req.user.id,
+          status: "completed",
+        })
+          .select("title payRate earningsCredited completedAt")
+          .lean();
+
+        // Normalize legacy worker status
+        let normalizedStatus = app.workerStatus || "applied";
+        if (normalizedStatus === "fresh") normalizedStatus = "applied";
+        if (normalizedStatus === "screening_available")
+          normalizedStatus = "screening_unlocked";
+        if (normalizedStatus === "inactive") normalizedStatus = "suspended";
+
+        return {
+          _id: app._id,
+          position: app.position,
+          positionTitle: app.positionTitle || app.position?.title || "",
+          category: app.category || app.position?.category || "",
+          workerStatus: normalizedStatus,
+          applicationStatus: app.status, // pending/approved/rejected
+          attemptCount: app.attemptCount || 0,
+          maxAttempts: app.maxAttempts || 2,
+          totalEarnings: app.totalEarnings || 0,
+          pendingEarnings: app.pendingEarnings || 0,
+          payRate: app.payRate || 0,
+          screening,
+          trainingMaterials: app.position?.trainingMaterials || [],
+          assignedProjects,
+          completedProjects,
+          screeningsCompleted: app.screeningsCompleted || [],
+          createdAt: app.createdAt,
+        };
+      }),
     );
-    const pendingScreenings = availableScreenings.filter(
-      (s) => !completedScreeningIds.includes(s._id.toString()),
+
+    // Calculate aggregate stats
+    const totalEarnings = enrichedApplications.reduce(
+      (sum, a) => sum + (a.totalEarnings || 0),
+      0,
     );
-
-    // Get assigned projects
-    const assignedProjects = await Project.find({
-      assignedTo: req.user.id,
-      status: { $in: ["assigned", "in_progress"] },
-    })
-      .select("title description payRate payType deadline status")
-      .lean();
-
-    // Get completed projects
-    const completedProjects = await Project.find({
-      assignedTo: req.user.id,
-      status: "completed",
-    })
-      .select("title payRate earningsCredited completedAt adminRating")
-      .lean();
+    const pendingEarnings = enrichedApplications.reduce(
+      (sum, a) => sum + (a.pendingEarnings || 0),
+      0,
+    );
+    const projectsCompleted = enrichedApplications.reduce(
+      (sum, a) => sum + a.completedProjects.length,
+      0,
+    );
 
     res.json({
       hasProfile: true,
-      profile: {
-        _id: profile._id,
-        category: profile.category,
-        positionTitle: profile.positionTitle,
-        workerStatus: profile.workerStatus || "fresh",
-        status: profile.status, // pending/approved/rejected
-        totalEarnings: profile.totalEarnings || 0,
-        pendingEarnings: profile.pendingEarnings || 0,
-        payRate: profile.payRate || 0,
-        screeningsCompleted: profile.screeningsCompleted || [],
-        testsCompleted: profile.testsCompleted || [],
-        createdAt: profile.createdAt,
-      },
-      availableScreenings: pendingScreenings,
-      assignedProjects,
-      completedProjects,
+      applications: enrichedApplications,
       stats: {
-        totalEarnings: profile.totalEarnings || 0,
-        pendingEarnings: profile.pendingEarnings || 0,
-        projectsCompleted: completedProjects.length,
-        screeningsCompleted: (profile.screeningsCompleted || []).length,
+        totalEarnings,
+        pendingEarnings,
+        projectsCompleted,
+        jobsApplied: enrichedApplications.length,
       },
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * PATCH_43: GET /api/workspace/apply/:jobId
+ * Apply to a specific job role
+ */
+exports.applyToJob = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const { resumeUrl, message } = req.body;
+
+    // Check if job exists
+    const job = await WorkPosition.findById(jobId).lean();
+    if (!job) {
+      return res.status(404).json({ message: "Job role not found" });
+    }
+
+    if (!job.active) {
+      return res.status(400).json({ message: "This position is not active" });
+    }
+
+    // Check if already applied
+    const existing = await ApplyWork.findOne({
+      user: req.user.id,
+      position: jobId,
+    });
+
+    if (existing) {
+      return res
+        .status(400)
+        .json({ message: "Already applied to this position" });
+    }
+
+    // Create application
+    const application = await ApplyWork.create({
+      user: req.user.id,
+      position: jobId,
+      positionTitle: job.title,
+      category: job.category,
+      resumeUrl: resumeUrl || "",
+      message: message || "",
+      status: "pending",
+      workerStatus: "applied",
+    });
+
+    res.status(201).json({
+      ok: true,
+      message: "Application submitted successfully",
+      application,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -152,16 +241,39 @@ exports.getScreening = async (req, res) => {
 };
 
 /**
- * POST /api/workspace/screening/:id/submit
- * Submit screening answers
+ * PATCH_43: POST /api/workspace/screening/:id/submit
+ * Submit screening answers with retry logic
  */
 exports.submitScreening = async (req, res) => {
   try {
-    const { answers } = req.body;
+    const { answers, positionId } = req.body;
     const screening = await Screening.findById(req.params.id).lean();
 
     if (!screening) {
       return res.status(404).json({ message: "Screening not found" });
+    }
+
+    // PATCH_43: Find the correct worker profile (for multi-job support)
+    let profile;
+    if (positionId) {
+      profile = await ApplyWork.findOne({
+        user: req.user.id,
+        position: positionId,
+      });
+    } else {
+      // Fallback to first profile for backwards compat
+      profile = await ApplyWork.findOne({ user: req.user.id });
+    }
+
+    if (!profile) {
+      return res.status(400).json({ message: "No worker profile found" });
+    }
+
+    // PATCH_43: Check if worker is allowed to take screening
+    if (profile.workerStatus !== "screening_unlocked") {
+      return res.status(400).json({
+        message: "Screening not unlocked. Wait for admin approval.",
+      });
     }
 
     // Calculate score
@@ -182,11 +294,9 @@ exports.submitScreening = async (req, res) => {
       totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
     const passed = score >= (screening.passingScore || 70);
 
-    // Update worker profile
-    const profile = await ApplyWork.findOne({ user: req.user.id });
-    if (!profile) {
-      return res.status(400).json({ message: "No worker profile found" });
-    }
+    // PATCH_43: Update attempt count
+    profile.attemptCount = (profile.attemptCount || 0) + 1;
+    const maxAttempts = profile.maxAttempts || 2;
 
     // Add to completed screenings
     profile.screeningsCompleted = profile.screeningsCompleted || [];
@@ -194,22 +304,44 @@ exports.submitScreening = async (req, res) => {
       screeningId: screening._id,
       completedAt: new Date(),
       score,
+      passed,
     });
 
-    // Update worker status if passed
-    if (passed && profile.workerStatus === "fresh") {
-      profile.workerStatus = "screening_available";
+    // PATCH_43: Worker status flow based on pass/fail
+    if (passed) {
+      // Passed - move to ready_to_work
+      profile.workerStatus = "ready_to_work";
+    } else {
+      // Failed
+      if (profile.attemptCount < maxAttempts) {
+        // Can retry - keep as screening_unlocked
+        profile.workerStatus = "screening_unlocked";
+      } else {
+        // Used all attempts - set to failed
+        profile.workerStatus = "failed";
+      }
     }
 
     await profile.save();
+
+    // Build response message
+    let message;
+    if (passed) {
+      message = "Congratulations! You passed and are now ready to work.";
+    } else if (profile.attemptCount < maxAttempts) {
+      message = `You scored ${score}%. You have ${maxAttempts - profile.attemptCount} attempt(s) remaining. Review the training materials and try again.`;
+    } else {
+      message = `You scored ${score}%. You've used all ${maxAttempts} attempts. Contact admin for re-evaluation.`;
+    }
 
     res.json({
       success: true,
       score,
       passed,
-      message: passed
-        ? "Screening completed successfully!"
-        : "Screening completed. You may retake after reviewing the materials.",
+      attemptsUsed: profile.attemptCount,
+      attemptsRemaining: Math.max(0, maxAttempts - profile.attemptCount),
+      newStatus: profile.workerStatus,
+      message,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
