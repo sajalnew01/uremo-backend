@@ -62,6 +62,9 @@ const adminTicketsRoutes = require("./routes/admin.tickets.routes");
 const notificationRoutes = require("./routes/notification.routes");
 // PATCH_30: Admin Analytics routes
 const adminAnalyticsRoutes = require("./routes/adminAnalytics.routes");
+// PATCH_38: Workspace routes (worker flow)
+const workspaceRoutes = require("./routes/workspace.routes");
+const adminWorkspaceRoutes = require("./routes/admin.workspace.routes");
 
 const auth = require("./middlewares/auth.middleware");
 const admin = require("./middlewares/admin.middleware");
@@ -208,6 +211,9 @@ app.use("/api/admin/tickets", adminTicketsRoutes);
 app.use("/api/notifications", notificationRoutes);
 // PATCH_30: Admin Analytics routes
 app.use("/api/admin/analytics", adminAnalyticsRoutes);
+// PATCH_38: Workspace routes (worker flow)
+app.use("/api/workspace", workspaceRoutes);
+app.use("/api/admin/workspace", adminWorkspaceRoutes);
 
 // TEMP: Debug endpoint to list mounted routes (admin-only)
 app.get("/api/__routes", auth, admin, (req, res) => {
