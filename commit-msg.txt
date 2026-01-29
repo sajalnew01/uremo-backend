@@ -1,0 +1,9 @@
+PATCH_41: Real baseline content seeding + Trust Content Layer
+
+- Add FAQ model (src/models/Faq.js)
+- Add FAQ controller and routes (CRUD for FAQs)
+- Add public routes with /api/public/trust endpoint (4 trust signals)
+- Add seed-real-services.js (13 production services)
+- Add seed-real-blogs.js (5 educational blog posts)
+- Add seed-real-faqs.js (10 FAQs)
+- Register FAQ and public routes in app.js
