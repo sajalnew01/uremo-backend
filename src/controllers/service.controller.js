@@ -683,6 +683,16 @@ exports.getServiceById = async (req, res) => {
         service.allowedActions && typeof service.allowedActions === "object"
           ? service.allowedActions
           : getAllowedActionsForService(service),
+      // PATCH_40: Features fallback - provide sensible defaults if empty
+      features:
+        Array.isArray(service.features) && service.features.length > 0
+          ? service.features
+          : [
+              "Verified by UREMO team",
+              "Secure transaction processing",
+              "24-48 hour fulfillment",
+              "Dashboard access included",
+            ],
     };
 
     // Wrap in service object for consistent API
