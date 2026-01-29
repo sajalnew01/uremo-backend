@@ -96,9 +96,10 @@ exports.createOrder = async (req, res) => {
       { hook: "adminNewOrderAlert", orderId },
     );
 
-    res.json({ orderId: order._id });
+    // PATCH_39: Return full order data for immediate UI binding
+    res.json({ ok: true, orderId: order._id, order });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ ok: false, message: err.message });
   }
 };
 
@@ -161,17 +162,21 @@ exports.createDealOrder = async (req, res) => {
       ],
     });
 
-    res.json({ orderId: order._id });
+    // PATCH_39: Return full order data for immediate UI binding
+    res.json({ ok: true, orderId: order._id, order });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ ok: false, message: err.message });
   }
 };
 
 exports.myOrders = async (req, res) => {
   try {
-    const orders = await Order.find({ userId: req.user.id })
-      .populate("serviceId")
-      .populate("payment.methodId")
+    // PATCH_39: Ensure userId extraction works with both id and _id
+    const userId = req.user.id || req.user._id;
+    const orders = await Order.find({ userId })
+      .populate("serviceId", "title price category imageUrl")
+      .populate("payment.methodId", "name type")
+      .sort({ createdAt: -1 })
       .lean();
 
     // Fetch last message for each order to detect unread admin replies

@@ -106,8 +106,11 @@ exports.getTransactions = async (req, res) => {
       WalletTransaction.countDocuments({ user: userId }),
     ]);
 
+    // PATCH_39: Always return fresh wallet balance
+    const freshUser = await User.findById(userId).select("walletBalance");
     res.json({
       success: true,
+      balance: freshUser?.walletBalance || 0,
       transactions,
       pagination: {
         page,
