@@ -1,7 +1,8 @@
 /**
- * PATCH_36: JarvisX Tool Registry
+ * PATCH_51: JarvisX Tool Registry (Brain Rebuild)
  * Central registry for all JarvisX tools that execute real platform actions
  * Tools are mapped by name and include metadata for routing
+ * LLM NEVER calls these directly - only the brain controller does
  */
 
 const createTicket = require("./createTicket");
@@ -11,6 +12,13 @@ const getServices = require("./getServices");
 const getRentals = require("./getRentals");
 const createService = require("./createService");
 const updateOrderStatus = require("./updateOrderStatus");
+// PATCH_51: New tools for brain rebuild
+const getWorkspaceProfile = require("./getWorkspaceProfile");
+const getAffiliateStatus = require("./getAffiliateStatus");
+const getAdminStats = require("./getAdminStats");
+const getAdminPendingOrders = require("./getAdminPendingOrders");
+const getAdminPendingProofs = require("./getAdminPendingProofs");
+const getAdminPendingTickets = require("./getAdminPendingTickets");
 
 // Tool definitions with metadata
 const TOOLS = {
@@ -65,6 +73,52 @@ const TOOLS = {
     requiresAuth: true,
     adminOnly: true,
     execute: updateOrderStatus,
+  },
+
+  // ============ PATCH_51: WORKSPACE TOOLS ============
+  getWorkspaceProfile: {
+    name: "getWorkspaceProfile",
+    description: "Get user's worker profile, applications, and earnings",
+    requiresAuth: true,
+    adminOnly: false,
+    execute: getWorkspaceProfile,
+  },
+  getAffiliateStatus: {
+    name: "getAffiliateStatus",
+    description: "Get user's affiliate earnings and referral info",
+    requiresAuth: true,
+    adminOnly: false,
+    execute: getAffiliateStatus,
+  },
+
+  // ============ PATCH_51: ADMIN DASHBOARD TOOLS ============
+  getAdminStats: {
+    name: "getAdminStats",
+    description: "Get platform-wide admin statistics",
+    requiresAuth: true,
+    adminOnly: true,
+    execute: getAdminStats,
+  },
+  getAdminPendingOrders: {
+    name: "getAdminPendingOrders",
+    description: "Get list of orders awaiting verification",
+    requiresAuth: true,
+    adminOnly: true,
+    execute: getAdminPendingOrders,
+  },
+  getAdminPendingProofs: {
+    name: "getAdminPendingProofs",
+    description: "Get list of work proofs awaiting review",
+    requiresAuth: true,
+    adminOnly: true,
+    execute: getAdminPendingProofs,
+  },
+  getAdminPendingTickets: {
+    name: "getAdminPendingTickets",
+    description: "Get list of open support tickets",
+    requiresAuth: true,
+    adminOnly: true,
+    execute: getAdminPendingTickets,
   },
 };
 

@@ -2347,3 +2347,130 @@ exports._internal = {
   getAdminContextObject,
   fallbackAnswerFromContext,
 };
+
+// ============================================================
+// PATCH_51: New Brain-Powered Chat (V2)
+// Tool-driven architecture: Intent → Policy → Context → Blueprint → Polish
+// ============================================================
+const JarvisXBrain = require("../jarvisx/brain");
+
+/**
+ * V2 Chat Handler - Uses new brain architecture
+ * POST /api/jarvisx/v2/chat
+ */
+exports.chatV2 = async (req, res) => {
+  // Optional auth: attach user if token present
+  tryAttachUser(req);
+
+  const message = clampString(req.body?.message, 1200);
+  const modeParam = String(req.body?.mode || "classic").trim();
+
+  if (!message) {
+    return res.status(400).json({
+      success: false,
+      error: "Message is required",
+    });
+  }
+
+  // Build context from request
+  const context = {
+    userId: req.user?.id || null,
+    role: isAdminUser(req) ? "admin" : req.user?.id ? "user" : "guest",
+    isAuthenticated: !!req.user?.id,
+  };
+
+  // Options for brain processing
+  const options = {
+    mode: modeParam === "grow" ? "grow" : "classic",
+    skipPolish: req.body?.skipPolish === true,
+    debug: req.body?.debug === true,
+  };
+
+  try {
+    const result = await JarvisXBrain.processMessage({
+      message,
+      context,
+      options,
+    });
+
+    // Log for analytics
+    console.log(
+      `[JARVISX_V2_CHAT] intent=${result.meta?.intent} role=${result.meta?.role} polished=${result.meta?.polished} time=${result.meta?.processingTime}ms`,
+    );
+
+    return res.json(result);
+  } catch (err) {
+    console.error(`[JARVISX_V2_CHAT_ERROR] err=${err?.message}`);
+    return res.status(500).json({
+      success: false,
+      response: {
+        message: "I encountered an issue processing your request.",
+        actions: [{ label: "Try Again", action: "RETRY" }],
+      },
+      meta: { error: err.message, version: "51" },
+    });
+  }
+};
+
+/**
+ * V2 Action Handler - Execute button actions
+ * POST /api/jarvisx/v2/action
+ */
+exports.executeActionV2 = async (req, res) => {
+  tryAttachUser(req);
+
+  const { action, value, url } = req.body;
+
+  if (!action) {
+    return res.status(400).json({
+      success: false,
+      error: "Action is required",
+    });
+  }
+
+  const context = {
+    userId: req.user?.id || null,
+    role: isAdminUser(req) ? "admin" : req.user?.id ? "user" : "guest",
+    isAuthenticated: !!req.user?.id,
+  };
+
+  try {
+    const result = await JarvisXBrain.executeAction({
+      action,
+      value,
+      url,
+      context,
+    });
+
+    return res.json(result);
+  } catch (err) {
+    console.error(`[JARVISX_V2_ACTION_ERROR] err=${err?.message}`);
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+};
+
+/**
+ * V2 Health Check - Brain status
+ * GET /api/jarvisx/v2/health
+ */
+exports.healthV2 = async (req, res) => {
+  try {
+    const brainHealth = JarvisXBrain.getHealth();
+    const intents = JarvisXBrain.getAvailableIntents();
+
+    return res.json({
+      success: true,
+      brain: brainHealth,
+      intentsCount: intents.length,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+};
