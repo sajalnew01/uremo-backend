@@ -9,7 +9,8 @@
     "build": "node scripts/build.js",
     "test": "node scripts/test-runner.js",
     "test:auth": "node scripts/test-runner.js --auth",
-    "test:patch48": "node scripts/test-patch48-proof.js"
+    "test:patch48": "node scripts/test-patch48-proof.js",
+    "test:patch48:dry": "node scripts/test-patch48-proof.js --dry-run"
   },
   "keywords": [],
   "author": "",

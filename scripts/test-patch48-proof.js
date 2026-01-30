@@ -81,6 +81,9 @@ function parseArgs(argv) {
       String(
         process.env.TEST_ADMIN_PASSWORD || process.env.TEST_PASSWORD || "",
       ) || null,
+    dryRun: false,
+    adminToken: String(process.env.TEST_ADMIN_TOKEN || "").trim() || null,
+    workerToken: String(process.env.TEST_WORKER_TOKEN || "").trim() || null,
   };
   for (const raw of argv.slice(2)) {
     if (raw.startsWith("--base=")) out.base = raw.slice("--base=".length);
@@ -88,6 +91,11 @@ function parseArgs(argv) {
       out.adminEmail = raw.slice("--email=".length);
     else if (raw.startsWith("--password="))
       out.adminPassword = raw.slice("--password=".length);
+    else if (raw === "--dry-run" || raw === "--dry") out.dryRun = true;
+    else if (raw.startsWith("--admin-token="))
+      out.adminToken = raw.slice("--admin-token=".length);
+    else if (raw.startsWith("--worker-token="))
+      out.workerToken = raw.slice("--worker-token=".length);
   }
   out.base = String(out.base || "").replace(/\/+$/, "");
   return out;
@@ -146,38 +154,15 @@ async function run() {
     base,
     adminEmail: argEmail,
     adminPassword: argPassword,
+    dryRun,
+    adminToken: argAdminToken,
+    workerToken: argWorkerToken,
   } = parseArgs(process.argv);
   console.log("\nPATCH_48 Proof-of-Work Test");
   console.log(`Base: ${base}`);
+  if (dryRun) console.log("Mode: DRY RUN (no mutations)");
 
-  let adminEmail = String(argEmail || "").trim();
-  let adminPassword = String(argPassword || "");
-
-  if ((!adminEmail || !adminPassword) && isInteractiveTty()) {
-    if (!adminEmail) {
-      adminEmail = String(
-        (await promptLine("Enter admin email: ")) || "",
-      ).trim();
-    }
-    if (!adminPassword) {
-      adminPassword = String(
-        (await promptHidden("Enter admin password: ")) || "",
-      );
-      process.stdout.write("\n");
-    }
-  }
-
-  if (!adminEmail) {
-    fail(
-      "Missing admin email. Provide --email=... or set TEST_ADMIN_EMAIL/TEST_EMAIL.",
-    );
-  }
-  if (!adminPassword) {
-    fail(
-      "Missing admin password. Provide --password=... or set TEST_ADMIN_PASSWORD/TEST_PASSWORD.",
-    );
-  }
-
+  // Safe checks (no DB mutations) that can be run against production.
   // Health
   {
     const r = await fetchJson(base, "/api/health");
@@ -185,16 +170,114 @@ async function run() {
     ok("Health ok");
   }
 
-  // Admin login
-  const adminLogin = await fetchJson(base, "/api/auth/login", {
-    method: "POST",
-    body: { email: adminEmail, password: adminPassword },
-  });
-  if (!adminLogin.ok || !adminLogin.data?.token) {
-    fail("Admin login failed", adminLogin);
+  // No public proof route
+  {
+    const r = await fetchJson(base, "/api/proofs/public");
+    if (r.status !== 404) {
+      fail("Expected /api/proofs/public to be 404 (no public proof routes)", r);
+    }
+    ok("Public proof endpoint not exposed (404)");
   }
-  const adminToken = adminLogin.data.token;
-  ok("Admin login ok");
+
+  // Security: unauth access denied
+  {
+    const r = await fetchJson(base, "/api/workspace/my-proofs");
+    if (r.status !== 401) {
+      fail("Expected /api/workspace/my-proofs to require auth (401)", r);
+    }
+    ok("Unauth proof access blocked (401)");
+  }
+
+  // Security: unauth admin endpoint should deny
+  {
+    const r = await fetchJson(base, "/api/admin/proofs");
+    if (r.status !== 401) {
+      fail("Expected /api/admin/proofs to require auth (401)", r);
+    }
+    ok("Unauth admin proofs blocked (401)");
+  }
+
+  let adminToken = String(argAdminToken || "").trim();
+  let workerTokenFromArg = String(argWorkerToken || "").trim();
+
+  // If dry-run and no auth material provided, stop here.
+  if (
+    dryRun &&
+    !adminToken &&
+    !workerTokenFromArg &&
+    !argEmail &&
+    !argPassword
+  ) {
+    ok("Dry-run baseline checks completed successfully");
+    return;
+  }
+
+  let adminEmail = String(argEmail || "").trim();
+  let adminPassword = String(argPassword || "");
+
+  // Optional: obtain admin token if needed (login is read-only).
+  if (!adminToken) {
+    if ((!adminEmail || !adminPassword) && isInteractiveTty()) {
+      if (!adminEmail) {
+        adminEmail = String(
+          (await promptLine("Enter admin email: ")) || "",
+        ).trim();
+      }
+      if (!adminPassword) {
+        adminPassword = String(
+          (await promptHidden("Enter admin password: ")) || "",
+        );
+        process.stdout.write("\n");
+      }
+    }
+
+    if (!adminEmail) {
+      fail(
+        "Missing admin email. Provide --email=... or set TEST_ADMIN_EMAIL/TEST_EMAIL (or pass --admin-token=...).",
+      );
+    }
+    if (!adminPassword) {
+      fail(
+        "Missing admin password. Provide --password=... or set TEST_ADMIN_PASSWORD/TEST_PASSWORD (or pass --admin-token=...).",
+      );
+    }
+
+    const adminLogin = await fetchJson(base, "/api/auth/login", {
+      method: "POST",
+      body: { email: adminEmail, password: adminPassword },
+    });
+    if (!adminLogin.ok || !adminLogin.data?.token) {
+      fail("Admin login failed", adminLogin);
+    }
+    adminToken = adminLogin.data.token;
+    ok("Admin login ok");
+  }
+
+  // Optional: validate admin list endpoint is reachable with admin token.
+  {
+    const r = await fetchJson(base, "/api/admin/proofs", { token: adminToken });
+    if (!r.ok) {
+      fail("Admin proofs list failed (expected 200)", r);
+    }
+    ok("Admin proofs list reachable (admin)");
+  }
+
+  if (dryRun) {
+    if (workerTokenFromArg) {
+      const r = await fetchJson(base, "/api/admin/proofs", {
+        token: workerTokenFromArg,
+      });
+      if (r.status !== 403) {
+        fail("Expected worker to be forbidden from /api/admin/proofs (403)", r);
+      }
+      ok("Worker blocked from admin proofs (403)");
+    } else {
+      log("Dry-run: skipping worker-vs-admin check (no worker token provided)");
+    }
+
+    ok("Dry-run completed successfully");
+    return;
+  }
 
   // Create two users (worker + other)
   const ts = Date.now();
