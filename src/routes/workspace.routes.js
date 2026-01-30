@@ -1,8 +1,9 @@
 /**
- * PATCH_38/43/47: Workspace Routes
- * Worker flow endpoints: profile, screenings, projects, earnings
+ * PATCH_38/43/47/48: Workspace Routes
+ * Worker flow endpoints: profile, screenings, projects, earnings, proofs
  * PATCH_43: Multi-job support, apply to specific jobs
  * PATCH_47: Start project endpoint
+ * PATCH_48: Proof of work submission
  */
 const router = require("express").Router();
 const auth = require("../middlewares/auth.middleware");
@@ -21,6 +22,13 @@ const {
   getEarnings,
   requestWithdrawal,
 } = require("../controllers/workspace.controller");
+
+// PATCH_48: Proof of work
+const {
+  submitProof,
+  getProjectProof,
+  getMyProofs,
+} = require("../controllers/proof.controller");
 
 // All routes require authentication
 router.use(auth);
@@ -41,6 +49,11 @@ router.get("/projects", getMyProjects);
 router.get("/project/:id", getProject);
 router.post("/project/:id/start", startProject);
 router.post("/project/:id/submit", submitProject);
+
+// PATCH_48: Proof of work
+router.get("/my-proofs", getMyProofs);
+router.get("/project/:id/proof", getProjectProof);
+router.post("/project/:id/proof", submitProof);
 
 // Earnings
 router.get("/earnings", getEarnings);

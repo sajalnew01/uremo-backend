@@ -221,6 +221,9 @@ app.use("/api/workspace", workspaceRoutes);
 app.use("/api/admin/workspace", adminWorkspaceRoutes);
 // PATCH_43: Admin Job Role routes
 app.use("/api/admin/workspace", adminJobRoleRoutes);
+// PATCH_48: Admin Proofs routes
+const adminProofRoutes = require("./routes/admin.proof.routes");
+app.use("/api/admin/proofs", adminProofRoutes);
 // PATCH_41: FAQ and Public routes
 app.use("/api/faqs", faqRoutes);
 app.use("/api/public", publicRoutes);
