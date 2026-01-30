@@ -73,4 +73,48 @@ router.get("/categories", (req, res) => {
   });
 });
 
+/**
+ * PATCH_50: GET /api/public/stats
+ * Returns real platform stats for homepage display
+ */
+router.get("/stats", async (req, res) => {
+  try {
+    const mongoose = require("mongoose");
+    const Service = require("../models/Service");
+    const WorkPosition = require("../models/WorkPosition");
+    const User = require("../models/User");
+    const Order = require("../models/Order");
+
+    // Get real counts from database
+    const [activeServices, activeJobRoles, totalUsers, completedOrders] =
+      await Promise.all([
+        Service.countDocuments({ active: true }),
+        WorkPosition.countDocuments({ active: true }),
+        User.countDocuments({ isVerified: true }),
+        Order.countDocuments({ status: "completed" }),
+      ]);
+
+    res.json({
+      ok: true,
+      stats: {
+        activeServices,
+        activeJobRoles,
+        totalUsers,
+        completedOrders,
+      },
+    });
+  } catch (err) {
+    console.error("Public stats error:", err);
+    res.json({
+      ok: true,
+      stats: {
+        activeServices: 0,
+        activeJobRoles: 0,
+        totalUsers: 0,
+        completedOrders: 0,
+      },
+    });
+  }
+});
+
 module.exports = router;
