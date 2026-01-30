@@ -48,17 +48,35 @@ async function processMessage({ message, context = {}, options = {} }) {
 
     if (!policyResult.allowed) {
       log("Policy Denied", policyResult);
+
+      // Build denial actions
+      const denialActions = [];
+      if (policyResult.redirectTo) {
+        denialActions.push({
+          label: "Log In",
+          action: "NAVIGATE",
+          url: policyResult.redirectTo,
+        });
+      }
+      denialActions.push({
+        label: "Go Back",
+        action: "INTENT",
+        value: "GREETING",
+      });
+
       return {
         success: true,
         response: {
-          message: policyResult.message,
-          actions: policyResult.actions || [],
+          message:
+            policyResult.reason || "You're not authorized for this action.",
+          actions: denialActions,
         },
         meta: {
           intent,
           role: effectiveRole,
           denied: true,
           reason: policyResult.reason,
+          code: policyResult.code,
           processingTime: Date.now() - startTime,
           version: "51",
         },

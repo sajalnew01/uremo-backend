@@ -2375,7 +2375,8 @@ exports.chatV2 = async (req, res) => {
   // Build context from request
   const context = {
     userId: req.user?.id || null,
-    role: isAdminUser(req) ? "admin" : req.user?.id ? "user" : "guest",
+    userRole: isAdminUser(req) ? "admin" : req.user?.id ? "user" : "guest",
+    isAdmin: isAdminUser(req),
     isAuthenticated: !!req.user?.id,
   };
 
@@ -2430,7 +2431,8 @@ exports.executeActionV2 = async (req, res) => {
 
   const context = {
     userId: req.user?.id || null,
-    role: isAdminUser(req) ? "admin" : req.user?.id ? "user" : "guest",
+    userRole: isAdminUser(req) ? "admin" : req.user?.id ? "user" : "guest",
+    isAdmin: isAdminUser(req),
     isAuthenticated: !!req.user?.id,
   };
 

@@ -49,6 +49,7 @@ async function polishResponse(blueprint, options = {}) {
     return {
       text: blueprint.text,
       list: blueprint.list,
+      listType: blueprint.listType,
       actions: blueprint.actions,
       polished: false,
     };
@@ -89,6 +90,7 @@ async function polishResponse(blueprint, options = {}) {
     return {
       text: cleanText,
       list: blueprint.list,
+      listType: blueprint.listType,
       actions: blueprint.actions,
       polished: true,
     };
@@ -98,6 +100,7 @@ async function polishResponse(blueprint, options = {}) {
     return {
       text: blueprint.text,
       list: blueprint.list,
+      listType: blueprint.listType,
       actions: blueprint.actions,
       polished: false,
       error: error.message,

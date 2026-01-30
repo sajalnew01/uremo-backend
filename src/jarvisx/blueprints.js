@@ -145,6 +145,24 @@ function getBlueprint(intent, contextData) {
           actions: [{ label: "Log In", action: "NAVIGATE", url: "/login" }],
         };
       }
+      // Show actual orders if available
+      const orders = data.orders || data.data || [];
+      if (Array.isArray(orders) && orders.length > 0) {
+        const latest = orders[0];
+        return {
+          text: `Your latest order is "${latest.service || "Service"}" — Status: ${latest.status || "pending"}`,
+          list: orders.slice(0, 3),
+          listType: "orders",
+          actions: [
+            { label: "View All Orders", action: "NAVIGATE", url: "/orders" },
+            {
+              label: "Create Ticket",
+              action: "INTENT",
+              value: "SUPPORT_TICKET",
+            },
+          ],
+        };
+      }
       return {
         text: "You can track all your orders from the Orders page.",
         actions: [
@@ -318,25 +336,28 @@ function getBlueprint(intent, contextData) {
 
     // =========== ADMIN ===========
     case INTENTS.ADMIN_DASHBOARD: {
-      const stats = data;
+      const stats = data.data || data;
+      const pendingOrders = stats.pendingOrders ?? 0;
+      const openTickets = stats.openTickets ?? 0;
+      const pendingProofs = stats.pendingProofs ?? 0;
+      const totalUsers = stats.totalUsers ?? 0;
       return {
-        text: `📊 Admin Dashboard:\n• Pending Orders: ${stats.pendingOrders || 0}\n• Open Tickets: ${stats.openTickets || 0}\n• Pending Proofs: ${stats.pendingProofs || 0}\n• Total Users: ${stats.totalUsers || 0}`,
+        text: `Admin Dashboard:\n• Pending Orders: ${pendingOrders}\n• Open Tickets: ${openTickets}\n• Pending Proofs: ${pendingProofs}\n• Total Users: ${totalUsers}`,
         actions: [
           { label: "Open Admin", action: "NAVIGATE", url: "/admin" },
-          {
-            label: "Pending Orders",
-            action: "INTENT",
-            value: "ADMIN_PENDING_ORDERS",
-          },
+          { label: "View Orders", action: "NAVIGATE", url: "/admin/orders" },
+          { label: "View Tickets", action: "NAVIGATE", url: "/admin/tickets" },
         ],
       };
     }
 
     case INTENTS.ADMIN_PENDING_ORDERS: {
-      const count = data.count || 0;
+      const orderData = data.data || data;
+      const count = orderData.count ?? 0;
+      const orders = orderData.orders || [];
       return {
         text: `You have ${count} pending order(s) to verify.`,
-        list: data.orders?.slice(0, 5),
+        list: orders.slice(0, 5),
         listType: "admin_orders",
         actions: [
           { label: "Open Orders", action: "NAVIGATE", url: "/admin/orders" },
@@ -345,10 +366,12 @@ function getBlueprint(intent, contextData) {
     }
 
     case INTENTS.ADMIN_PENDING_PROOFS: {
-      const count = data.count || 0;
+      const proofData = data.data || data;
+      const count = proofData.count ?? 0;
+      const proofs = proofData.proofs || [];
       return {
         text: `You have ${count} proof(s) awaiting review.`,
-        list: data.proofs?.slice(0, 5),
+        list: proofs.slice(0, 5),
         listType: "admin_proofs",
         actions: [
           { label: "Review Proofs", action: "NAVIGATE", url: "/admin/proofs" },
@@ -357,13 +380,51 @@ function getBlueprint(intent, contextData) {
     }
 
     case INTENTS.ADMIN_PENDING_TICKETS: {
-      const count = data.count || 0;
+      const ticketData = data.data || data;
+      const count = ticketData.count ?? 0;
+      const tickets = ticketData.tickets || [];
       return {
         text: `You have ${count} open ticket(s) to respond to.`,
-        list: data.tickets?.slice(0, 5),
+        list: tickets.slice(0, 5),
         listType: "admin_tickets",
         actions: [
           { label: "Open Tickets", action: "NAVIGATE", url: "/admin/tickets" },
+        ],
+      };
+    }
+
+    // =========== ADMIN CREATE SERVICE ===========
+    case INTENTS.ADMIN_CREATE_SERVICE: {
+      return {
+        text: "I can help you create a new service. Please provide the service name, price, and category.",
+        requiresInput: true,
+        inputType: "create_service",
+        actions: [
+          {
+            label: "Go to Services",
+            action: "NAVIGATE",
+            url: "/admin/services",
+          },
+          { label: "Cancel", action: "INTENT", value: "CANCEL" },
+        ],
+      };
+    }
+
+    // =========== ADMIN CREATE PROJECT ===========
+    case INTENTS.ADMIN_CREATE_PROJECT: {
+      const count = data.positionCount || 0;
+      return {
+        text: `I can help you create a new project. You have ${count} job role(s) available.\nPlease provide:\n• Project title\n• Job role to assign\n• Pay rate`,
+        requiresInput: true,
+        inputType: "create_project",
+        list: data.positions?.slice(0, 5),
+        listType: "positions",
+        actions: [
+          {
+            label: "Go to Projects",
+            action: "NAVIGATE",
+            url: "/admin/projects",
+          },
         ],
       };
     }

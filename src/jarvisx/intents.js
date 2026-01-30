@@ -58,6 +58,8 @@ const INTENTS = {
   ADMIN_PENDING_TICKETS: "ADMIN_PENDING_TICKETS",
   ADMIN_USER_LOOKUP: "ADMIN_USER_LOOKUP",
   ADMIN_SERVICE_MANAGE: "ADMIN_SERVICE_MANAGE",
+  ADMIN_CREATE_SERVICE: "ADMIN_CREATE_SERVICE",
+  ADMIN_CREATE_PROJECT: "ADMIN_CREATE_PROJECT",
 };
 
 /**
@@ -123,6 +125,22 @@ const INTENT_PATTERNS = [
       /(?:pending|open|new)\s*tickets?/i,
       /(?:support\s*)?tickets?\s*(?:to\s*)?(?:answer|review|check)/i,
       /(?:how\s*many|count)\s*(?:open\s*)?tickets?/i,
+    ],
+  },
+  {
+    intent: INTENTS.ADMIN_CREATE_SERVICE,
+    patterns: [
+      /(?:create|add|make)\s*(?:a\s*)?(?:new\s*)?service/i,
+      /(?:new|add)\s*service\s*(?:called|named|titled)?/i,
+      /(?:list|publish)\s*(?:a\s*)?(?:new\s*)?service/i,
+    ],
+  },
+  {
+    intent: INTENTS.ADMIN_CREATE_PROJECT,
+    patterns: [
+      /(?:create|add|make)\s*(?:a\s*)?(?:new\s*)?project/i,
+      /(?:new|add)\s*project\s*(?:for|called|named|titled)?/i,
+      /(?:create|open)\s*project\s*for/i,
     ],
   },
 

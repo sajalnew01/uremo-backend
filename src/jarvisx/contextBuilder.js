@@ -10,6 +10,67 @@ const Service = require("../models/Service");
 const PaymentMethod = require("../models/PaymentMethod");
 const WorkPosition = require("../models/WorkPosition");
 
+function normalizeText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractAfterKeyword(message, keywords) {
+  const msg = String(message || "").trim();
+  if (!msg) return "";
+  const pattern = new RegExp(`(?:${keywords.join("|")})\\s+(.*)$`, "i");
+  const match = msg.match(pattern);
+  return match && match[1] ? match[1].trim() : "";
+}
+
+function extractServiceSearchTerm(message) {
+  const msg = String(message || "").trim();
+  if (!msg) return "";
+  const direct = extractAfterKeyword(msg, [
+    "buy",
+    "purchase",
+    "order",
+    "get",
+    "need",
+  ]);
+  if (direct) return direct;
+  return msg;
+}
+
+function extractJobSearchTerm(message) {
+  const msg = String(message || "").trim();
+  if (!msg) return "";
+  const direct = extractAfterKeyword(msg, [
+    "work on",
+    "work for",
+    "apply to",
+    "apply for",
+    "job",
+  ]);
+  if (direct) return direct;
+  return msg;
+}
+
+function parseTicketFromMessage(message) {
+  const msg = String(message || "").trim();
+  if (!msg) return { shouldCreate: false };
+
+  const generic = /(support|help|ticket|contact)/i.test(msg) && msg.length < 20;
+  if (generic) return { shouldCreate: false };
+
+  const aboutMatch = msg.match(/(?:about|regarding|for)\s+(.+?)(?:\.|$)/i);
+  const subject = aboutMatch ? aboutMatch[1].trim() : msg.slice(0, 80);
+
+  return {
+    shouldCreate: true,
+    subject: subject || "Support Request",
+    message: msg.slice(0, 500),
+  };
+}
+
 /**
  * Build context object based on intent
  * @param {string} intent - Detected intent
@@ -202,6 +263,38 @@ async function buildContext(intent, context, params = {}) {
           data: result.success
             ? result.data
             : { tickets: [], error: result.error },
+        };
+      }
+
+      // =========== ADMIN CREATE SERVICE ===========
+      case INTENTS.ADMIN_CREATE_SERVICE: {
+        return {
+          ...baseContext,
+          data: {
+            readyForInput: true,
+            prompt: "askServiceDetails",
+          },
+        };
+      }
+
+      // =========== ADMIN CREATE PROJECT ===========
+      case INTENTS.ADMIN_CREATE_PROJECT: {
+        const positions = await WorkPosition.find({ active: true })
+          .select("_id title category")
+          .lean();
+
+        return {
+          ...baseContext,
+          data: {
+            positions: positions.map((p) => ({
+              id: p._id,
+              title: p.title,
+              category: p.category,
+            })),
+            positionCount: positions.length,
+            readyForInput: true,
+            prompt: "askProjectDetails",
+          },
         };
       }
 
