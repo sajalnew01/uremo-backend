@@ -60,6 +60,7 @@ const applyWorkSchema = new mongoose.Schema(
       enum: [
         "applied", // Just applied, waiting for admin approval
         "screening_unlocked", // Admin approved + unlocked screening
+        "training_viewed", // PATCH_49: Viewed training materials, ready for test
         "test_submitted", // Submitted test, awaiting grading
         "failed", // Failed test (used all attempts)
         "ready_to_work", // Passed screening, available for projects
@@ -72,6 +73,10 @@ const applyWorkSchema = new mongoose.Schema(
         "inactive",
       ],
       default: "applied",
+    },
+    // PATCH_49: Timestamp when training was viewed
+    trainingViewedAt: {
+      type: Date,
     },
     // PATCH_43: Attempt tracking for retries
     attemptCount: {

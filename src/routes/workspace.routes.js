@@ -21,6 +21,7 @@ const {
   submitProject,
   getEarnings,
   requestWithdrawal,
+  markTrainingViewed, // PATCH_49
 } = require("../controllers/workspace.controller");
 
 // PATCH_48: Proof of work
@@ -38,6 +39,9 @@ router.get("/profile", getWorkspaceProfile);
 
 // PATCH_43: Apply to a specific job role
 router.post("/apply/:jobId", applyToJob);
+
+// PATCH_49: Mark training as viewed for an application
+router.put("/application/:appId/mark-training-viewed", markTrainingViewed);
 
 // Screenings
 router.get("/screenings", getAvailableScreenings);

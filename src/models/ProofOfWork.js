@@ -81,6 +81,23 @@ const proofOfWorkSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+
+    // PATCH_49: Privacy control - proof is private by default
+    isPublic: {
+      type: Boolean,
+      default: false,
+    },
+
+    // PATCH_49: Verification status - admin can mark as verified for public display
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    verifiedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

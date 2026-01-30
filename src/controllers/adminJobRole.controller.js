@@ -1,5 +1,6 @@
 /**
  * PATCH_43: Admin Job Role Controller
+ * PATCH_49: Enhanced with notifications for approval/screening unlock
  * Full control over job roles, applicants, screenings, and assignments
  */
 const mongoose = require("mongoose");
@@ -8,6 +9,7 @@ const WorkPosition = require("../models/WorkPosition");
 const Screening = require("../models/Screening");
 const Project = require("../models/Project");
 const User = require("../models/User");
+const Notification = require("../models/Notification");
 
 // ============ JOB ROLE MANAGEMENT ============
 
@@ -134,6 +136,21 @@ exports.approveApplicant = async (req, res) => {
     applicant.approvedAt = new Date();
     await applicant.save();
 
+    // PATCH_49: Send notification to worker
+    try {
+      const job = await WorkPosition.findById(id).select("title").lean();
+      await Notification.create({
+        user: applicant.user,
+        title: "Application Approved! 🎉",
+        message: `Your application for "${job?.title || "the position"}" has been approved. Check your workspace for next steps.`,
+        type: "workspace",
+        resourceType: "application",
+        resourceId: applicant._id,
+      });
+    } catch (notifErr) {
+      console.error("Failed to create approval notification:", notifErr);
+    }
+
     res.json({
       ok: true,
       message: "Applicant approved",
@@ -218,6 +235,21 @@ exports.unlockScreening = async (req, res) => {
 
     applicant.workerStatus = "screening_unlocked";
     await applicant.save();
+
+    // PATCH_49: Send notification to worker
+    try {
+      const job = await WorkPosition.findById(id).select("title").lean();
+      await Notification.create({
+        user: applicant.user,
+        title: "Screening Unlocked! 📚",
+        message: `Your screening for "${job?.title || "the position"}" is now available. Review the training materials and take the test.`,
+        type: "workspace",
+        resourceType: "application",
+        resourceId: applicant._id,
+      });
+    } catch (notifErr) {
+      console.error("Failed to create screening notification:", notifErr);
+    }
 
     res.json({
       ok: true,

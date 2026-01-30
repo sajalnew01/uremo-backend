@@ -281,6 +281,8 @@ exports.adminApproveProof = async (req, res) => {
     await proof.save();
 
     // Get project and mark as completed
+    // PATCH_49: Only mark project completed - DO NOT auto-credit earnings
+    // Admin must manually credit earnings via /admin/workspace/project/:id/credit
     const project = await Project.findById(proof.projectId);
     if (project) {
       // Mark completed if not already
@@ -288,44 +290,23 @@ exports.adminApproveProof = async (req, res) => {
         project.status = "completed";
         project.completedAt = new Date();
       }
-
-      // Prevent double-credit
-      const alreadyCredited = Number(project.earningsCredited || 0) > 0;
-      if (!alreadyCredited) {
-        const amount = Number(project.payRate || 0);
-        if (amount > 0) {
-          project.earningsCredited = amount;
-          project.creditedAt = new Date();
-
-          // Credit worker earnings (existing worker-wallet logic)
-          const worker = await ApplyWork.findOne({ user: proof.workerId });
-          if (worker) {
-            worker.totalEarnings = (worker.totalEarnings || 0) + amount;
-
-            // Add to completed projects
-            worker.projectsCompleted = worker.projectsCompleted || [];
-            worker.projectsCompleted.push({
-              projectId: project._id,
-              completedAt: project.completedAt || new Date(),
-              earnings: amount,
-            });
-
-            // Reset worker status to ready_to_work
-            if (worker.currentProject?.toString() === project._id.toString()) {
-              worker.currentProject = null;
-              worker.workerStatus = "ready_to_work";
-            }
-            await worker.save();
-          }
-        }
-      }
-
       await project.save();
+
+      // Reset worker status to ready_to_work (so they can be assigned new projects)
+      const worker = await ApplyWork.findOne({ user: proof.workerId });
+      if (worker) {
+        if (worker.currentProject?.toString() === project._id.toString()) {
+          worker.currentProject = null;
+          worker.workerStatus = "ready_to_work";
+        }
+        await worker.save();
+      }
     }
 
     res.json({
       success: true,
-      message: "Proof approved and earnings credited",
+      message:
+        "Proof approved. Project marked complete. Credit earnings separately.",
       proof,
     });
   } catch (err) {
@@ -379,7 +360,7 @@ exports.adminRejectProof = async (req, res) => {
 
 /**
  * GET /api/proofs/public
- * Get public proof gallery (only if enabled)
+ * Get public proof gallery (only verified proofs, PATCH_49: privacy by default)
  */
 exports.getPublicProofs = async (req, res) => {
   if (!isPublicProofEnabled()) {
@@ -387,9 +368,14 @@ exports.getPublicProofs = async (req, res) => {
   }
 
   try {
-    const proofs = await ProofOfWork.find({ status: "approved" })
+    // PATCH_49: Only show verified public proofs
+    const proofs = await ProofOfWork.find({
+      status: "approved",
+      isPublic: true,
+      isVerified: true,
+    })
       .populate("jobRoleId", "title")
-      .select("submissionText attachments createdAt jobRoleId")
+      .select("submissionText attachments createdAt jobRoleId isVerified")
       .sort({ createdAt: -1 })
       .limit(20)
       .lean();

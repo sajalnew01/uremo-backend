@@ -185,6 +185,47 @@ exports.applyToJob = async (req, res) => {
 };
 
 /**
+ * PATCH_49: PUT /api/workspace/application/:appId/mark-training-viewed
+ * Mark that the worker has viewed all training materials
+ */
+exports.markTrainingViewed = async (req, res) => {
+  try {
+    const { appId } = req.params;
+
+    const application = await ApplyWork.findOne({
+      _id: appId,
+      user: req.user.id,
+    });
+
+    if (!application) {
+      return res.status(404).json({ message: "Application not found" });
+    }
+
+    // Only allow when status is screening_unlocked
+    if (application.workerStatus !== "screening_unlocked") {
+      return res.status(400).json({
+        message:
+          "Training can only be marked as viewed when screening is unlocked",
+      });
+    }
+
+    // Update status to training_viewed
+    application.workerStatus = "training_viewed";
+    application.trainingViewedAt = new Date();
+    await application.save();
+
+    res.json({
+      ok: true,
+      message:
+        "Training marked as viewed. You can now take the screening test.",
+      workerStatus: application.workerStatus,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
  * GET /api/workspace/screenings
  * Get available screenings for the worker's category
  */
@@ -549,6 +590,7 @@ exports.requestWithdrawal = async (req, res) => {
 /**
  * GET /api/admin/workspace/workers
  * Get all workers with their status
+ * PATCH_49: Enhanced with additional counts for dashboard
  */
 exports.adminGetWorkers = async (req, res) => {
   try {
@@ -568,11 +610,28 @@ exports.adminGetWorkers = async (req, res) => {
       .limit(parseInt(limit))
       .lean();
 
+    // PATCH_49: Get additional counts for dashboard
+    const pendingCount = await ApplyWork.countDocuments({ status: "pending" });
+    const waitingScreeningCount = await ApplyWork.countDocuments({
+      workerStatus: "screening_unlocked",
+    });
+    const readyToWorkCount = await ApplyWork.countDocuments({
+      workerStatus: "ready_to_work",
+    });
+    const activeCount = await ApplyWork.countDocuments({
+      workerStatus: { $in: ["assigned", "working"] },
+    });
+
     res.json({
       workers,
       total,
       page: parseInt(page),
       pages: Math.ceil(total / limit),
+      // PATCH_49: Additional counts
+      pendingCount,
+      waitingScreeningCount,
+      readyToWorkCount,
+      activeCount,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });

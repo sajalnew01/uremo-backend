@@ -20,14 +20,22 @@ const notificationSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ["order", "ticket", "wallet", "affiliate", "rental", "system"],
+      enum: [
+        "order",
+        "ticket",
+        "wallet",
+        "affiliate",
+        "rental",
+        "system",
+        "workspace",
+      ], // PATCH_49: Added workspace
       default: "system",
     },
 
     // Optional link to related resource
     resourceType: {
       type: String,
-      enum: ["order", "ticket", "rental", "withdrawal", null],
+      enum: ["order", "ticket", "rental", "withdrawal", "application", null], // PATCH_49: Added application
       default: null,
     },
 
