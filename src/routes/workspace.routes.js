@@ -1,7 +1,8 @@
 /**
- * PATCH_38/43: Workspace Routes
+ * PATCH_38/43/47: Workspace Routes
  * Worker flow endpoints: profile, screenings, projects, earnings
  * PATCH_43: Multi-job support, apply to specific jobs
+ * PATCH_47: Start project endpoint
  */
 const router = require("express").Router();
 const auth = require("../middlewares/auth.middleware");
@@ -15,6 +16,7 @@ const {
   submitScreening,
   getMyProjects,
   getProject,
+  startProject,
   submitProject,
   getEarnings,
   requestWithdrawal,
@@ -37,6 +39,7 @@ router.post("/screening/:id/submit", submitScreening);
 // Projects
 router.get("/projects", getMyProjects);
 router.get("/project/:id", getProject);
+router.post("/project/:id/start", startProject);
 router.post("/project/:id/submit", submitProject);
 
 // Earnings

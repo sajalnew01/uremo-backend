@@ -1,16 +1,21 @@
 const BASE_URL = "https://uremo-backend.onrender.com";
 
 async function test() {
-  console.log("Testing admin login...");
+  console.log("Testing admin workspace routes...\n");
+
+  const email = process.env.ADMIN_EMAIL;
+  const password = process.env.ADMIN_PASSWORD;
+
+  if (!email || !password) {
+    console.log("ERROR: Set ADMIN_EMAIL and ADMIN_PASSWORD env vars");
+    return;
+  }
 
   try {
     const loginRes = await fetch(`${BASE_URL}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: "sajalnew02@gmail.com",
-        password: "sajal@9547",
-      }),
+      body: JSON.stringify({ email, password }),
     });
 
     const loginData = await loginRes.json();

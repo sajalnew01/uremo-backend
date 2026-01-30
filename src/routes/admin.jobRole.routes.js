@@ -1,5 +1,6 @@
 /**
  * PATCH_43: Admin Job Role Routes
+ * PATCH_47: Enhanced with project management and inline screening creation
  * Full control over job roles, applicants, screenings, and assignments
  */
 const router = require("express").Router();
@@ -17,6 +18,10 @@ const {
   assignProject,
   setWorkerStatus,
   getAllJobRoles,
+  getJobProjects,
+  createJobProject,
+  activateProject,
+  creditWorker,
 } = require("../controllers/adminJobRole.controller");
 
 // All routes require auth + admin
@@ -44,5 +49,13 @@ router.put("/job/:id/set-screening", setScreening);
 // Worker assignment
 router.put("/job/:id/assign-project", assignProject);
 router.put("/job/:id/set-status", setWorkerStatus);
+
+// PATCH_47: Project management
+router.get("/job/:id/projects", getJobProjects);
+router.post("/job/:id/projects", createJobProject);
+router.put("/job/:id/projects/:projectId/activate", activateProject);
+
+// PATCH_47: Credit worker earnings
+router.put("/job/:id/credit-worker", creditWorker);
 
 module.exports = router;

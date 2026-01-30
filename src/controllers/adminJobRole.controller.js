@@ -264,35 +264,101 @@ exports.setTraining = async (req, res) => {
 
 /**
  * PUT /api/admin/workspace/job/:id/set-screening
- * Attach a screening to the job role
+ * Attach a screening to the job role OR create one inline
+ * PATCH_47: Support inline screening creation with questions
  */
 exports.setScreening = async (req, res) => {
   try {
     const { id } = req.params;
-    const { screeningId, hasScreening } = req.body;
+    const { screeningId, hasScreening, screening } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ ok: false, message: "Invalid job ID" });
     }
 
-    const update = {
-      hasScreening: hasScreening !== false,
-    };
-
-    if (screeningId && mongoose.Types.ObjectId.isValid(screeningId)) {
-      update.screeningId = screeningId;
-    }
-
-    const job = await WorkPosition.findByIdAndUpdate(id, update, { new: true });
-
+    const job = await WorkPosition.findById(id);
     if (!job) {
       return res.status(404).json({ ok: false, message: "Job role not found" });
     }
 
+    let attachedScreeningId = screeningId;
+
+    // PATCH_47: If inline screening data is provided, create it
+    if (
+      screening &&
+      screening.title &&
+      Array.isArray(screening.questions) &&
+      screening.questions.length > 0
+    ) {
+      // Validate questions
+      const validQuestions = screening.questions
+        .filter(
+          (q) =>
+            q.question && Array.isArray(q.options) && q.options.length >= 2,
+        )
+        .map((q) => ({
+          question: q.question,
+          type: "multiple_choice",
+          options: q.options,
+          correctAnswer: String(q.options[q.correctAnswer] || q.options[0]),
+          points: 1,
+        }));
+
+      if (validQuestions.length === 0) {
+        return res.status(400).json({
+          ok: false,
+          message: "At least one valid question is required",
+        });
+      }
+
+      // Create or update screening
+      const screeningData = {
+        title: screening.title,
+        description: screening.description || "",
+        category: job.category || "microjobs",
+        questions: validQuestions,
+        passingScore: screening.passingScore || 70,
+        timeLimit: screening.timeLimit || 30,
+        active: true,
+        createdBy: req.user.id,
+      };
+
+      let createdScreening;
+      if (job.screeningId) {
+        // Update existing screening
+        createdScreening = await Screening.findByIdAndUpdate(
+          job.screeningId,
+          screeningData,
+          { new: true },
+        );
+      } else {
+        // Create new screening
+        createdScreening = await Screening.create(screeningData);
+      }
+
+      attachedScreeningId = createdScreening._id;
+    }
+
+    // Update job with screening reference
+    const update = {
+      hasScreening: hasScreening !== false,
+    };
+
+    if (
+      attachedScreeningId &&
+      mongoose.Types.ObjectId.isValid(attachedScreeningId)
+    ) {
+      update.screeningId = attachedScreeningId;
+    }
+
+    const updatedJob = await WorkPosition.findByIdAndUpdate(id, update, {
+      new: true,
+    }).populate("screeningId", "title passingScore timeLimit questions");
+
     res.json({
       ok: true,
-      message: "Screening attached to job role",
-      job,
+      message: "Screening saved and attached to job role",
+      job: updatedJob,
     });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
@@ -329,12 +395,10 @@ exports.assignProject = async (req, res) => {
     }
 
     if (!["ready_to_work", "assigned"].includes(applicant.workerStatus)) {
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          message: "Worker must be ready_to_work or assigned",
-        });
+      return res.status(400).json({
+        ok: false,
+        message: "Worker must be ready_to_work or assigned",
+      });
     }
 
     const project = await Project.findByIdAndUpdate(
@@ -394,12 +458,10 @@ exports.setWorkerStatus = async (req, res) => {
     ];
 
     if (!validStatuses.includes(workerStatus)) {
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
-        });
+      return res.status(400).json({
+        ok: false,
+        message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
+      });
     }
 
     const applicant = await ApplyWork.findOne({
@@ -501,6 +563,148 @@ exports.getAllJobRoles = async (req, res) => {
       total,
       page: parseInt(page),
       pages: Math.ceil(total / limit),
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: err.message });
+  }
+};
+
+/**
+ * PATCH_47: GET /api/admin/workspace/job/:id/projects
+ * Get all projects for a job role
+ */
+exports.getJobProjects = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const job = await WorkPosition.findById(id).lean();
+    if (!job) {
+      return res.status(404).json({ ok: false, message: "Job role not found" });
+    }
+
+    // Get projects in this category
+    const projects = await Project.find({ category: job.category })
+      .populate("assignedTo", "name email")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({ ok: true, projects });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: err.message });
+  }
+};
+
+/**
+ * PATCH_47: POST /api/admin/workspace/job/:id/projects
+ * Create a new project for this job role
+ */
+exports.createJobProject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, payRate, payType, deadline, instructions } =
+      req.body;
+
+    const job = await WorkPosition.findById(id).lean();
+    if (!job) {
+      return res.status(404).json({ ok: false, message: "Job role not found" });
+    }
+
+    if (!title) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Project title is required" });
+    }
+
+    const project = await Project.create({
+      title,
+      description: description || "",
+      category: job.category,
+      instructions: instructions || "",
+      payRate: Number(payRate) || 0,
+      payType: payType || "per_task",
+      deadline: deadline ? new Date(deadline) : undefined,
+      status: "draft",
+      createdBy: req.user.id,
+    });
+
+    res.status(201).json({ ok: true, project, message: "Project created" });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: err.message });
+  }
+};
+
+/**
+ * PATCH_47: PUT /api/admin/workspace/job/:id/projects/:projectId/activate
+ * Activate a draft project
+ */
+exports.activateProject = async (req, res) => {
+  try {
+    const { projectId } = req.params;
+
+    const project = await Project.findByIdAndUpdate(
+      projectId,
+      { status: "open" },
+      { new: true },
+    );
+
+    if (!project) {
+      return res.status(404).json({ ok: false, message: "Project not found" });
+    }
+
+    res.json({ ok: true, project, message: "Project activated" });
+  } catch (err) {
+    res.status(500).json({ ok: false, message: err.message });
+  }
+};
+
+/**
+ * PATCH_47: PUT /api/admin/workspace/job/:id/credit-worker
+ * Credit earnings to a worker who completed work
+ */
+exports.creditWorker = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { applicantId, amount, note } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(applicantId)) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid applicant ID" });
+    }
+
+    const applicant = await ApplyWork.findOne({
+      _id: applicantId,
+      position: id,
+    }).populate("user", "name email");
+
+    if (!applicant) {
+      return res
+        .status(404)
+        .json({ ok: false, message: "Applicant not found" });
+    }
+
+    // Credit the earnings
+    const creditAmount = Number(amount) || 0;
+    applicant.totalEarnings = (applicant.totalEarnings || 0) + creditAmount;
+    applicant.pendingEarnings = (applicant.pendingEarnings || 0) + creditAmount;
+
+    // Add to earnings history
+    if (!applicant.earningsHistory) {
+      applicant.earningsHistory = [];
+    }
+    applicant.earningsHistory.push({
+      amount: creditAmount,
+      note: note || "Admin credited earnings",
+      creditedAt: new Date(),
+      creditedBy: req.user.id,
+    });
+
+    await applicant.save();
+
+    res.json({
+      ok: true,
+      message: `Credited $${creditAmount} to ${applicant.user?.name || "worker"}`,
+      applicant,
     });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });

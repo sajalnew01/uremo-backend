@@ -388,6 +388,46 @@ exports.getProject = async (req, res) => {
 };
 
 /**
+ * PATCH_47: POST /api/workspace/project/:id/start
+ * Mark project as in progress
+ */
+exports.startProject = async (req, res) => {
+  try {
+    const project = await Project.findOne({
+      _id: req.params.id,
+      assignedTo: req.user.id,
+    });
+
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    if (project.status !== "assigned") {
+      return res
+        .status(400)
+        .json({ message: "Project already started or completed" });
+    }
+
+    project.status = "in_progress";
+    await project.save();
+
+    // Update worker status to working
+    await ApplyWork.updateOne(
+      { user: req.user.id, currentProject: project._id },
+      { workerStatus: "working" },
+    );
+
+    res.json({
+      success: true,
+      message: "Project started! You're now working on it.",
+      project,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
  * POST /api/workspace/project/:id/submit
  * Submit project completion
  */

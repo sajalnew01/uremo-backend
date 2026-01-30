@@ -58,6 +58,46 @@ on("order.in_progress", async ({ item, previousState, meta }) => {
       );
     }
 
+    // PATCH_48: Auto-activate rental when rental order is paid
+    if (item.orderType === "rental" || item.serviceType === "rental") {
+      try {
+        const Rental = require("../models/Rental");
+        const { transition } = require("./flowEngine");
+
+        // Find the rental linked to this order
+        const rental = await Rental.findOne({ order: item._id });
+        if (rental && rental.status === "pending") {
+          // Set start and end dates based on rental duration
+          const startDate = new Date();
+          let endDate = new Date();
+
+          if (rental.rentalType === "months") {
+            endDate.setMonth(endDate.getMonth() + rental.duration);
+          } else {
+            endDate.setDate(endDate.getDate() + rental.duration);
+          }
+
+          rental.startDate = startDate;
+          rental.endDate = endDate;
+          await rental.save();
+
+          // Activate the rental via FlowEngine
+          await transition("rental", rental._id, "active", {
+            activatedBy: "payment_hook",
+            orderId: item._id,
+          });
+          console.log(
+            `[FlowHooks] Rental ${rental._id} auto-activated for order ${item._id}`,
+          );
+        }
+      } catch (rentalErr) {
+        console.error(
+          "[FlowHooks] Rental auto-activation error:",
+          rentalErr.message,
+        );
+      }
+    }
+
     // Send notification to user
     if (item.userId) {
       await sendNotification({

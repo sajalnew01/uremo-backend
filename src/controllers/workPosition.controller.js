@@ -26,6 +26,40 @@ exports.listPublic = async (req, res, next) => {
   }
 };
 
+/**
+ * PATCH_47: Get job role by service ID
+ * Used when user clicks "Apply to Work" from a service page
+ */
+exports.getByServiceId = async (req, res, next) => {
+  try {
+    const { serviceId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(String(serviceId || ""))) {
+      return res.status(400).json({ message: "Invalid service ID" });
+    }
+
+    const position = await WorkPosition.findOne({
+      serviceId: serviceId,
+      active: true,
+    })
+      .populate("screeningId", "title passingScore timeLimit")
+      .lean();
+
+    if (!position) {
+      return res.status(404).json({
+        message: "No job role found for this service",
+        hasJobRole: false,
+      });
+    }
+
+    res.json({
+      hasJobRole: true,
+      position,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 exports.listAdmin = async (req, res, next) => {
   try {
     const positions = await WorkPosition.find()
