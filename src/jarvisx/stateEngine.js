@@ -52,13 +52,6 @@ function detectGoalFromMessage(message) {
     return GOALS.BUY_SERVICE;
   }
 
-  // SUPPORT patterns
-  if (
-    /help|support|issue|problem|complaint|ticket|broken|not working/i.test(msg)
-  ) {
-    return GOALS.SUPPORT;
-  }
-
   // APPLY_TO_WORK patterns
   if (/apply|work|job|position|hire|earn|freelance/i.test(msg)) {
     return GOALS.APPLY_TO_WORK;
@@ -67,6 +60,13 @@ function detectGoalFromMessage(message) {
   // WALLET patterns
   if (/wallet|balance|money|funds|payment method|billing/i.test(msg)) {
     return GOALS.WALLET;
+  }
+
+  // SUPPORT patterns
+  if (
+    /help|support|issue|problem|complaint|ticket|broken|not working/i.test(msg)
+  ) {
+    return GOALS.SUPPORT;
   }
 
   // WORKSPACE patterns
@@ -162,6 +162,7 @@ function processMessage(params) {
   // Step 3: Auto-switch goal if needed (without confirmation)
   // But ONLY if there's already an active goal (not on first message)
   let autoSwitched = false;
+  let skipApplyInput = false;
   if (
     session.activeGoal &&
     detectedGoal &&
@@ -169,6 +170,7 @@ function processMessage(params) {
   ) {
     session = switchGoal(session, detectedGoal, { getFirstStep });
     autoSwitched = true;
+    skipApplyInput = true; // Ask first question after switch
   }
 
   // Step 4: If no active goal yet, start with detected goal or GENERAL
@@ -190,7 +192,12 @@ function processMessage(params) {
   // (collect data, transition to next step)
   // But NOT if this is the first message that started a new goal
   // (user needs to answer the first question first)
-  if (message && message.length > 0 && !isFirstMessageOfGoal) {
+  if (
+    message &&
+    message.length > 0 &&
+    !isFirstMessageOfGoal &&
+    !skipApplyInput
+  ) {
     session = applyUserInput(session, message);
   }
 
