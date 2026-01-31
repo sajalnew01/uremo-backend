@@ -11,18 +11,39 @@ const engagementEventSchema = new mongoose.Schema(
     title: {
       type: String,
       required: true,
+      maxlength: 500,
     },
 
     message: {
       type: String,
       required: true,
+      maxlength: 5000,
     },
 
-    targetTags: [String], // interests to target
+    targetTags: [String],
 
     processed: {
       type: Boolean,
       default: false,
+    },
+
+    processingStarted: {
+      type: Date,
+      default: null,
+    },
+
+    failureCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    lastError: String,
+
+    idempotencyKey: {
+      type: String,
+      unique: true,
+      sparse: true,
     },
 
     processedAt: Date,
@@ -35,7 +56,10 @@ const engagementEventSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-// Index for efficient querying
+engagementEventSchema.index({ type: 1, processed: 1, createdAt: -1 });
 engagementEventSchema.index({ processed: 1, createdAt: -1 });
+engagementEventSchema.index({ processingStarted: 1 }, { sparse: true });
+engagementEventSchema.index({ idempotencyKey: 1 }, { sparse: true });
+engagementEventSchema.index({ failureCount: 1, processed: 1 });
 
 module.exports = mongoose.model("EngagementEvent", engagementEventSchema);

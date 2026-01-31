@@ -1,6 +1,24 @@
 const User = require("../models/User");
 const engagementService = require("../services/engagement.service");
-const resendService = require("../services/resend.service");
+
+let resendService;
+try {
+  resendService = require("../services/resend.service");
+} catch (err) {
+  console.error("[ENGAGEMENT_CRON] Resend service not available:", err.message);
+  resendService = null;
+}
+
+const logger = {
+  info: (msg) =>
+    console.log(`[ENGAGEMENT_CRON_INFO] ${new Date().toISOString()} ${msg}`),
+  warn: (msg) =>
+    console.warn(`[ENGAGEMENT_CRON_WARN] ${new Date().toISOString()} ${msg}`),
+  error: (msg) =>
+    console.error(`[ENGAGEMENT_CRON_ERROR] ${new Date().toISOString()} ${msg}`),
+};
+
+const EMAIL_SEND_TIMEOUT = 30000;
 
 /**
  * PATCH_53: Batch email processor cron job
@@ -8,25 +26,39 @@ const resendService = require("../services/resend.service");
  * Matches users by interests and sends emails respecting preferences
  */
 const runEngagementBatch = async () => {
+  const batchStartTime = Date.now();
+
+  if (!resendService) {
+    logger.warn("Resend service unavailable, skipping batch");
+    return;
+  }
+
   try {
-    console.log("[Engagement Cron] Starting batch processor...");
+    logger.info("Batch processor started");
 
     const events = await engagementService.getUnprocessedEvents();
 
     if (events.length === 0) {
-      console.log("[Engagement Cron] No unprocessed events found");
+      logger.info("No unprocessed events found");
       return;
     }
 
-    console.log(`[Engagement Cron] Processing ${events.length} event(s)`);
+    logger.info(`Processing ${events.length} event(s)`);
 
     for (const event of events) {
+      const locked = await engagementService.acquireEventLock(event._id);
+      if (!locked) {
+        logger.warn(`Could not acquire lock for event ${event._id}, skipping`);
+        continue;
+      }
+
       await processEvent(event);
     }
 
-    console.log("[Engagement Cron] Batch processor completed");
+    const duration = Date.now() - batchStartTime;
+    logger.info(`Batch processor completed in ${duration}ms`);
   } catch (error) {
-    console.error("[Engagement Cron] Fatal error:", error);
+    logger.error(`Fatal error: ${error.message}`);
   }
 };
 
@@ -35,56 +67,40 @@ const runEngagementBatch = async () => {
  */
 const processEvent = async (event) => {
   try {
-    console.log(`[Engagement Cron] Processing event: ${event.type}`);
+    logger.info(`Processing event=${event._id} type=${event.type}`);
 
     let sentCount = 0;
 
-    // Find users matching target tags
     const query = {};
 
-    // If specific tags targeted, find users with matching interests
     if (event.targetTags && event.targetTags.length > 0) {
       query.interestTags = { $in: event.targetTags };
     }
 
     const users = await User.find(query).lean();
-    console.log(
-      `[Engagement Cron] Found ${users.length} users for event: ${event.type}`,
-    );
+    logger.info(`Found ${users.length} users for event ${event._id}`);
 
-    // Send emails to matching users
     for (const user of users) {
       try {
-        // Check email preference for this event type
         if (!engagementService.shouldSendEmail(user, event.type)) {
-          console.log(
-            `[Engagement Cron] User ${user.email} opted out of ${event.type}`,
-          );
+          logger.info(`User ${user._id} opted out of ${event.type}`);
           continue;
         }
 
-        // Send email via Resend
         await sendEngagementEmail(user, event);
         sentCount++;
-
-        // Create in-app notification (optional)
-        // await createNotification(user._id, event);
       } catch (emailError) {
-        console.error(
-          `[Engagement Cron] Error sending email to ${user.email}:`,
-          emailError,
+        logger.error(
+          `Failed to send email to user ${user._id}: ${emailError.message}`,
         );
-        // Continue to next user even if this one fails
       }
     }
 
-    // Mark event as processed
     await engagementService.markEventProcessed(event._id, sentCount);
-    console.log(
-      `[Engagement Cron] Event processed. Sent to ${sentCount} users`,
-    );
+    logger.info(`Event ${event._id} processed. Sent to ${sentCount} users`);
   } catch (error) {
-    console.error("[Engagement Cron] Error processing event:", error);
+    logger.error(`Error processing event ${event._id}: ${error.message}`);
+    await engagementService.recordProcessingFailure(event._id, error);
   }
 };
 
@@ -92,32 +108,65 @@ const processEvent = async (event) => {
  * Send engagement email to user
  */
 const sendEngagementEmail = async (user, event) => {
+  if (!resendService || !resendService.sendEmail) {
+    throw new Error("Resend service not available");
+  }
+
+  if (!user.email || typeof user.email !== "string") {
+    throw new Error("Invalid user email");
+  }
+
   try {
-    const subject = `🎉 ${event.title} - New Opportunity on UREMO`;
+    const subject = `🎉 ${engagementService.sanitizeHtml(event.title)} - New Opportunity on UREMO`;
+
+    const sanitizedTags = (event.targetTags || [])
+      .map((tag) => engagementService.sanitizeHtml(tag))
+      .join(", ");
+
+    const escapedTitle = engagementService.sanitizeHtml(event.title);
+    const escapedMessage = engagementService.sanitizeHtml(event.message);
 
     const emailBody = `
-      <h2>${event.title}</h2>
-      <p>${event.message}</p>
+      <h2>${escapedTitle}</h2>
+      <p>${escapedMessage}</p>
       <p>
-        <a href="https://uremo.com" style="background: #6366f1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block;">
+        <a href="https://uremo.online" style="background: #6366f1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block;">
           View on UREMO
         </a>
       </p>
       <p style="color: #666; font-size: 12px;">
-        You received this because you're interested in: ${event.targetTags.join(", ")}
+        You received this because you're interested in: ${sanitizedTags || "general updates"}
+      </p>
+      <p style="color: #999; font-size: 11px; margin-top: 20px;">
+        <a href="https://uremo.online/profile">Manage preferences</a>
       </p>
     `;
 
-    // Use Resend service to send email
-    await resendService.sendEmail({
+    const sendPromise = resendService.sendEmail({
       to: user.email,
       subject,
       html: emailBody,
     });
 
-    console.log(`[Engagement] Email sent to ${user.email}`);
+    const result = await Promise.race([
+      sendPromise,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Email send timeout")),
+          EMAIL_SEND_TIMEOUT,
+        ),
+      ),
+    ]);
+
+    if (!result || result.error) {
+      throw new Error(
+        `Resend failed: ${result?.error?.message || "Unknown error"}`,
+      );
+    }
+
+    logger.info(`Email sent to user ${user._id}`);
   } catch (error) {
-    console.error(`[Engagement] Failed to send email to ${user.email}:`, error);
+    logger.error(`Failed to send email: ${error.message}`);
     throw error;
   }
 };

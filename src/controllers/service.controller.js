@@ -212,24 +212,41 @@ exports.createService = async (req, res) => {
 
     const service = await Service.create(servicePayload);
 
-    // PATCH_53: Queue engagement event for new service
+    // PATCH_53 Hardening: Queue engagement event with safety checks
     try {
       const engagementService = require("../services/engagement.service");
-      const categoryTags = [category];
-      if (subcategory) categoryTags.push(subcategory);
+      const categoryTags = [String(category).toLowerCase()];
+      if (subcategory) categoryTags.push(String(subcategory).toLowerCase());
 
-      await engagementService.queueEvent({
-        type: "service_new",
-        title: `New ${category} Service Available`,
-        message: title,
-        targetTags: categoryTags,
-      });
+      const VALID_ENGAGEMENT_TAGS = [
+        "microjobs",
+        "forex",
+        "wallets",
+        "crypto",
+        "rentals",
+      ];
+      const validTags = categoryTags.filter((tag) =>
+        VALID_ENGAGEMENT_TAGS.includes(tag),
+      );
+
+      if (validTags.length > 0) {
+        await engagementService.queueEvent({
+          type: "service_new",
+          title: `New ${category} Service Available`,
+          message: String(title).substring(0, 500),
+          targetTags: validTags,
+          idempotencyKey: `service_${service._id}`,
+        });
+      } else {
+        console.warn(
+          `[Service] No valid engagement tags for service: ${category}`,
+        );
+      }
     } catch (engagementError) {
       console.warn(
         "[Service] Engagement event queuing failed:",
         engagementError,
       );
-      // Don't fail the service creation if engagement fails
     }
 
     res.status(201).json(service);
