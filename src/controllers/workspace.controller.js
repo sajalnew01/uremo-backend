@@ -268,7 +268,7 @@ exports.getAvailableScreenings = async (req, res) => {
 exports.getScreening = async (req, res) => {
   try {
     const screening = await Screening.findById(req.params.id)
-      .select("-questions.correctAnswer") // Don't expose answers
+      .select("-questions.correctAnswer -questions.correctAnswers") // Don't expose answers
       .lean();
 
     if (!screening) {
@@ -321,11 +321,49 @@ exports.submitScreening = async (req, res) => {
     let totalPoints = 0;
     let earnedPoints = 0;
 
+    const normalizeCorrectAnswers = (question) => {
+      if (
+        Array.isArray(question.correctAnswers) &&
+        question.correctAnswers.length
+      ) {
+        return question.correctAnswers.map(String);
+      }
+      if (
+        question.correctAnswer !== undefined &&
+        question.correctAnswer !== null
+      ) {
+        if (typeof question.correctAnswer === "number") {
+          const opt = question.options?.[question.correctAnswer];
+          return opt ? [String(opt)] : [];
+        }
+        return [String(question.correctAnswer)];
+      }
+      return [];
+    };
+
     screening.questions.forEach((q, idx) => {
       totalPoints += q.points || 1;
-      if (q.type === "multiple_choice" && answers[idx] === q.correctAnswer) {
-        earnedPoints += q.points || 1;
-      } else if (q.type === "text" || q.type === "file_upload") {
+
+      const questionType = q.type || "single";
+      const correctAnswers = normalizeCorrectAnswers(q);
+      const answer = answers[idx];
+
+      if (questionType === "single" || questionType === "multiple_choice") {
+        if (String(answer || "") === String(correctAnswers[0] || "")) {
+          earnedPoints += q.points || 1;
+        }
+      } else if (questionType === "multi") {
+        const given = Array.isArray(answer) ? answer.map(String) : [];
+        const expected = [...new Set(correctAnswers.map(String))].sort();
+        const actual = [...new Set(given.map(String))].sort();
+        if (
+          expected.length > 0 &&
+          expected.length === actual.length &&
+          expected.every((v, i) => v === actual[i])
+        ) {
+          earnedPoints += q.points || 1;
+        }
+      } else if (questionType === "text" || questionType === "file_upload") {
         // Text/file answers need manual review - give partial credit
         earnedPoints += (q.points || 1) * 0.5;
       }
@@ -670,6 +708,34 @@ exports.adminUpdateWorkerStatus = async (req, res) => {
   }
 };
 
+const normalizeScreeningQuestions = (questions = []) => {
+  if (!Array.isArray(questions)) return [];
+  return questions.map((q) => {
+    const options = Array.isArray(q.options) ? q.options : [];
+    let correctAnswers = [];
+
+    if (Array.isArray(q.correctAnswers)) {
+      correctAnswers = q.correctAnswers.map(String).filter(Boolean);
+    } else if (q.correctAnswer !== undefined && q.correctAnswer !== null) {
+      if (typeof q.correctAnswer === "number") {
+        const opt = options[q.correctAnswer];
+        if (opt) correctAnswers = [String(opt)];
+      } else {
+        correctAnswers = [String(q.correctAnswer)];
+      }
+    }
+
+    return {
+      question: q.question,
+      type: q.type || "single",
+      options,
+      correctAnswer: q.correctAnswer,
+      correctAnswers,
+      points: q.points || 1,
+    };
+  });
+};
+
 /**
  * POST /api/admin/workspace/screenings
  * Create a new screening
@@ -691,7 +757,7 @@ exports.adminCreateScreening = async (req, res) => {
       description,
       category,
       trainingMaterials,
-      questions,
+      questions: normalizeScreeningQuestions(questions),
       passingScore,
       timeLimit,
       createdBy: req.user.id,
@@ -712,6 +778,109 @@ exports.adminGetScreenings = async (req, res) => {
     const screenings = await Screening.find().sort({ createdAt: -1 }).lean();
 
     res.json({ screenings });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * GET /api/admin/workspace/screenings/:id
+ * Get a single screening
+ */
+exports.adminGetScreeningById = async (req, res) => {
+  try {
+    const screening = await Screening.findById(req.params.id).lean();
+    if (!screening) {
+      return res.status(404).json({ message: "Screening not found" });
+    }
+    res.json({ screening });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * PUT /api/admin/workspace/screenings/:id
+ * Update a screening
+ */
+exports.adminUpdateScreening = async (req, res) => {
+  try {
+    const {
+      title,
+      description,
+      category,
+      trainingMaterials,
+      questions,
+      passingScore,
+      timeLimit,
+      active,
+    } = req.body;
+
+    const screening = await Screening.findByIdAndUpdate(
+      req.params.id,
+      {
+        title,
+        description,
+        category,
+        trainingMaterials,
+        questions: normalizeScreeningQuestions(questions),
+        passingScore,
+        timeLimit,
+        active,
+      },
+      { new: true },
+    );
+
+    if (!screening) {
+      return res.status(404).json({ message: "Screening not found" });
+    }
+
+    res.json({ success: true, screening });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * POST /api/admin/workspace/screenings/:id/clone
+ * Duplicate a screening
+ */
+exports.adminCloneScreening = async (req, res) => {
+  try {
+    const screening = await Screening.findById(req.params.id).lean();
+    if (!screening) {
+      return res.status(404).json({ message: "Screening not found" });
+    }
+
+    const cloned = await Screening.create({
+      title: `Copy of ${screening.title}`,
+      description: screening.description,
+      category: screening.category,
+      trainingMaterials: screening.trainingMaterials || [],
+      questions: normalizeScreeningQuestions(screening.questions || []),
+      passingScore: screening.passingScore,
+      timeLimit: screening.timeLimit,
+      active: screening.active,
+      createdBy: req.user.id,
+    });
+
+    res.status(201).json({ success: true, screening: cloned });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * DELETE /api/admin/workspace/screenings/:id
+ * Delete a screening
+ */
+exports.adminDeleteScreening = async (req, res) => {
+  try {
+    const deleted = await Screening.findByIdAndDelete(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ message: "Screening not found" });
+    }
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

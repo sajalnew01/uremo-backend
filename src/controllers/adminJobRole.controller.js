@@ -296,13 +296,13 @@ exports.setTraining = async (req, res) => {
 
 /**
  * PUT /api/admin/workspace/job/:id/set-screening
- * Attach a screening to the job role OR create one inline
- * PATCH_47: Support inline screening creation with questions
+ * Attach a screening to the job role
+ * PATCH_52A: Inline screening creation removed (centralized screenings only)
  */
 exports.setScreening = async (req, res) => {
   try {
     const { id } = req.params;
-    const { screeningId, hasScreening, screening } = req.body;
+    const { screeningId } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ ok: false, message: "Invalid job ID" });
@@ -313,75 +313,32 @@ exports.setScreening = async (req, res) => {
       return res.status(404).json({ ok: false, message: "Job role not found" });
     }
 
-    let attachedScreeningId = screeningId;
+    let attachedScreeningId = null;
 
-    // PATCH_47: If inline screening data is provided, create it
-    if (
-      screening &&
-      screening.title &&
-      Array.isArray(screening.questions) &&
-      screening.questions.length > 0
-    ) {
-      // Validate questions
-      const validQuestions = screening.questions
-        .filter(
-          (q) =>
-            q.question && Array.isArray(q.options) && q.options.length >= 2,
-        )
-        .map((q) => ({
-          question: q.question,
-          type: "multiple_choice",
-          options: q.options,
-          correctAnswer: String(q.options[q.correctAnswer] || q.options[0]),
-          points: 1,
-        }));
-
-      if (validQuestions.length === 0) {
-        return res.status(400).json({
-          ok: false,
-          message: "At least one valid question is required",
-        });
+    if (screeningId) {
+      if (!mongoose.Types.ObjectId.isValid(screeningId)) {
+        return res
+          .status(400)
+          .json({ ok: false, message: "Invalid screening ID" });
       }
 
-      // Create or update screening
-      const screeningData = {
-        title: screening.title,
-        description: screening.description || "",
-        category: job.category || "microjobs",
-        questions: validQuestions,
-        passingScore: screening.passingScore || 70,
-        timeLimit: screening.timeLimit || 30,
-        active: true,
-        createdBy: req.user.id,
-      };
-
-      let createdScreening;
-      if (job.screeningId) {
-        // Update existing screening
-        createdScreening = await Screening.findByIdAndUpdate(
-          job.screeningId,
-          screeningData,
-          { new: true },
-        );
-      } else {
-        // Create new screening
-        createdScreening = await Screening.create(screeningData);
+      const screeningExists = await Screening.findById(screeningId)
+        .select("_id")
+        .lean();
+      if (!screeningExists) {
+        return res
+          .status(404)
+          .json({ ok: false, message: "Screening not found" });
       }
 
-      attachedScreeningId = createdScreening._id;
+      attachedScreeningId = screeningId;
     }
 
     // Update job with screening reference
     const update = {
-      hasScreening: hasScreening !== false,
+      hasScreening: Boolean(attachedScreeningId),
+      screeningId: attachedScreeningId || null,
     };
-
-    if (
-      attachedScreeningId &&
-      mongoose.Types.ObjectId.isValid(attachedScreeningId)
-    ) {
-      update.screeningId = attachedScreeningId;
-    }
 
     const updatedJob = await WorkPosition.findByIdAndUpdate(id, update, {
       new: true,
@@ -389,7 +346,9 @@ exports.setScreening = async (req, res) => {
 
     res.json({
       ok: true,
-      message: "Screening saved and attached to job role",
+      message: attachedScreeningId
+        ? "Screening attached to job role"
+        : "Screening cleared from job role",
       job: updatedJob,
     });
   } catch (err) {

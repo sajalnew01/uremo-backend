@@ -11,6 +11,10 @@ const {
   adminUpdateWorkerStatus,
   adminCreateScreening,
   adminGetScreenings,
+  adminGetScreeningById,
+  adminUpdateScreening,
+  adminCloneScreening,
+  adminDeleteScreening,
   adminCreateProject,
   adminGetProjects,
   adminAssignProject,
@@ -28,6 +32,10 @@ router.put("/worker/:id/status", adminUpdateWorkerStatus);
 // Screenings management
 router.get("/screenings", adminGetScreenings);
 router.post("/screenings", adminCreateScreening);
+router.get("/screenings/:id", adminGetScreeningById);
+router.put("/screenings/:id", adminUpdateScreening);
+router.post("/screenings/:id/clone", adminCloneScreening);
+router.delete("/screenings/:id", adminDeleteScreening);
 
 // Projects management
 router.get("/projects", adminGetProjects);

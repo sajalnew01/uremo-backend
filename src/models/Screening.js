@@ -40,12 +40,17 @@ const screeningSchema = new mongoose.Schema(
     questions: [
       {
         question: String,
+        // PATCH_52A: single/multi choice support (keep legacy enums for compatibility)
         type: {
           type: String,
-          enum: ["multiple_choice", "text", "file_upload"],
+          enum: ["single", "multi", "multiple_choice", "text", "file_upload"],
+          default: "single",
         },
         options: [String], // For multiple choice
-        correctAnswer: String, // For auto-grading multiple choice
+        // Legacy single-answer field (kept for backward compatibility)
+        correctAnswer: String,
+        // PATCH_52A: multi-answer support
+        correctAnswers: { type: [String], default: [] },
         points: { type: Number, default: 1 },
       },
     ],
