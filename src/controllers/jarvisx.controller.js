@@ -2364,6 +2364,7 @@ exports.chatV2 = async (req, res) => {
 
   const message = clampString(req.body?.message, 1200);
   const modeParam = String(req.body?.mode || "classic").trim();
+  const sessionId = req.body?.sessionId || null; // PATCH_52B: Extract sessionId from request
 
   if (!message) {
     return res.status(400).json({
@@ -2392,6 +2393,7 @@ exports.chatV2 = async (req, res) => {
       message,
       context,
       options,
+      sessionId, // PATCH_52B: Pass sessionId to brain
     });
 
     // Log for analytics
