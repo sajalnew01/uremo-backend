@@ -73,8 +73,9 @@ function parseTicketFromMessage(message) {
 
 /**
  * Build context object based on intent
+ * PATCH_52B: Now includes state engine data
  * @param {string} intent - Detected intent
- * @param {Object} context - { userId, userRole, isAdmin }
+ * @param {Object} context - { userId, userRole, isAdmin, activeGoal, currentStep, collectedData, sessionId }
  * @param {Object} params - Extracted parameters from message
  * @returns {Promise<Object>} Context data for response generation
  */
@@ -84,6 +85,11 @@ async function buildContext(intent, context, params = {}) {
     userId: context.userId || null,
     isAuthenticated: !!context.userId,
     isAdmin: !!context.isAdmin,
+    // PATCH_52B: Add state engine context
+    sessionId: context.sessionId || null,
+    activeGoal: context.activeGoal || null,
+    currentStep: context.currentStep || null,
+    collectedData: context.collectedData || {},
     timestamp: new Date().toISOString(),
   };
 

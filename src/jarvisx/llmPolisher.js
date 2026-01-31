@@ -1,7 +1,10 @@
 /**
- * PATCH_51: JarvisX LLM Polisher
+ * PATCH_52B: JarvisX LLM Polisher - Unchanged
  * LLM only polishes tone/grammar at the END
  * NEVER generates facts, data, or logic
+ *
+ * NOTE: PATCH_52B adds state engine above polishing layer
+ * This file remains unchanged - LLM still only handles tone/formatting
  */
 
 const Groq = require("groq-sdk");
@@ -134,7 +137,7 @@ function formatResponse(polishedBlueprint) {
   // Add metadata
   response.meta = {
     polished: polishedBlueprint.polished,
-    version: "51",
+    version: "52B",
   };
 
   return response;

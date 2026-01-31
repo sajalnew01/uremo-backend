@@ -1,8 +1,8 @@
 /**
- * PATCH_51: JarvisX Master Brain Controller
- * The main orchestrator for tool-driven AI responses
+ * PATCH_52B: JarvisX Master Brain Controller - Updated with Conversational State Engine
+ * The main orchestrator for tool-driven AI responses with goal-tracking
  *
- * Flow: Message → Intent → Policy → Context → Tool → Blueprint → Polish → Response
+ * Flow: Message → State Engine → Goal + Step → Intent → Policy → Context → Tool → Blueprint → Polish → Response
  */
 
 const { classifyIntent, INTENTS } = require("./intents");
@@ -14,16 +14,26 @@ const {
 const { buildContext } = require("./contextBuilder");
 const { getBlueprint } = require("./blueprints");
 const { polishResponse, formatResponse } = require("./llmPolisher");
+const {
+  processMessage: processStateMessage,
+  getOrCreateSession,
+} = require("./stateEngine");
 
 /**
- * Process a user message through the JarvisX brain
+ * Process a user message through the JarvisX brain with state engine
  * @param {Object} params - Processing parameters
  * @param {string} params.message - User's message
  * @param {Object} params.context - User context (userId, role, etc.)
+ * @param {string} params.sessionId - Session ID (optional)
  * @param {Object} params.options - Optional settings
  * @returns {Promise<Object>} Final response
  */
-async function processMessage({ message, context = {}, options = {} }) {
+async function processMessage({
+  message,
+  context = {},
+  sessionId = null,
+  options = {},
+}) {
   const startTime = Date.now();
   const debug = options.debug || process.env.JARVISX_DEBUG === "true";
 
@@ -34,6 +44,34 @@ async function processMessage({ message, context = {}, options = {} }) {
   };
 
   try {
+    // =========== STEP 0: STATE ENGINE (NEW) ===========
+    log("Step 0 - State Engine", {
+      message: message.substring(0, 50),
+      userId: context.userId,
+    });
+
+    // Get or create session
+    const session = getOrCreateSession(context.userId, sessionId);
+
+    // Process through state engine
+    const stateResult = processStateMessage({
+      sessionId: session.sessionId,
+      userId: context.userId,
+      message,
+    });
+
+    log("State Engine Result", {
+      activeGoal: stateResult.activeGoal,
+      currentStep: stateResult.currentStep,
+      autoSwitched: stateResult.autoSwitched,
+    });
+
+    // Pass session ID to context for reference
+    context.sessionId = session.sessionId;
+    context.activeGoal = stateResult.activeGoal;
+    context.currentStep = stateResult.currentStep;
+    context.collectedData = stateResult.collectedData;
+
     // =========== STEP 1: INTENT DETECTION ===========
     log("Step 1", { message: message.substring(0, 50) });
 
@@ -77,8 +115,10 @@ async function processMessage({ message, context = {}, options = {} }) {
           denied: true,
           reason: policyResult.reason,
           code: policyResult.code,
+          sessionId: session.sessionId,
+          activeGoal: stateResult.activeGoal,
           processingTime: Date.now() - startTime,
-          version: "51",
+          version: "52B",
         },
       };
     }
@@ -121,9 +161,20 @@ async function processMessage({ message, context = {}, options = {} }) {
     // =========== STEP 6: FORMAT RESPONSE ===========
     const finalResponse = formatResponse(polished);
 
+    // Add state engine info to response for UI
+    finalResponse.stateEngine = {
+      activeGoal: stateResult.activeGoal,
+      currentStep: stateResult.currentStep,
+      question: stateResult.question,
+      options: stateResult.options,
+      collectedData: stateResult.collectedData,
+      autoSwitched: stateResult.autoSwitched,
+    };
+
     log("Step 6 - Final", {
       messageLength: finalResponse.message?.length,
       actionsCount: finalResponse.actions?.length,
+      stateEngine: finalResponse.stateEngine,
     });
 
     return {
@@ -133,8 +184,11 @@ async function processMessage({ message, context = {}, options = {} }) {
         intent,
         role: effectiveRole,
         polished: polished.polished,
+        sessionId: session.sessionId,
+        activeGoal: stateResult.activeGoal,
+        autoSwitched: stateResult.autoSwitched,
         processingTime: Date.now() - startTime,
-        version: "51",
+        version: "52B",
       },
     };
   } catch (error) {
@@ -152,7 +206,7 @@ async function processMessage({ message, context = {}, options = {} }) {
       meta: {
         error: error.message,
         processingTime: Date.now() - startTime,
-        version: "51",
+        version: "52B",
       },
     };
   }
@@ -210,10 +264,12 @@ async function executeAction({ action, value, url, context = {} }) {
 function getHealth() {
   return {
     status: "operational",
-    version: "51",
+    version: "52B",
     mode: process.env.JARVIS_MODE || "classic",
     features: {
       intentDetection: true,
+      stateEngine: true,
+      conversationalTracking: true,
       policyGuard: true,
       contextBuilder: true,
       blueprints: true,
