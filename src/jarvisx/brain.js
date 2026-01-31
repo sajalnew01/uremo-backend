@@ -108,6 +108,14 @@ async function processMessage({
           message:
             policyResult.reason || "You're not authorized for this action.",
           actions: denialActions,
+          stateEngine: {
+            activeGoal: stateResult.activeGoal,
+            currentStep: stateResult.currentStep,
+            question: stateResult.question,
+            options: stateResult.options,
+            collectedData: stateResult.collectedData,
+            autoSwitched: stateResult.autoSwitched,
+          },
         },
         meta: {
           intent,
@@ -117,6 +125,7 @@ async function processMessage({
           code: policyResult.code,
           sessionId: session.sessionId,
           activeGoal: stateResult.activeGoal,
+          autoSwitched: stateResult.autoSwitched,
           processingTime: Date.now() - startTime,
           version: "52B",
         },
