@@ -145,29 +145,29 @@ function getBlueprint(intent, contextData) {
           actions: [{ label: "Log In", action: "NAVIGATE", url: "/login" }],
         };
       }
-      // Show actual orders if available
-      const orders = data.orders || data.data || [];
+      // Show actual orders if available - data.data contains the orders array from tool
+      const orders = data.data || data.orders || [];
       if (Array.isArray(orders) && orders.length > 0) {
         const latest = orders[0];
         return {
-          text: `Your latest order is "${latest.service || "Service"}" — Status: ${latest.status || "pending"}`,
+          text: `Your latest order: "${latest.service || "Service"}" — Status: ${latest.status || "pending"}`,
           list: orders.slice(0, 3),
           listType: "orders",
           actions: [
             { label: "View All Orders", action: "NAVIGATE", url: "/orders" },
-            {
-              label: "Create Ticket",
-              action: "INTENT",
-              value: "SUPPORT_TICKET",
-            },
+            { label: "Need Help?", action: "INTENT", value: "SUPPORT_TICKET" },
           ],
         };
       }
       return {
-        text: "You can track all your orders from the Orders page.",
+        text: "You don't have any orders yet. Browse our services to get started!",
         actions: [
+          {
+            label: "Browse Services",
+            action: "NAVIGATE",
+            url: "/explore-services",
+          },
           { label: "View Orders", action: "NAVIGATE", url: "/orders" },
-          { label: "Create Ticket", action: "INTENT", value: "SUPPORT_TICKET" },
         ],
       };
     }
