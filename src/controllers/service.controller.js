@@ -212,6 +212,26 @@ exports.createService = async (req, res) => {
 
     const service = await Service.create(servicePayload);
 
+    // PATCH_53: Queue engagement event for new service
+    try {
+      const engagementService = require("../services/engagement.service");
+      const categoryTags = [category];
+      if (subcategory) categoryTags.push(subcategory);
+
+      await engagementService.queueEvent({
+        type: "service_new",
+        title: `New ${category} Service Available`,
+        message: title,
+        targetTags: categoryTags,
+      });
+    } catch (engagementError) {
+      console.warn(
+        "[Service] Engagement event queuing failed:",
+        engagementError,
+      );
+      // Don't fail the service creation if engagement fails
+    }
+
     res.status(201).json(service);
   } catch (err) {
     console.error(err);

@@ -55,6 +55,21 @@ const userSchema = new mongoose.Schema(
       enum: ["microjobs", "forex_crypto", "banks_wallets", "general"],
       default: "general",
     },
+
+    // PATCH_53: Email preferences and interests for engagement
+    emailPreferences: {
+      productUpdates: { type: Boolean, default: true },
+      jobAlerts: { type: Boolean, default: true },
+      dealAlerts: { type: Boolean, default: true },
+      rentalAlerts: { type: Boolean, default: true },
+      marketing: { type: Boolean, default: false },
+    },
+
+    interestTags: {
+      type: [String],
+      default: [],
+      // e.g., ["microjobs", "forex", "wallets", "crypto", "rentals"]
+    },
   },
   { timestamps: true },
 );

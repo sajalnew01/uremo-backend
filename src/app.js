@@ -230,6 +230,11 @@ app.use("/api/proofs", proofRoutes);
 // PATCH_41: FAQ and Public routes
 app.use("/api/faqs", faqRoutes);
 app.use("/api/public", publicRoutes);
+// PATCH_53: User preferences and admin campaigns routes
+const userPreferencesRoutes = require("./routes/user.preferences.routes");
+const adminCampaignRoutes = require("./routes/admin.campaign.routes");
+app.use("/api/users", userPreferencesRoutes);
+app.use("/api/admin/campaigns", auth, admin, adminCampaignRoutes);
 
 // TEMP: Debug endpoint to list mounted routes (admin-only)
 app.get("/api/__routes", auth, admin, (req, res) => {
