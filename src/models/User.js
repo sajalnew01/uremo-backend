@@ -70,6 +70,17 @@ const userSchema = new mongoose.Schema(
       default: [],
       // e.g., ["microjobs", "forex", "wallets", "crypto", "rentals"]
     },
+
+    // PATCH_54: Password reset fields
+    passwordResetToken: String,
+    passwordResetExpires: Date,
+
+    // PATCH_54: Phone number for duplicate prevention
+    phone: {
+      type: String,
+      sparse: true,
+      index: true,
+    },
   },
   { timestamps: true },
 );

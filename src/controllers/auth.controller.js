@@ -6,6 +6,60 @@ const bcryptjs = require("bcryptjs");
 const { sendEmail } = require("../services/email.service");
 const { welcomeEmail } = require("../emails/templates");
 
+// PATCH_54: Standardized error codes
+const AUTH_ERRORS = {
+  MISSING_FIELDS: {
+    code: "MISSING_FIELDS",
+    message: "All fields are required",
+  },
+  INVALID_EMAIL: {
+    code: "INVALID_EMAIL",
+    message: "Please enter a valid email address",
+  },
+  WEAK_PASSWORD: {
+    code: "WEAK_PASSWORD",
+    message:
+      "Password must be at least 8 characters with uppercase, lowercase, number, and special character",
+  },
+  EMAIL_EXISTS: {
+    code: "EMAIL_EXISTS",
+    message: "An account with this email already exists",
+  },
+  PHONE_EXISTS: {
+    code: "PHONE_EXISTS",
+    message: "An account with this phone number already exists",
+  },
+  USER_NOT_FOUND: {
+    code: "USER_NOT_FOUND",
+    message: "Invalid email or password",
+  },
+  BAD_PASSWORD: { code: "BAD_PASSWORD", message: "Invalid email or password" },
+  SERVER_ERROR: {
+    code: "SERVER_ERROR",
+    message: "An unexpected error occurred. Please try again.",
+  },
+  CONFIG_ERROR: { code: "CONFIG_ERROR", message: "Server configuration error" },
+  RATE_LIMITED: {
+    code: "RATE_LIMITED",
+    message: "Too many attempts. Please try again later.",
+  },
+};
+
+// PATCH_54: Password strength validation
+const PASSWORD_REGEX =
+  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,}$/;
+
+const validatePassword = (password) => {
+  if (!password || typeof password !== "string") return false;
+  return PASSWORD_REGEX.test(password);
+};
+
+const validateEmail = (email) => {
+  if (!email || typeof email !== "string") return false;
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email.trim());
+};
+
 const escapeRegExp = (value) =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -19,17 +73,60 @@ const findUserByEmailInsensitive = async (email) => {
 
 exports.signup = async (req, res, next) => {
   try {
-    const { name, email, password, referralCode } = req.body;
+    const { name, email, password, phone, referralCode } = req.body;
 
+    // PATCH_54: Standardized validation
     if (!name || !email || !password) {
-      return res.status(400).json({ message: "All fields required" });
+      return res.status(400).json({
+        success: false,
+        code: AUTH_ERRORS.MISSING_FIELDS.code,
+        message: AUTH_ERRORS.MISSING_FIELDS.message,
+      });
+    }
+
+    // PATCH_54: Email validation
+    if (!validateEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        code: AUTH_ERRORS.INVALID_EMAIL.code,
+        message: AUTH_ERRORS.INVALID_EMAIL.message,
+      });
+    }
+
+    // PATCH_54: Strong password validation
+    if (!validatePassword(password)) {
+      return res.status(400).json({
+        success: false,
+        code: AUTH_ERRORS.WEAK_PASSWORD.code,
+        message: AUTH_ERRORS.WEAK_PASSWORD.message,
+      });
     }
 
     const emailNormalized = String(email).trim().toLowerCase();
 
+    // PATCH_54: Check for duplicate email
     const existingUser = await findUserByEmailInsensitive(emailNormalized);
     if (existingUser) {
-      return res.status(400).json({ message: "Email already exists" });
+      return res.status(400).json({
+        success: false,
+        code: AUTH_ERRORS.EMAIL_EXISTS.code,
+        message: AUTH_ERRORS.EMAIL_EXISTS.message,
+      });
+    }
+
+    // PATCH_54: Check for duplicate phone if provided
+    if (phone) {
+      const phoneNormalized = String(phone).replace(/\D/g, "");
+      if (phoneNormalized.length >= 10) {
+        const existingPhone = await User.findOne({ phone: phoneNormalized });
+        if (existingPhone) {
+          return res.status(400).json({
+            success: false,
+            code: AUTH_ERRORS.PHONE_EXISTS.code,
+            message: AUTH_ERRORS.PHONE_EXISTS.message,
+          });
+        }
+      }
     }
 
     // PATCH_23: Find referrer if referral code provided
@@ -52,7 +149,11 @@ exports.signup = async (req, res, next) => {
 
     if (!process.env.JWT_SECRET) {
       console.error("[AUTH] FATAL: JWT_SECRET environment variable is not set");
-      return res.status(500).json({ message: "Server configuration error" });
+      return res.status(500).json({
+        success: false,
+        code: AUTH_ERRORS.CONFIG_ERROR.code,
+        message: AUTH_ERRORS.CONFIG_ERROR.message,
+      });
     }
 
     const token = jwt.sign(
@@ -84,6 +185,7 @@ exports.signup = async (req, res, next) => {
     });
 
     res.status(201).json({
+      success: true,
       token,
       user: {
         id: user._id,
@@ -94,7 +196,12 @@ exports.signup = async (req, res, next) => {
       },
     });
   } catch (error) {
-    next(error);
+    console.error("[AUTH] signup error:", error.message);
+    return res.status(500).json({
+      success: false,
+      code: AUTH_ERRORS.SERVER_ERROR.code,
+      message: AUTH_ERRORS.SERVER_ERROR.message,
+    });
   }
 };
 
@@ -109,11 +216,12 @@ exports.login = async (req, res) => {
       hasPassword: Boolean(password),
     });
 
+    // PATCH_54: Standardized error response
     if (!email || !password) {
       return res.status(400).json({
-        code: "MISSING_FIELDS",
-        message: "Email and password required",
-        received: { hasEmail: Boolean(email), hasPassword: Boolean(password) },
+        success: false,
+        code: AUTH_ERRORS.MISSING_FIELDS.code,
+        message: "Email and password are required",
       });
     }
 
@@ -121,8 +229,9 @@ exports.login = async (req, res) => {
     const user = await findUserByEmailInsensitive(emailNormalized);
     if (!user) {
       return res.status(401).json({
-        code: "USER_NOT_FOUND",
-        message: "Invalid email or password",
+        success: false,
+        code: AUTH_ERRORS.USER_NOT_FOUND.code,
+        message: AUTH_ERRORS.USER_NOT_FOUND.message,
       });
     }
 
@@ -148,15 +257,20 @@ exports.login = async (req, res) => {
         });
       } else {
         return res.status(401).json({
-          code: "BAD_PASSWORD",
-          message: "Invalid email or password",
+          success: false,
+          code: AUTH_ERRORS.BAD_PASSWORD.code,
+          message: AUTH_ERRORS.BAD_PASSWORD.message,
         });
       }
     }
 
     if (!process.env.JWT_SECRET) {
       console.error("[AUTH] FATAL: JWT_SECRET environment variable is not set");
-      return res.status(500).json({ message: "Server configuration error" });
+      return res.status(500).json({
+        success: false,
+        code: AUTH_ERRORS.CONFIG_ERROR.code,
+        message: AUTH_ERRORS.CONFIG_ERROR.message,
+      });
     }
 
     const token = jwt.sign(
@@ -166,11 +280,17 @@ exports.login = async (req, res) => {
     );
 
     res.json({
+      success: true,
       token,
       user: { id: user._id, email: user.email, role: user.role },
     });
   } catch (err) {
-    res.status(500).json({ message: err.message || "Server error" });
+    console.error("[AUTH] login error:", err.message);
+    res.status(500).json({
+      success: false,
+      code: AUTH_ERRORS.SERVER_ERROR.code,
+      message: AUTH_ERRORS.SERVER_ERROR.message,
+    });
   }
 };
 
@@ -342,5 +462,141 @@ exports.updateOnboarding = async (req, res) => {
     res
       .status(500)
       .json({ ok: false, message: error.message || "Server error" });
+  }
+};
+
+/**
+ * PATCH_54: Forgot Password - Request password reset
+ * POST /api/auth/forgot-password
+ */
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        code: "MISSING_FIELDS",
+        message: "Email is required",
+      });
+    }
+
+    const emailNormalized = String(email).trim().toLowerCase();
+    const user = await findUserByEmailInsensitive(emailNormalized);
+
+    // Always return success to prevent email enumeration
+    if (!user) {
+      return res.json({
+        success: true,
+        message:
+          "If an account exists with this email, you will receive a password reset link.",
+      });
+    }
+
+    // Generate reset token
+    const crypto = require("crypto");
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetTokenHash = crypto
+      .createHash("sha256")
+      .update(resetToken)
+      .digest("hex");
+    const resetExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    user.passwordResetToken = resetTokenHash;
+    user.passwordResetExpires = resetExpiry;
+    await user.save();
+
+    // Send reset email (best effort)
+    try {
+      const resetUrl = `${process.env.FRONTEND_URL || "https://uremo.online"}/reset-password?token=${resetToken}`;
+      await sendEmail({
+        to: user.email,
+        subject: "Password Reset Request - UREMO",
+        html: `
+          <h2>Password Reset</h2>
+          <p>You requested a password reset for your UREMO account.</p>
+          <p>Click the link below to reset your password (valid for 1 hour):</p>
+          <p><a href="${resetUrl}" style="background: #6366f1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; display: inline-block;">Reset Password</a></p>
+          <p>If you didn't request this, please ignore this email.</p>
+        `,
+      });
+    } catch (emailErr) {
+      console.error("[AUTH] Password reset email failed:", emailErr.message);
+    }
+
+    res.json({
+      success: true,
+      message:
+        "If an account exists with this email, you will receive a password reset link.",
+    });
+  } catch (error) {
+    console.error("[AUTH] forgotPassword error:", error);
+    res.status(500).json({
+      success: false,
+      code: AUTH_ERRORS.SERVER_ERROR.code,
+      message: AUTH_ERRORS.SERVER_ERROR.message,
+    });
+  }
+};
+
+/**
+ * PATCH_54: Reset Password - Set new password with token
+ * POST /api/auth/reset-password
+ */
+exports.resetPassword = async (req, res) => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      return res.status(400).json({
+        success: false,
+        code: "MISSING_FIELDS",
+        message: "Token and new password are required",
+      });
+    }
+
+    // Validate password strength
+    if (!validatePassword(password)) {
+      return res.status(400).json({
+        success: false,
+        code: AUTH_ERRORS.WEAK_PASSWORD.code,
+        message: AUTH_ERRORS.WEAK_PASSWORD.message,
+      });
+    }
+
+    // Hash the token for comparison
+    const crypto = require("crypto");
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+    const user = await User.findOne({
+      passwordResetToken: tokenHash,
+      passwordResetExpires: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_TOKEN",
+        message: "Password reset link is invalid or has expired",
+      });
+    }
+
+    // Update password and clear reset fields
+    user.password = password;
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Password has been reset successfully. You can now log in.",
+    });
+  } catch (error) {
+    console.error("[AUTH] resetPassword error:", error);
+    res.status(500).json({
+      success: false,
+      code: AUTH_ERRORS.SERVER_ERROR.code,
+      message: AUTH_ERRORS.SERVER_ERROR.message,
+    });
   }
 };
