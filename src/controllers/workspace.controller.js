@@ -1034,6 +1034,13 @@ exports.adminCreditEarnings = async (req, res) => {
       await worker.save();
     }
 
+    // Auto-credit wallet balance
+    const user = await User.findById(project.assignedTo);
+    if (user) {
+      user.walletBalance = (user.walletBalance || 0) + amount;
+      await user.save();
+    }
+
     res.json({
       success: true,
       message: `$${amount.toFixed(2)} credited to worker`,
