@@ -38,8 +38,17 @@ function detectGoalFromMessage(message) {
 
   const msg = String(message).toLowerCase().trim();
 
+  // ORDER_STATUS patterns (check FIRST - before BUY_SERVICE)
+  if (
+    /order.*status|where.*order|track.*order|delivery.*status|status.*order/i.test(
+      msg,
+    )
+  ) {
+    return GOALS.ORDER_STATUS;
+  }
+
   // BUY_SERVICE patterns
-  if (/buy|purchase|order|need|get.*service|looking for.*service/i.test(msg)) {
+  if (/buy|purchase|need.*service|service|looking for.*service/i.test(msg)) {
     return GOALS.BUY_SERVICE;
   }
 
@@ -53,11 +62,6 @@ function detectGoalFromMessage(message) {
   // APPLY_TO_WORK patterns
   if (/apply|work|job|position|hire|earn|freelance/i.test(msg)) {
     return GOALS.APPLY_TO_WORK;
-  }
-
-  // ORDER_STATUS patterns
-  if (/order.*status|where.*order|track|delivery|status.*order/i.test(msg)) {
-    return GOALS.ORDER_STATUS;
   }
 
   // WALLET patterns
@@ -163,6 +167,7 @@ function processMessage(params) {
   }
 
   // Step 4: If no active goal yet, start with detected goal or GENERAL
+  let isFirstMessageOfGoal = false;
   if (!session.activeGoal) {
     const targetGoal = detectedGoal || GOALS.GENERAL;
     const firstStep = getFirstStep(targetGoal);
@@ -173,11 +178,14 @@ function processMessage(params) {
       event: "goal_started",
       goal: targetGoal,
     });
+    isFirstMessageOfGoal = true; // Don't apply input on first message
   }
 
   // Step 5: Apply user input to current step
   // (collect data, transition to next step)
-  if (message && message.length > 0) {
+  // But NOT if this is the first message that started a new goal
+  // (user needs to answer the first question first)
+  if (message && message.length > 0 && !isFirstMessageOfGoal) {
     session = applyUserInput(session, message);
   }
 
