@@ -160,8 +160,13 @@ function processMessage(params) {
   const detectedGoal = detectGoalFromMessage(message);
 
   // Step 3: Auto-switch goal if needed (without confirmation)
+  // But ONLY if there's already an active goal (not on first message)
   let autoSwitched = false;
-  if (detectedGoal && detectedGoal !== session.activeGoal) {
+  if (
+    session.activeGoal &&
+    detectedGoal &&
+    detectedGoal !== session.activeGoal
+  ) {
     session = switchGoal(session, detectedGoal, { getFirstStep });
     autoSwitched = true;
   }
