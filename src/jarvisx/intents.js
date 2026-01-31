@@ -232,14 +232,6 @@ const INTENT_PATTERNS = [
 
   // ============ ORDERS ============
   {
-    intent: INTENTS.MY_ORDERS,
-    patterns: [
-      /(?:my\s*)?orders?/i,
-      /(?:show|list|get|view)\s*(?:my\s*)?orders?/i,
-      /order\s*(?:history|list)/i,
-    ],
-  },
-  {
     intent: INTENTS.ORDER_STATUS,
     patterns: [
       /order\s*(?:status|update|tracking)/i,
@@ -252,6 +244,14 @@ const INTENT_PATTERNS = [
     patterns: [
       /(?:problem|issue|help)\s*(?:with\s*)?(?:my\s*)?order/i,
       /order\s*(?:problem|issue|complaint)/i,
+    ],
+  },
+  {
+    intent: INTENTS.MY_ORDERS,
+    patterns: [
+      /(?:my\s*)?orders?/i,
+      /(?:show|list|get|view)\s*(?:my\s*)?orders?/i,
+      /order\s*(?:history|list)/i,
     ],
   },
 
