@@ -151,6 +151,8 @@ exports.createService = async (req, res) => {
       currency,
       deliveryType,
       countryPricing, // PATCH_20: Country-based pricing
+      jobRoleTemplate, // PATCH_59: Job role template for auto-created WorkPositions
+      searchKeywords, // PATCH_59: Search keywords
     } = req.body || {};
 
     // Validation
@@ -223,6 +225,57 @@ exports.createService = async (req, res) => {
       }
     }
 
+    // PATCH_59: Parse jobRoleTemplate if provided
+    let resolvedJobRoleTemplate = {};
+    if (jobRoleTemplate) {
+      if (
+        typeof jobRoleTemplate === "object" &&
+        !Array.isArray(jobRoleTemplate)
+      ) {
+        resolvedJobRoleTemplate = {
+          screeningRequired: jobRoleTemplate.screeningRequired !== false,
+          trainingRequired: jobRoleTemplate.trainingRequired === true,
+          difficulty: ["easy", "medium", "hard"].includes(
+            jobRoleTemplate.difficulty,
+          )
+            ? jobRoleTemplate.difficulty
+            : "medium",
+          estimatedPayRate: parseNumber(jobRoleTemplate.estimatedPayRate) || 0,
+          requirements: String(jobRoleTemplate.requirements || "").trim(),
+        };
+      } else if (typeof jobRoleTemplate === "string") {
+        try {
+          const parsed = JSON.parse(jobRoleTemplate);
+          resolvedJobRoleTemplate = {
+            screeningRequired: parsed.screeningRequired !== false,
+            trainingRequired: parsed.trainingRequired === true,
+            difficulty: ["easy", "medium", "hard"].includes(parsed.difficulty)
+              ? parsed.difficulty
+              : "medium",
+            estimatedPayRate: parseNumber(parsed.estimatedPayRate) || 0,
+            requirements: String(parsed.requirements || "").trim(),
+          };
+        } catch {
+          // Ignore parse error
+        }
+      }
+    }
+
+    // PATCH_59: Parse searchKeywords if provided
+    let resolvedSearchKeywords = [];
+    if (searchKeywords) {
+      if (Array.isArray(searchKeywords)) {
+        resolvedSearchKeywords = searchKeywords
+          .filter(Boolean)
+          .map((k) => String(k).trim().toLowerCase());
+      } else if (typeof searchKeywords === "string") {
+        resolvedSearchKeywords = searchKeywords
+          .split(/[,;]/)
+          .filter(Boolean)
+          .map((k) => k.trim().toLowerCase());
+      }
+    }
+
     const service = await Service.create({
       title: safeTitle,
       slug,
@@ -246,49 +299,28 @@ exports.createService = async (req, res) => {
       tags: Array.isArray(tags) ? tags.filter(Boolean) : [],
       features: Array.isArray(features) ? features.filter(Boolean) : [],
       createdBy: req.user?._id || req.user?.id || null,
+      jobRoleTemplate: resolvedJobRoleTemplate, // PATCH_59
+      searchKeywords: resolvedSearchKeywords, // PATCH_59
     });
 
     console.log("[ADMIN_SERVICES] Service created:", service._id);
 
-    // PATCH_43: Auto-create WorkPosition (Job Role) if service allows "apply" action
-    let autoJobRole = null;
-    const allowedActions = getAllowedActionsForService(service);
-    if (allowedActions.apply) {
-      // Check if job role already exists for this service
-      const existingJob = await WorkPosition.findOne({
-        serviceId: service._id,
-      });
-      if (!existingJob) {
-        try {
-          autoJobRole = await WorkPosition.create({
-            title: service.title,
-            category: service.category || "microjobs",
-            description: service.description || "",
-            serviceId: service._id,
-            hasScreening: true,
-            active: true,
-          });
-          console.log(
-            "[ADMIN_SERVICES] Auto-created job role:",
-            autoJobRole._id,
-          );
-        } catch (jobErr) {
-          console.error(
-            "[ADMIN_SERVICES] Failed to auto-create job role:",
-            jobErr.message,
-          );
-        }
-      }
-    }
+    // PATCH_59: Post-save hook in schema now handles auto WorkPosition creation
+    // Fetch the updated service to get linkedJobId (set by post-save hook)
+    const updatedService = await Service.findById(service._id)
+      .populate("linkedJobId")
+      .lean();
+    const autoJobRole = updatedService?.linkedJobId || null;
 
     return res.status(201).json({
       ok: true,
       message: "Service created",
-      service,
+      service: updatedService || service,
       serviceId: service._id,
       autoJobRole: autoJobRole
         ? { _id: autoJobRole._id, title: autoJobRole.title }
         : null,
+      allowedActions: updatedService?.allowedActions || service.allowedActions,
     });
   } catch (err) {
     // PATCH_20: Enhanced error logging

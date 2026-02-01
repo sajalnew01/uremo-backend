@@ -959,3 +959,279 @@ exports.deleteService = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// PATCH_59: Unified Intent-Based Marketplace API
+// GET /api/services/marketplace?intent=buy|earn|rent|deal&category=...&search=...
+exports.getMarketplace = async (req, res) => {
+  try {
+    setNoCache(res);
+
+    const {
+      intent = "all", // buy, earn, rent, deal, all
+      category,
+      subcategory,
+      country,
+      search,
+      minPrice,
+      maxPrice,
+      sort = "relevance",
+      limit = 50,
+      page = 1,
+    } = req.query;
+
+    // Build base query
+    const query = { status: "active", active: true };
+
+    // Intent-based filtering
+    const intentMapping = {
+      buy: { "allowedActions.buy": true },
+      earn: { "allowedActions.apply": true },
+      rent: { "allowedActions.rent": true },
+      deal: { "allowedActions.deal": true },
+    };
+
+    if (intent && intent !== "all" && intentMapping[intent]) {
+      Object.assign(query, intentMapping[intent]);
+    }
+
+    // Category filtering
+    if (category && category !== "all") {
+      const effectiveCategories = [];
+      const cat = normalizeCategory(category);
+      effectiveCategories.push(cat);
+      // Include legacy category mappings
+      if (cat === "banks_wallets") {
+        effectiveCategories.push("banks_gateways_wallets");
+      }
+      if (cat === "crypto_accounts") {
+        effectiveCategories.push("forex_crypto");
+      }
+      query.category = { $in: effectiveCategories };
+    }
+
+    // Subcategory filtering
+    if (subcategory && subcategory !== "all") {
+      query.subcategory = subcategory;
+    }
+
+    // Country filtering
+    if (country && country !== "all" && country !== "Global") {
+      query.$or = [
+        { countries: { $in: [country, "Global"] } },
+        { countries: { $size: 0 } },
+        { countries: { $exists: false } },
+      ];
+    }
+
+    // Search filtering
+    if (search && search.trim()) {
+      const searchRegex = new RegExp(search.trim(), "i");
+      query.$or = query.$or || [];
+      query.$and = [
+        {
+          $or: [
+            { title: searchRegex },
+            { description: searchRegex },
+            { shortDescription: searchRegex },
+            { searchKeywords: searchRegex },
+            { platform: searchRegex },
+            { subject: searchRegex },
+            { tags: { $in: [searchRegex] } },
+          ],
+        },
+      ];
+    }
+
+    // Price filtering
+    if (minPrice) query.price = { ...query.price, $gte: Number(minPrice) };
+    if (maxPrice) query.price = { ...query.price, $lte: Number(maxPrice) };
+
+    // Sorting
+    let sortBy = { createdAt: -1 };
+    if (sort === "price_low") sortBy = { price: 1 };
+    if (sort === "price_high") sortBy = { price: -1 };
+    if (sort === "newest") sortBy = { createdAt: -1 };
+    if (sort === "popular") sortBy = { purchaseCount: -1, viewCount: -1 };
+    if (sort === "relevance" && intent !== "all") {
+      sortBy = { [`intentPriority.${intent}`]: -1, createdAt: -1 };
+    }
+
+    // Pagination
+    const skip = (Number(page) - 1) * Number(limit);
+    const take = Math.min(Number(limit), 100);
+
+    // Execute query
+    const [services, total] = await Promise.all([
+      Service.find(query)
+        .sort(sortBy)
+        .skip(skip)
+        .limit(take)
+        .populate("linkedJobId", "title hasScreening trainingMaterials")
+        .lean(),
+      Service.countDocuments(query),
+    ]);
+
+    // Enrich with effective actions and normalize
+    const enrichedServices = services.map((s) => ({
+      ...s,
+      allowedActions:
+        s.allowedActions && typeof s.allowedActions === "object"
+          ? s.allowedActions
+          : getAllowedActionsForService(s),
+      effectiveCategory: getEffectiveCategoryFromService(s),
+      linkedJob: s.linkedJobId || null,
+    }));
+
+    // Build dynamic filters from results (aggregated)
+    const filtersAggregation = await Service.aggregate([
+      { $match: { status: "active", active: true } },
+      {
+        $group: {
+          _id: null,
+          categories: { $addToSet: "$category" },
+          subcategories: { $addToSet: "$subcategory" },
+          countries: { $push: "$countries" },
+          platforms: { $addToSet: "$platform" },
+          priceMin: { $min: "$price" },
+          priceMax: { $max: "$price" },
+        },
+      },
+    ]);
+
+    const filterOptions = filtersAggregation[0] || {
+      categories: [],
+      subcategories: [],
+      countries: [],
+      platforms: [],
+      priceMin: 0,
+      priceMax: 1000,
+    };
+
+    // Flatten countries array
+    const allCountries = [
+      ...new Set((filterOptions.countries || []).flat().filter(Boolean)),
+    ];
+
+    // Intent counts for tabs
+    const intentCounts = await Promise.all([
+      Service.countDocuments({
+        status: "active",
+        active: true,
+        "allowedActions.buy": true,
+      }),
+      Service.countDocuments({
+        status: "active",
+        active: true,
+        "allowedActions.apply": true,
+      }),
+      Service.countDocuments({
+        status: "active",
+        active: true,
+        "allowedActions.rent": true,
+      }),
+      Service.countDocuments({
+        status: "active",
+        active: true,
+        "allowedActions.deal": true,
+      }),
+    ]);
+
+    res.json({
+      ok: true,
+      services: enrichedServices,
+      meta: {
+        total,
+        page: Number(page),
+        limit: take,
+        pages: Math.ceil(total / take),
+        intent,
+      },
+      filters: {
+        categories: (filterOptions.categories || [])
+          .filter(Boolean)
+          .map((c) => ({
+            id: c,
+            label:
+              CANON_CATEGORIES.find((cc) => cc.id === c)?.label ||
+              c.replace(/_/g, " "),
+          })),
+        subcategories: (filterOptions.subcategories || []).filter(Boolean),
+        countries: allCountries,
+        platforms: (filterOptions.platforms || []).filter(Boolean),
+        priceRange: {
+          min: filterOptions.priceMin || 0,
+          max: filterOptions.priceMax || 1000,
+        },
+      },
+      intentCounts: {
+        buy: intentCounts[0],
+        earn: intentCounts[1],
+        rent: intentCounts[2],
+        deal: intentCounts[3],
+      },
+    });
+  } catch (err) {
+    console.error("[MARKETPLACE_ERROR]", err.message);
+    res.status(500).json({ ok: false, message: err.message });
+  }
+};
+
+// PATCH_59: Get filters dynamically from Service collection
+exports.getMarketplaceFilters = async (req, res) => {
+  try {
+    setNoCache(res);
+
+    const aggregation = await Service.aggregate([
+      { $match: { status: "active", active: true } },
+      {
+        $group: {
+          _id: null,
+          categories: { $addToSet: "$category" },
+          subcategories: { $addToSet: "$subcategory" },
+          countries: { $push: "$countries" },
+          platforms: { $addToSet: "$platform" },
+          subjects: { $addToSet: "$subject" },
+          projectNames: { $addToSet: "$projectName" },
+          priceMin: { $min: "$price" },
+          priceMax: { $max: "$price" },
+          payRateMin: { $min: "$payRate" },
+          payRateMax: { $max: "$payRate" },
+        },
+      },
+    ]);
+
+    const data = aggregation[0] || {};
+    const allCountries = [
+      ...new Set((data.countries || []).flat().filter(Boolean)),
+    ];
+
+    // Category-subcategory mapping from schema
+    const categorySubcategoryMap = SUBCATEGORY_BY_CATEGORY;
+
+    res.json({
+      ok: true,
+      filters: {
+        categories: (data.categories || []).filter(Boolean).map((c) => ({
+          id: c,
+          label:
+            CANON_CATEGORIES.find((cc) => cc.id === c)?.label ||
+            c.replace(/_/g, " "),
+          subcategories: categorySubcategoryMap[c] || [],
+        })),
+        countries: allCountries,
+        platforms: (data.platforms || []).filter(Boolean),
+        subjects: (data.subjects || []).filter(Boolean),
+        projectNames: (data.projectNames || []).filter(Boolean),
+        priceRange: { min: data.priceMin || 0, max: data.priceMax || 1000 },
+        payRateRange: {
+          min: data.payRateMin || 0,
+          max: data.payRateMax || 100,
+        },
+      },
+      categorySubcategoryMap,
+    });
+  } catch (err) {
+    console.error("[FILTERS_ERROR]", err.message);
+    res.status(500).json({ ok: false, message: err.message });
+  }
+};

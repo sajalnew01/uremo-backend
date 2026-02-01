@@ -284,6 +284,36 @@ const serviceSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+
+    // PATCH_59: Auto-sync fields for unified marketplace
+    // Links to auto-created WorkPosition when allowedActions.apply = true
+    linkedJobId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "WorkPosition",
+      index: true,
+    },
+
+    // PATCH_59: Job role template settings (used when auto-creating WorkPosition)
+    jobRoleTemplate: {
+      screeningRequired: { type: Boolean, default: true },
+      trainingRequired: { type: Boolean, default: false },
+      difficulty: {
+        type: String,
+        enum: ["easy", "medium", "hard"],
+        default: "medium",
+      },
+      estimatedPayRate: { type: Number, default: 0 },
+      requirements: { type: String, default: "" },
+    },
+
+    // PATCH_59: Search/discovery metadata
+    searchKeywords: [{ type: String, trim: true }],
+    intentPriority: {
+      buy: { type: Number, default: 0 },
+      apply: { type: Number, default: 0 },
+      rent: { type: Number, default: 0 },
+      deal: { type: Number, default: 0 },
+    },
   },
   { timestamps: true },
 );
@@ -333,6 +363,95 @@ serviceSchema.pre("save", async function () {
   // PATCH_38: Always compute allowedActions from category rules
   this.allowedActions = getAllowedActionsForService(this);
   // PATCH_21: No next() needed - async function returns Promise automatically
+});
+
+// PATCH_59: Post-save hook to auto-create/sync WorkPosition when apply=true
+serviceSchema.post("save", async function (doc) {
+  try {
+    // Only auto-create if apply action is allowed
+    if (!doc.allowedActions?.apply) {
+      // If apply is now false but we had a linked job, optionally deactivate it
+      if (doc.linkedJobId) {
+        const WorkPosition = mongoose.model("WorkPosition");
+        await WorkPosition.findByIdAndUpdate(doc.linkedJobId, {
+          active: false,
+        });
+        console.log(
+          "[SERVICE_SYNC] Deactivated linked job (apply now false):",
+          doc.linkedJobId,
+        );
+      }
+      return;
+    }
+
+    const WorkPosition = mongoose.model("WorkPosition");
+
+    // Check if job already exists for this service
+    let job = await WorkPosition.findOne({ serviceId: doc._id });
+
+    if (!job) {
+      // Create new WorkPosition
+      job = new WorkPosition({
+        title: doc.title,
+        category: doc.category || "microjobs",
+        description: doc.description || "",
+        requirements:
+          doc.jobRoleTemplate?.requirements || doc.requirements || "",
+        serviceId: doc._id,
+        hasScreening: doc.jobRoleTemplate?.screeningRequired !== false,
+        active: doc.active !== false && doc.status === "active",
+        sortOrder: 0,
+        adminNotes: `Auto-created from service: ${doc._id}`,
+      });
+      await job.save();
+      console.log(
+        "[SERVICE_SYNC] Auto-created WorkPosition:",
+        job._id,
+        "for service:",
+        doc._id,
+      );
+
+      // Update service with linked job ID (using updateOne to avoid recursion)
+      await mongoose
+        .model("Service")
+        .updateOne({ _id: doc._id }, { $set: { linkedJobId: job._id } });
+    } else {
+      // Sync existing WorkPosition
+      const updates = {
+        title: doc.title,
+        category: doc.category || job.category,
+        description: doc.description || job.description,
+        requirements:
+          doc.jobRoleTemplate?.requirements ||
+          doc.requirements ||
+          job.requirements,
+        active: doc.active !== false && doc.status === "active",
+      };
+
+      await WorkPosition.findByIdAndUpdate(job._id, { $set: updates });
+      console.log(
+        "[SERVICE_SYNC] Synced WorkPosition:",
+        job._id,
+        "with service:",
+        doc._id,
+      );
+
+      // Ensure linkedJobId is set
+      if (
+        !doc.linkedJobId ||
+        doc.linkedJobId.toString() !== job._id.toString()
+      ) {
+        await mongoose
+          .model("Service")
+          .updateOne({ _id: doc._id }, { $set: { linkedJobId: job._id } });
+      }
+    }
+  } catch (err) {
+    console.error(
+      "[SERVICE_SYNC_ERROR] Failed to sync WorkPosition:",
+      err.message,
+    );
+  }
 });
 
 // PATCH_38: Ensure allowedActions stays in sync for findOneAndUpdate/findByIdAndUpdate

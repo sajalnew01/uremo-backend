@@ -11,12 +11,18 @@ const {
   getAllServices,
   updateService,
   deleteService,
+  getMarketplace,
+  getMarketplaceFilters,
 } = require("../controllers/service.controller");
 
 const router = express.Router();
 
 // Public routes
 router.get("/", getActiveServices);
+
+// PATCH_59: Unified Intent-Based Marketplace API
+router.get("/marketplace", getMarketplace);
+router.get("/marketplace/filters", getMarketplaceFilters);
 
 // PATCH_38: Guarded list endpoints
 router.get("/workspace", getWorkspaceServices);
