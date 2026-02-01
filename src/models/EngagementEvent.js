@@ -59,7 +59,6 @@ const engagementEventSchema = new mongoose.Schema(
 engagementEventSchema.index({ type: 1, processed: 1, createdAt: -1 });
 engagementEventSchema.index({ processed: 1, createdAt: -1 });
 engagementEventSchema.index({ processingStarted: 1 }, { sparse: true });
-engagementEventSchema.index({ idempotencyKey: 1 }, { sparse: true });
 engagementEventSchema.index({ failureCount: 1, processed: 1 });
 
 module.exports = mongoose.model("EngagementEvent", engagementEventSchema);

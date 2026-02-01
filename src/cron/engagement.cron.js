@@ -1,12 +1,12 @@
 const User = require("../models/User");
 const engagementService = require("../services/engagement.service");
 
-let resendService;
+let emailService;
 try {
-  resendService = require("../services/resend.service");
+  emailService = require("../services/email.service");
 } catch (err) {
-  console.error("[ENGAGEMENT_CRON] Resend service not available:", err.message);
-  resendService = null;
+  console.error("[ENGAGEMENT_CRON] Email service not available:", err.message);
+  emailService = null;
 }
 
 const logger = {
@@ -28,8 +28,8 @@ const EMAIL_SEND_TIMEOUT = 30000;
 const runEngagementBatch = async () => {
   const batchStartTime = Date.now();
 
-  if (!resendService) {
-    logger.warn("Resend service unavailable, skipping batch");
+  if (!emailService) {
+    logger.warn("Email service unavailable, skipping batch");
     return;
   }
 
@@ -108,8 +108,8 @@ const processEvent = async (event) => {
  * Send engagement email to user
  */
 const sendEngagementEmail = async (user, event) => {
-  if (!resendService || !resendService.sendEmail) {
-    throw new Error("Resend service not available");
+  if (!emailService || !emailService.sendEmail) {
+    throw new Error("Email service not available");
   }
 
   if (!user.email || typeof user.email !== "string") {
@@ -142,7 +142,7 @@ const sendEngagementEmail = async (user, event) => {
       </p>
     `;
 
-    const sendPromise = resendService.sendEmail({
+    const sendPromise = emailService.sendEmail({
       to: user.email,
       subject,
       html: emailBody,
