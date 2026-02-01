@@ -108,6 +108,7 @@ exports.getApplicants = async (req, res) => {
 /**
  * PUT /api/admin/workspace/job/:id/approve
  * Approve an applicant (changes status from pending to approved)
+ * PATCH_57: Also updates workerStatus based on screening availability
  */
 exports.approveApplicant = async (req, res) => {
   try {
@@ -131,18 +132,37 @@ exports.approveApplicant = async (req, res) => {
         .json({ ok: false, message: "Applicant not found" });
     }
 
+    // PATCH_57: Get the job position to check if it has screening
+    const job = await WorkPosition.findById(id)
+      .select("title hasScreening screeningId")
+      .lean();
+
     applicant.status = "approved";
     applicant.approvedBy = req.user.id;
     applicant.approvedAt = new Date();
+
+    // PATCH_57: Update workerStatus based on screening availability
+    // If position has screening test, unlock it; otherwise mark as ready_to_work
+    if (job?.hasScreening && job?.screeningId) {
+      applicant.workerStatus = "screening_unlocked";
+    } else {
+      // No screening required - worker is ready to work immediately
+      applicant.workerStatus = "ready_to_work";
+    }
+
     await applicant.save();
 
     // PATCH_49: Send notification to worker
     try {
-      const job = await WorkPosition.findById(id).select("title").lean();
+      const notifMessage =
+        applicant.workerStatus === "screening_unlocked"
+          ? `Your application for "${job?.title || "the position"}" has been approved! Complete the screening test to start working.`
+          : `Your application for "${job?.title || "the position"}" has been approved! You're ready to start working.`;
+
       await Notification.create({
         user: applicant.user,
         title: "Application Approved! 🎉",
-        message: `Your application for "${job?.title || "the position"}" has been approved. Check your workspace for next steps.`,
+        message: notifMessage,
         type: "workspace",
         resourceType: "application",
         resourceId: applicant._id,
@@ -155,6 +175,7 @@ exports.approveApplicant = async (req, res) => {
       ok: true,
       message: "Applicant approved",
       applicant,
+      workerStatus: applicant.workerStatus,
     });
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });

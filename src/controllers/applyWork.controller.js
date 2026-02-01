@@ -238,11 +238,43 @@ exports.getAll = async (req, res, next) => {
   }
 };
 
+// PATCH_57: Enhanced updateStatus to also update workerStatus when approving
 exports.updateStatus = async (req, res, next) => {
   try {
     const { status } = req.body;
-    await ApplyWork.findByIdAndUpdate(req.params.id, { status });
-    res.json({ success: true });
+
+    // Get the application first
+    const app = await ApplyWork.findById(req.params.id);
+    if (!app) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Application not found" });
+    }
+
+    app.status = status;
+
+    // PATCH_57: If approving, update workerStatus based on screening availability
+    if (status === "approved") {
+      // Check if the position has screening
+      if (app.position) {
+        const WorkPosition = require("../models/WorkPosition");
+        const job = await WorkPosition.findById(app.position)
+          .select("hasScreening screeningId")
+          .lean();
+
+        if (job?.hasScreening && job?.screeningId) {
+          app.workerStatus = "screening_unlocked";
+        } else {
+          app.workerStatus = "ready_to_work";
+        }
+      } else {
+        // No position linked - default to ready_to_work
+        app.workerStatus = "ready_to_work";
+      }
+    }
+
+    await app.save();
+    res.json({ success: true, workerStatus: app.workerStatus });
   } catch (err) {
     next(err);
   }
