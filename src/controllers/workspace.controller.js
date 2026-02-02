@@ -1067,7 +1067,8 @@ exports.adminAssignTask = async (req, res) => {
     }
 
     // Find the worker's profile (ApplyWork)
-    const workerProfile = await ApplyWork.findById(workerId).populate("user position");
+    const workerProfile =
+      await ApplyWork.findById(workerId).populate("user position");
     if (!workerProfile) {
       return res.status(404).json({ message: "Worker profile not found" });
     }
@@ -1108,3 +1109,32 @@ exports.adminAssignTask = async (req, res) => {
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
+};
+
+module.exports = {
+  getWorkspaceProfile,
+  applyToJob,
+  markTrainingViewed,
+  getAvailableScreenings,
+  getScreening,
+  submitScreening,
+  getMyProjects,
+  getProject,
+  startProject,
+  submitProject,
+  getEarnings,
+  requestWithdrawal,
+  adminGetWorkers,
+  adminUpdateWorkerStatus,
+  adminCreateScreening,
+  adminGetScreenings,
+  adminGetScreeningById,
+  adminUpdateScreening,
+  adminCloneScreening,
+  adminDeleteScreening,
+  adminCreateProject,
+  adminGetProjects,
+  adminAssignProject,
+  adminCreditEarnings,
+  adminAssignTask,
+};

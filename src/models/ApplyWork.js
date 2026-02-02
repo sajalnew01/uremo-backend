@@ -135,7 +135,11 @@ const applyWorkSchema = new mongoose.Schema(
         _id: mongoose.Schema.Types.ObjectId,
         description: String,
         assignedAt: { type: Date, default: Date.now },
-        status: { type: String, enum: ["pending", "in-progress", "completed"], default: "pending" },
+        status: {
+          type: String,
+          enum: ["pending", "in-progress", "completed"],
+          default: "pending",
+        },
         assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         completedAt: Date,
         notes: String,

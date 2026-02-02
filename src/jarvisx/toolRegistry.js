@@ -13,7 +13,7 @@ const Order = require("../models/Order");
 const WorkPosition = require("../models/WorkPosition");
 const Ticket = require("../models/Ticket");
 const User = require("../models/User");
-const Wallet = require("../models/Wallet");
+// Wallet is handled via User model walletBalance field
 const Affiliate = require("../models/Affiliate");
 
 // =============================================================================
@@ -180,18 +180,17 @@ const TOOLS = {
       }
 
       try {
-        const wallet = await Wallet.findOne({ userId }).lean();
+        const user = await User.findById(userId).lean();
 
-        if (!wallet) {
+        if (!user) {
           return {
-            success: true,
-            message: "Your wallet balance is 0.00 USD.",
-            data: { balance: 0, affiliateBalance: 0 },
+            success: false,
+            message: "User not found.",
           };
         }
 
-        const balance = wallet.balance || 0;
-        const affiliateBalance = wallet.affiliateBalance || 0;
+        const balance = user.walletBalance || 0;
+        const affiliateBalance = user.affiliateBalance || 0;
 
         return {
           success: true,
@@ -228,11 +227,11 @@ const TOOLS = {
 
       try {
         const affiliate = await Affiliate.findOne({ userId }).lean();
-        const wallet = await Wallet.findOne({ userId }).lean();
+        const user = await User.findById(userId).lean();
 
         const referralCount = affiliate?.referrals?.length || 0;
         const totalEarnings = affiliate?.totalEarnings || 0;
-        const affiliateBalance = wallet?.affiliateBalance || 0;
+        const affiliateBalance = user?.affiliateBalance || 0;
 
         return {
           success: true,
