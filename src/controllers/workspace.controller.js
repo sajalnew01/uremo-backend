@@ -1052,3 +1052,59 @@ exports.adminCreditEarnings = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+/**
+ * PATCH_61B: POST /api/admin/workspace/workers/:id/assign-task
+ * Assign a specialized task to a worker
+ */
+exports.adminAssignTask = async (req, res) => {
+  try {
+    const { taskDescription, jobId } = req.body;
+    const workerId = req.params.id;
+
+    if (!taskDescription || !taskDescription.trim()) {
+      return res.status(400).json({ message: "Task description required" });
+    }
+
+    // Find the worker's profile (ApplyWork)
+    const workerProfile = await ApplyWork.findById(workerId).populate("user position");
+    if (!workerProfile) {
+      return res.status(404).json({ message: "Worker profile not found" });
+    }
+
+    // Create task record (save in a new Task model or add to profile)
+    // For now, we'll add to workerProfile and send notification email
+    if (!workerProfile.assignedTasks) {
+      workerProfile.assignedTasks = [];
+    }
+
+    const taskId = require("mongoose").Types.ObjectId();
+    workerProfile.assignedTasks.push({
+      _id: taskId,
+      description: taskDescription,
+      assignedAt: new Date(),
+      status: "pending", // pending, in-progress, completed
+      assignedBy: req.user.id,
+    });
+
+    await workerProfile.save();
+
+    // Send notification email to worker
+    const user = workerProfile.user;
+    if (user && user.email) {
+      // TODO: Send email with task details
+      // await sendEmail(user.email, "New Task Assigned", `You have been assigned: ${taskDescription}`);
+    }
+
+    res.json({
+      success: true,
+      message: "Task assigned successfully",
+      taskId,
+      worker: {
+        name: `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
+        email: user?.email,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }

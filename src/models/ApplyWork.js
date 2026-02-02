@@ -129,6 +129,18 @@ const applyWorkSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // PATCH_61B: Specialized tasks assigned by admin
+    assignedTasks: [
+      {
+        _id: mongoose.Schema.Types.ObjectId,
+        description: String,
+        assignedAt: { type: Date, default: Date.now },
+        status: { type: String, enum: ["pending", "in-progress", "completed"], default: "pending" },
+        assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        completedAt: Date,
+        notes: String,
+      },
+    ],
     // Admin notes
     adminNotes: {
       type: String,

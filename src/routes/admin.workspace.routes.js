@@ -19,6 +19,7 @@ const {
   adminGetProjects,
   adminAssignProject,
   adminCreditEarnings,
+  adminAssignTask, // PATCH_61B: Assign tasks to workers
 } = require("../controllers/workspace.controller");
 
 // All routes require auth + admin
@@ -28,6 +29,7 @@ router.use(admin);
 // Workers management
 router.get("/workers", adminGetWorkers);
 router.put("/worker/:id/status", adminUpdateWorkerStatus);
+router.post("/workers/:id/assign-task", adminAssignTask); // PATCH_61B: Assign specialized task
 
 // Screenings management
 router.get("/screenings", adminGetScreenings);
