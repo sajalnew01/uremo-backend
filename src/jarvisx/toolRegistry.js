@@ -14,7 +14,8 @@ const WorkPosition = require("../models/WorkPosition");
 const Ticket = require("../models/Ticket");
 const User = require("../models/User");
 // Wallet is handled via User model walletBalance field
-const Affiliate = require("../models/Affiliate");
+// Affiliate is handled via AffiliateCommission model
+const AffiliateCommission = require("../models/AffiliateCommission");
 
 // =============================================================================
 // ROLE DEFINITIONS
@@ -226,11 +227,23 @@ const TOOLS = {
       }
 
       try {
-        const affiliate = await Affiliate.findOne({ userId }).lean();
+        // Affiliate data is stored in User model and AffiliateCommission
         const user = await User.findById(userId).lean();
 
-        const referralCount = affiliate?.referrals?.length || 0;
-        const totalEarnings = affiliate?.totalEarnings || 0;
+        // Count referrals and sum earnings from AffiliateCommission
+        const affiliateStats = await AffiliateCommission.aggregate([
+          { $match: { referrer: user._id } },
+          {
+            $group: {
+              _id: null,
+              totalEarnings: { $sum: "$amount" },
+              count: { $sum: 1 },
+            },
+          },
+        ]);
+
+        const referralCount = affiliateStats[0]?.count || 0;
+        const totalEarnings = affiliateStats[0]?.totalEarnings || 0;
         const affiliateBalance = user?.affiliateBalance || 0;
 
         return {
@@ -240,7 +253,7 @@ const TOOLS = {
             referralCount,
             totalEarnings,
             affiliateBalance,
-            referralCode: affiliate?.referralCode || null,
+            referralCode: user?.referralCode || null,
           },
           actions: [
             {
