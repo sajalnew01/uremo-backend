@@ -27,7 +27,8 @@ const applyWorkSchema = new mongoose.Schema(
     },
     resumeUrl: {
       type: String,
-      required: true,
+      default: "",
+      trim: true,
     },
     resumePublicId: {
       type: String,
