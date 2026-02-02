@@ -1112,7 +1112,7 @@ exports.adminAssignTask = async (req, res) => {
 };
 
 module.exports = {
-  getWorkspaceProfile,
+  getWorkspaceProfile: exports.getWorkspaceProfile,
   applyToJob,
   markTrainingViewed,
   getAvailableScreenings,

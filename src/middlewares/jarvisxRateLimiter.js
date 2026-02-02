@@ -33,14 +33,6 @@ const jarvisxLimiter = rateLimit({
       retryAfter: 60,
     },
   },
-  keyGenerator: (req) => {
-    // Use X-Forwarded-For for proxied requests (Render, Vercel, etc.)
-    const forwarded = req.headers["x-forwarded-for"];
-    const ip = forwarded
-      ? String(forwarded).split(",")[0].trim()
-      : req.ip || req.connection?.remoteAddress || "unknown";
-    return ip;
-  },
   skip: (req) => {
     // Skip rate limiting for health checks
     return req.path === "/health" || req.path === "/v2/health";
@@ -75,16 +67,6 @@ const chatLimiter = rateLimit({
       retryAfter: 60,
     },
   },
-  keyGenerator: (req) => {
-    // Combine IP with user ID if authenticated for more accurate limiting
-    const forwarded = req.headers["x-forwarded-for"];
-    const ip = forwarded
-      ? String(forwarded).split(",")[0].trim()
-      : req.ip || req.connection?.remoteAddress || "unknown";
-
-    const userId = req.user?.id || req.user?._id;
-    return userId ? `user:${userId}` : `ip:${ip}`;
-  },
   handler: (req, res, next, options) => {
     console.warn("[RateLimiter] Chat rate limit exceeded:", {
       ip: req.ip,
@@ -117,19 +99,6 @@ const adminLimiter = rateLimit({
       retryAfter: 60,
     },
   },
-  keyGenerator: (req) => {
-    // Use user ID for authenticated admin requests
-    const userId = req.user?.id || req.user?._id;
-    if (userId) {
-      return `admin:${userId}`;
-    }
-
-    const forwarded = req.headers["x-forwarded-for"];
-    const ip = forwarded
-      ? String(forwarded).split(",")[0].trim()
-      : req.ip || req.connection?.remoteAddress || "unknown";
-    return `ip:${ip}`;
-  },
 });
 
 /**
@@ -148,6 +117,13 @@ const burstLimiter = rateLimit({
       actions: [],
     },
     meta: {
+      code: "RATE_LIMITED",
+      retryAfter: 10,
+    },
+  },
+});
+
+// ============================================================================= {
       code: "BURST_LIMITED",
       retryAfter: 10,
     },
