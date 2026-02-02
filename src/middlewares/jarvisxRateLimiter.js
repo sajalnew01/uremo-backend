@@ -123,20 +123,6 @@ const burstLimiter = rateLimit({
   },
 });
 
-// ============================================================================= {
-      code: "BURST_LIMITED",
-      retryAfter: 10,
-    },
-  },
-  keyGenerator: (req) => {
-    const forwarded = req.headers["x-forwarded-for"];
-    const ip = forwarded
-      ? String(forwarded).split(",")[0].trim()
-      : req.ip || req.connection?.remoteAddress || "unknown";
-    return ip;
-  },
-});
-
 // =============================================================================
 // CUSTOM MIDDLEWARE
 // =============================================================================
