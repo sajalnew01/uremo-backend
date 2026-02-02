@@ -310,10 +310,12 @@ exports.submitScreening = async (req, res) => {
       return res.status(400).json({ message: "No worker profile found" });
     }
 
-    // PATCH_43: Check if worker is allowed to take screening
-    if (profile.workerStatus !== "screening_unlocked") {
+    // PATCH_43 + PATCH_49: Check if worker is allowed to take screening
+    // Allow both "screening_unlocked" (legacy) and "training_viewed" (PATCH_49 flow)
+    const allowedStatuses = ["screening_unlocked", "training_viewed"];
+    if (!allowedStatuses.includes(profile.workerStatus)) {
       return res.status(400).json({
-        message: "Screening not unlocked. Wait for admin approval.",
+        message: `Cannot take screening. Current status: ${profile.workerStatus}. Required: screening_unlocked or training_viewed.`,
       });
     }
 
