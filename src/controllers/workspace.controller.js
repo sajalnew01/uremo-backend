@@ -693,6 +693,108 @@ exports.adminGetWorkers = async (req, res) => {
 };
 
 /**
+ * PATCH_61: GET /api/admin/workspace/worker/:id
+ * Get single worker with full details for Worker 360 page
+ */
+exports.adminGetWorkerById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const worker = await ApplyWork.findById(id)
+      .populate("user", "firstName lastName name email phone avatar createdAt")
+      .populate("position", "title category description payRate")
+      .lean();
+
+    if (!worker) {
+      return res.status(404).json({ message: "Worker not found" });
+    }
+
+    // Get all projects assigned to this worker
+    const projects = await Project.find({ assignedTo: worker.user?._id })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Get all applications for this user
+    const applications = await ApplyWork.find({ user: worker.user?._id })
+      .populate("position", "title category")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Build activity log
+    const activityLog = [];
+
+    // Application events
+    applications.forEach((app) => {
+      activityLog.push({
+        type: "application_created",
+        description: `Applied for ${app.position?.title || app.positionTitle || "Unknown Position"}`,
+        timestamp: app.createdAt,
+      });
+
+      if (app.trainingViewedAt) {
+        activityLog.push({
+          type: "training_viewed",
+          description: "Viewed training materials",
+          timestamp: app.trainingViewedAt,
+        });
+      }
+
+      if (app.screeningsCompleted && app.screeningsCompleted.length > 0) {
+        app.screeningsCompleted.forEach((s) => {
+          activityLog.push({
+            type: "screening_completed",
+            description: `Completed screening with score ${s.score}%`,
+            timestamp: s.completedAt,
+          });
+        });
+      }
+
+      if (app.testsCompleted && app.testsCompleted.length > 0) {
+        app.testsCompleted.forEach((t) => {
+          activityLog.push({
+            type: t.passed ? "test_passed" : "test_failed",
+            description: `${t.passed ? "Passed" : "Failed"} test with score ${t.score}%`,
+            timestamp: t.completedAt,
+          });
+        });
+      }
+    });
+
+    // Project events
+    projects.forEach((p) => {
+      if (p.assignedAt) {
+        activityLog.push({
+          type: "project_assigned",
+          description: `Assigned to project: ${p.title}`,
+          timestamp: p.assignedAt,
+        });
+      }
+      if (p.completedAt) {
+        activityLog.push({
+          type: "project_completed",
+          description: `Completed project: ${p.title}`,
+          timestamp: p.completedAt,
+        });
+      }
+    });
+
+    // Sort activity log by timestamp
+    activityLog.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    res.json({
+      worker: {
+        ...worker,
+        projects,
+        allApplications: applications,
+        activityLog,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
  * PUT /api/admin/workspace/worker/:id/status
  * Update worker status
  */
@@ -1152,6 +1254,7 @@ module.exports = {
   getEarnings: exports.getEarnings,
   requestWithdrawal: exports.requestWithdrawal,
   adminGetWorkers: exports.adminGetWorkers,
+  adminGetWorkerById: exports.adminGetWorkerById, // PATCH_61
   adminUpdateWorkerStatus: exports.adminUpdateWorkerStatus,
   adminCreateScreening: exports.adminCreateScreening,
   adminGetScreenings: exports.adminGetScreenings,

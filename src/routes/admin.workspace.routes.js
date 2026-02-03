@@ -8,6 +8,7 @@ const admin = require("../middlewares/admin.middleware");
 
 const {
   adminGetWorkers,
+  adminGetWorkerById, // PATCH_61
   adminUpdateWorkerStatus,
   adminCreateScreening,
   adminGetScreenings,
@@ -28,6 +29,7 @@ router.use(admin);
 
 // Workers management
 router.get("/workers", adminGetWorkers);
+router.get("/worker/:id", adminGetWorkerById); // PATCH_61: Single worker for Worker 360 page
 router.put("/worker/:id/status", adminUpdateWorkerStatus);
 router.post("/workers/:id/assign-task", adminAssignTask); // PATCH_61B: Assign specialized task
 
