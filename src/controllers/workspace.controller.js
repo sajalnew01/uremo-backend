@@ -294,20 +294,34 @@ exports.submitScreening = async (req, res) => {
       return res.status(404).json({ message: "Screening not found" });
     }
 
-    // PATCH_43: Find the correct worker profile (for multi-job support)
+    // PATCH_43 + PATCH_57: Find the correct worker profile (for multi-job support)
+    // The positionId from frontend is actually the ApplyWork._id (the application ID)
     let profile;
     if (positionId) {
+      // First try to find by ApplyWork._id (the application record itself)
       profile = await ApplyWork.findOne({
+        _id: positionId,
         user: req.user.id,
-        position: positionId,
       });
+
+      // Fallback: try to find by position field (WorkPosition ID) for backwards compat
+      if (!profile) {
+        profile = await ApplyWork.findOne({
+          user: req.user.id,
+          position: positionId,
+        });
+      }
     } else {
       // Fallback to first profile for backwards compat
       profile = await ApplyWork.findOne({ user: req.user.id });
     }
 
     if (!profile) {
-      return res.status(400).json({ message: "No worker profile found" });
+      return res.status(400).json({
+        message:
+          "No worker profile found. Please apply to a work position first.",
+        debug: { positionId, userId: req.user.id },
+      });
     }
 
     // PATCH_43 + PATCH_49: Check if worker is allowed to take screening
