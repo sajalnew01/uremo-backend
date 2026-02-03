@@ -46,16 +46,17 @@ router.get("/trust", (req, res) => {
 /**
  * GET /api/public/categories
  * Returns available service categories
+ * PATCH_62: Aligned with actual service.category values in database
  */
 router.get("/categories", (req, res) => {
   res.json({
     ok: true,
     categories: [
       {
-        id: "online_gigs",
-        name: "Online Gigs",
+        id: "microjobs",
+        name: "Microjobs & Gigs",
         icon: "💼",
-        description: "Microjobs, AI training, and freelance work",
+        description: "AI training, data entry, and freelance work",
       },
       {
         id: "forex_crypto",
@@ -64,10 +65,22 @@ router.get("/categories", (req, res) => {
         description: "Trading accounts and exchange verification",
       },
       {
-        id: "banks_wallets",
+        id: "banks_gateways_wallets",
         name: "Banks & Wallets",
         icon: "🏦",
-        description: "E-wallets and payment gateway accounts",
+        description: "Bank accounts, payment gateways, and e-wallets",
+      },
+      {
+        id: "rentals",
+        name: "Account Rentals",
+        icon: "🔑",
+        description: "Rent verified accounts on flexible plans",
+      },
+      {
+        id: "general",
+        name: "General Services",
+        icon: "🛠️",
+        description: "Other digital services and support",
       },
     ],
   });

@@ -982,19 +982,7 @@ exports.getMarketplace = async (req, res) => {
     // Build base query
     const query = { status: "active", active: true };
 
-    // Intent-based filtering
-    const intentMapping = {
-      buy: { "allowedActions.buy": true },
-      earn: { "allowedActions.apply": true },
-      rent: { "allowedActions.rent": true },
-      deal: { "allowedActions.deal": true },
-    };
-
-    if (intent && intent !== "all" && intentMapping[intent]) {
-      Object.assign(query, intentMapping[intent]);
-    }
-
-    // Category filtering
+    // Category filtering (apply at DB level)
     if (category && category !== "all") {
       const effectiveCategories = [];
       const cat = normalizeCategory(category);
@@ -1026,8 +1014,7 @@ exports.getMarketplace = async (req, res) => {
     // Search filtering
     if (search && search.trim()) {
       const searchRegex = new RegExp(search.trim(), "i");
-      query.$or = query.$or || [];
-      query.$and = [
+      query.$and = (query.$and || []).concat([
         {
           $or: [
             { title: searchRegex },
@@ -1039,7 +1026,7 @@ exports.getMarketplace = async (req, res) => {
             { tags: { $in: [searchRegex] } },
           ],
         },
-      ];
+      ]);
     }
 
     // Price filtering
@@ -1056,31 +1043,47 @@ exports.getMarketplace = async (req, res) => {
       sortBy = { [`intentPriority.${intent}`]: -1, createdAt: -1 };
     }
 
-    // Pagination
-    const skip = (Number(page) - 1) * Number(limit);
-    const take = Math.min(Number(limit), 100);
+    // PATCH_62: Fetch all matching services and filter by intent in-memory
+    // This handles legacy services without stored allowedActions
+    const rawServices = await Service.find(query)
+      .sort(sortBy)
+      .populate("linkedJobId", "title hasScreening trainingMaterials")
+      .lean();
 
-    // Execute query
-    const [services, total] = await Promise.all([
-      Service.find(query)
-        .sort(sortBy)
-        .skip(skip)
-        .limit(take)
-        .populate("linkedJobId", "title hasScreening trainingMaterials")
-        .lean(),
-      Service.countDocuments(query),
-    ]);
-
-    // Enrich with effective actions and normalize
-    const enrichedServices = services.map((s) => ({
+    // Enrich with computed allowedActions and filter by intent
+    const enrichedServices = rawServices.map((s) => ({
       ...s,
       allowedActions:
-        s.allowedActions && typeof s.allowedActions === "object"
+        s.allowedActions &&
+        typeof s.allowedActions === "object" &&
+        s.allowedActions.buy !== undefined
           ? s.allowedActions
           : getAllowedActionsForService(s),
       effectiveCategory: getEffectiveCategoryFromService(s),
       linkedJob: s.linkedJobId || null,
     }));
+
+    // Filter by intent (in-memory to handle legacy data)
+    const intentActionMap = {
+      buy: "buy",
+      earn: "apply",
+      rent: "rent",
+      deal: "deal",
+    };
+
+    let filteredServices = enrichedServices;
+    if (intent && intent !== "all" && intentActionMap[intent]) {
+      const actionKey = intentActionMap[intent];
+      filteredServices = enrichedServices.filter(
+        (s) => s.allowedActions?.[actionKey] === true,
+      );
+    }
+
+    // Pagination (apply after filtering)
+    const total = filteredServices.length;
+    const skip = (Number(page) - 1) * Number(limit);
+    const take = Math.min(Number(limit), 100);
+    const paginatedServices = filteredServices.slice(skip, skip + take);
 
     // Build dynamic filters from results (aggregated)
     const filtersAggregation = await Service.aggregate([
@@ -1112,33 +1115,19 @@ exports.getMarketplace = async (req, res) => {
       ...new Set((filterOptions.countries || []).flat().filter(Boolean)),
     ];
 
-    // Intent counts for tabs
-    const intentCounts = await Promise.all([
-      Service.countDocuments({
-        status: "active",
-        active: true,
-        "allowedActions.buy": true,
-      }),
-      Service.countDocuments({
-        status: "active",
-        active: true,
-        "allowedActions.apply": true,
-      }),
-      Service.countDocuments({
-        status: "active",
-        active: true,
-        "allowedActions.rent": true,
-      }),
-      Service.countDocuments({
-        status: "active",
-        active: true,
-        "allowedActions.deal": true,
-      }),
-    ]);
+    // PATCH_62: Intent counts from enriched services (already computed allowedActions)
+    // Use enrichedServices (pre-filter) to get accurate counts for all intents
+    const intentCounts = { buy: 0, earn: 0, rent: 0, deal: 0 };
+    for (const s of enrichedServices) {
+      if (s.allowedActions?.buy) intentCounts.buy++;
+      if (s.allowedActions?.apply) intentCounts.earn++;
+      if (s.allowedActions?.rent) intentCounts.rent++;
+      if (s.allowedActions?.deal) intentCounts.deal++;
+    }
 
     res.json({
       ok: true,
-      services: enrichedServices,
+      services: paginatedServices,
       meta: {
         total,
         page: Number(page),
@@ -1164,10 +1153,10 @@ exports.getMarketplace = async (req, res) => {
         },
       },
       intentCounts: {
-        buy: intentCounts[0],
-        earn: intentCounts[1],
-        rent: intentCounts[2],
-        deal: intentCounts[3],
+        buy: intentCounts.buy,
+        earn: intentCounts.earn,
+        rent: intentCounts.rent,
+        deal: intentCounts.deal,
       },
     });
   } catch (err) {
