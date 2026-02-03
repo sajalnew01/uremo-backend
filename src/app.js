@@ -236,6 +236,10 @@ const adminCampaignRoutes = require("./routes/admin.campaign.routes");
 app.use("/api/users", userPreferencesRoutes);
 app.use("/api/admin/campaigns", auth, admin, adminCampaignRoutes);
 
+// PATCH_58: Smart Engagement Engine routes
+const engagementRoutes = require("./routes/engagement.routes");
+app.use("/api/engagement", engagementRoutes);
+
 // TEMP: Debug endpoint to list mounted routes (admin-only)
 app.get("/api/__routes", auth, admin, (req, res) => {
   const routes = new Set();

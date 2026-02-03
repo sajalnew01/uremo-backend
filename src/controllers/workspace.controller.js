@@ -934,6 +934,19 @@ exports.adminCreateProject = async (req, res) => {
       createdBy: req.user.id,
     });
 
+    // PATCH_58: Notify ready workers about new project
+    try {
+      const {
+        notifyReadyWorkers,
+      } = require("../services/smartEngagement.service");
+      await notifyReadyWorkers(title, category, project._id.toString());
+    } catch (engErr) {
+      console.warn(
+        "[WORKSPACE] Engagement notification failed:",
+        engErr.message,
+      );
+    }
+
     res.status(201).json({ success: true, project });
   } catch (err) {
     res.status(500).json({ message: err.message });

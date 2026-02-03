@@ -305,6 +305,26 @@ exports.createService = async (req, res) => {
 
     console.log("[ADMIN_SERVICES] Service created:", service._id);
 
+    // PATCH_58: Notify interested users about new service
+    try {
+      const {
+        notifyInterestedUsers,
+      } = require("../services/smartEngagement.service");
+      // Only notify if service is active
+      if (resolvedActive && resolvedStatus === "published") {
+        await notifyInterestedUsers(
+          safeTitle,
+          resolvedCategory,
+          service._id.toString(),
+        );
+      }
+    } catch (engErr) {
+      console.warn(
+        "[ADMIN_SERVICES] Engagement notification failed:",
+        engErr.message,
+      );
+    }
+
     // PATCH_59: Post-save hook in schema now handles auto WorkPosition creation
     // Fetch the updated service to get linkedJobId (set by post-save hook)
     const updatedService = await Service.findById(service._id)

@@ -279,6 +279,16 @@ exports.login = async (req, res) => {
       { expiresIn: "7d" },
     );
 
+    // PATCH_58: Update last login timestamp for engagement tracking
+    try {
+      const {
+        updateLastLogin,
+      } = require("../services/smartEngagement.service");
+      await updateLastLogin(user._id);
+    } catch (engErr) {
+      console.warn("[AUTH] Failed to update lastLogin:", engErr.message);
+    }
+
     res.json({
       success: true,
       token,

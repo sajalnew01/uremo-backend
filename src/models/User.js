@@ -81,6 +81,22 @@ const userSchema = new mongoose.Schema(
       sparse: true,
       index: true,
     },
+
+    // PATCH_58: Smart Engagement Engine tracking
+    lastEngagementEmail: {
+      type: Date,
+      default: null,
+    },
+    lastLogin: {
+      type: Date,
+      default: null,
+    },
+    engagementNudges: {
+      signupNudgeSent: { type: Boolean, default: false },
+      screeningNudgeSent: { type: Boolean, default: false },
+      lastNudgeType: { type: String, default: null },
+      lastNudgeAt: { type: Date, default: null },
+    },
   },
   { timestamps: true },
 );
