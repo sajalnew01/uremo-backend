@@ -21,6 +21,7 @@ const {
   adminAssignProject,
   adminCreditEarnings,
   adminAssignTask, // PATCH_61B: Assign tasks to workers
+  adminGetQualifiedWorkerCounts, // PATCH_62: Get qualified workers per category
 } = require("../controllers/workspace.controller");
 
 // All routes require auth + admin
@@ -29,6 +30,7 @@ router.use(admin);
 
 // Workers management
 router.get("/workers", adminGetWorkers);
+router.get("/workers/qualified-count", adminGetQualifiedWorkerCounts); // PATCH_62: Qualified workers per category
 router.get("/worker/:id", adminGetWorkerById); // PATCH_61: Single worker for Worker 360 page
 router.put("/worker/:id/status", adminUpdateWorkerStatus);
 router.post("/workers/:id/assign-task", adminAssignTask); // PATCH_61B: Assign specialized task

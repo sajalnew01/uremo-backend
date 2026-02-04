@@ -693,6 +693,61 @@ exports.adminGetWorkers = async (req, res) => {
 };
 
 /**
+ * PATCH_62: GET /api/admin/workspace/workers/qualified-count
+ * Get count of qualified workers (ready_to_work) per category
+ * Used by Master Workspace to determine if projects can be created
+ */
+exports.adminGetQualifiedWorkerCounts = async (req, res) => {
+  try {
+    // Aggregate workers with ready_to_work status grouped by category
+    const pipeline = [
+      {
+        $match: {
+          workerStatus: "ready_to_work",
+          category: { $exists: true, $ne: "" },
+        },
+      },
+      {
+        $group: {
+          _id: "$category",
+          count: { $sum: 1 },
+        },
+      },
+    ];
+
+    const results = await ApplyWork.aggregate(pipeline);
+
+    // Convert to object { category: count }
+    const qualifiedCounts = {};
+    results.forEach((r) => {
+      qualifiedCounts[r._id] = r.count;
+    });
+
+    // Include all defined categories with 0 defaults
+    const categories = [
+      "microjobs",
+      "writing",
+      "teaching",
+      "coding_math",
+      "outlier",
+      "other",
+    ];
+    categories.forEach((cat) => {
+      if (!(cat in qualifiedCounts)) {
+        qualifiedCounts[cat] = 0;
+      }
+    });
+
+    res.json({
+      qualifiedCounts,
+      total: results.reduce((sum, r) => sum + r.count, 0),
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
  * PATCH_61: GET /api/admin/workspace/worker/:id
  * Get single worker with full details for Worker 360 page
  */
@@ -1254,6 +1309,7 @@ module.exports = {
   getEarnings: exports.getEarnings,
   requestWithdrawal: exports.requestWithdrawal,
   adminGetWorkers: exports.adminGetWorkers,
+  adminGetQualifiedWorkerCounts: exports.adminGetQualifiedWorkerCounts, // PATCH_62
   adminGetWorkerById: exports.adminGetWorkerById, // PATCH_61
   adminUpdateWorkerStatus: exports.adminUpdateWorkerStatus,
   adminCreateScreening: exports.adminCreateScreening,
