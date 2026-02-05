@@ -560,13 +560,16 @@ function parseAdminCommand(message) {
  * @param {string} params.role - User role
  * @returns {Promise<object>} Processed response
  */
+// HOTFIX: Cache env refs OUTSIDE the function to avoid shadowing Node's global `process`
+const _env = globalThis.process.env;
+
 async function process({ message, session, context = {}, userId, role }) {
   const startTime = Date.now();
   const logs = [];
 
   const log = (step, data) => {
     logs.push({ step, data, timestamp: Date.now() });
-    if (process.env.JARVISX_DEBUG === "true") {
+    if (_env.JARVISX_DEBUG === "true") {
       console.log(`[CoreBrain] ${step}:`, JSON.stringify(data));
     }
   };
@@ -728,7 +731,7 @@ async function process({ message, session, context = {}, userId, role }) {
 
     // =========== STEP 6: CALL REASONING ENGINE ===========
     log("Step 6 - Reasoning Engine", {
-      hasGroqKey: !!process.env.GROQ_API_KEY,
+      hasGroqKey: !!_env.GROQ_API_KEY,
     });
 
     const reasoningResult = await callReasoningEngine(cleanMessage, {
