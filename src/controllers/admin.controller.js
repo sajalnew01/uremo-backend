@@ -235,6 +235,43 @@ exports.updateOrderStatus = async (req, res) => {
 
 exports.verifyPayment = async (req, res) => {
   try {
+    const { logAdminAction } = require("../services/adminAudit.service");
+
+    // PATCH-64: First, load the order to check guardrails
+    const existingOrder = await Order.findById(req.params.id)
+      .populate("payment.methodId", "name type")
+      .lean();
+
+    if (!existingOrder) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    // PATCH-64 GUARDRAIL: Check for payment proof
+    const hasProof =
+      existingOrder.payment?.proof ||
+      existingOrder.payment?.transactionId ||
+      existingOrder.payment?.screenshotUrl;
+
+    if (!hasProof && !req.body.skipProofCheck) {
+      return res.status(400).json({
+        message:
+          "Payment proof not found. Cannot verify payment without proof.",
+        hint: "User must submit payment proof before verification",
+      });
+    }
+
+    // PATCH-64 GUARDRAIL: Check for already verified/completed
+    if (
+      existingOrder.paymentStatus === "paid" ||
+      existingOrder.status === "completed"
+    ) {
+      return res.status(400).json({
+        message: "Payment already verified or order completed",
+        currentStatus: existingOrder.status,
+        paymentStatus: existingOrder.paymentStatus,
+      });
+    }
+
     // PATCH_37: Check if transition is allowed via FlowEngine (waiting_user → in_progress)
     const canTransitionResult = await FlowEngine.canTransition(
       "order",
@@ -268,6 +305,21 @@ exports.verifyPayment = async (req, res) => {
         paymentMethod: "manual",
       },
     );
+
+    // PATCH-64: Log admin action
+    await logAdminAction({
+      adminId: req.user?._id || req.user?.id,
+      adminEmail: req.user?.email,
+      action: "payment_verify",
+      entityType: "order",
+      entityId: String(req.params.id),
+      previousState: {
+        status: existingOrder.status,
+        paymentStatus: existingOrder.paymentStatus,
+      },
+      newState: { status: "in_progress", paymentStatus: "paid" },
+      reason: "Payment verified by admin",
+    });
 
     // Email notification (best-effort, non-blocking)
     // Note: FlowEngine hooks handle in-app notification

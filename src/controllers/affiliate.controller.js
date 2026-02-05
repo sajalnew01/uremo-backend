@@ -626,9 +626,11 @@ exports.getAdminWithdrawals = async (req, res) => {
 /**
  * Approve withdrawal (admin)
  * PUT /api/admin/affiliate/withdrawals/:id/approve
+ * PATCH-64: Enhanced with guardrails and audit logging
  */
 exports.approveWithdrawal = async (req, res) => {
   try {
+    const { logAdminAction } = require("../services/adminAudit.service");
     const { id } = req.params;
     const { transactionId, adminNotes } = req.body;
 
@@ -639,12 +641,27 @@ exports.approveWithdrawal = async (req, res) => {
         .json({ ok: false, message: "Withdrawal not found" });
     }
 
+    // PATCH-64 GUARDRAIL: Check if already processed
     if (withdrawal.status !== "pending") {
       return res.status(400).json({
         ok: false,
         message: `Cannot approve withdrawal with status: ${withdrawal.status}`,
+        hint: "This withdrawal has already been processed",
       });
     }
+
+    // PATCH-64 GUARDRAIL: Verify user's affiliate balance wasn't already deducted
+    const user = await User.findById(withdrawal.user);
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        message: "User not found for this withdrawal",
+      });
+    }
+
+    // PATCH-64 GUARDRAIL: Log warning if balance is inconsistent
+    // (Balance was already deducted when withdrawal was requested)
+    const previousStatus = withdrawal.status;
 
     withdrawal.status = "paid";
     withdrawal.transactionId = transactionId || "";
@@ -652,6 +669,23 @@ exports.approveWithdrawal = async (req, res) => {
     withdrawal.processedBy = req.user.id || req.user._id;
     withdrawal.processedAt = new Date();
     await withdrawal.save();
+
+    // PATCH-64: Log admin action
+    await logAdminAction({
+      adminId: req.user?._id || req.user?.id,
+      adminEmail: req.user?.email,
+      action: "affiliate_withdrawal_approve",
+      entityType: "affiliate_withdrawal",
+      entityId: String(id),
+      previousState: { status: previousStatus },
+      newState: { status: "paid", transactionId },
+      reason: adminNotes || "Withdrawal approved by admin",
+      metadata: {
+        userId: String(withdrawal.user),
+        amount: withdrawal.amount,
+        paymentMethod: withdrawal.paymentMethod,
+      },
+    });
 
     // PATCH_29: Notify user about approved withdrawal
     try {

@@ -912,9 +912,12 @@ const normalizeScreeningQuestions = (questions = []) => {
 /**
  * POST /api/admin/workspace/screenings
  * Create a new screening
+ * PATCH-64: Enhanced with validation guardrails
  */
 exports.adminCreateScreening = async (req, res) => {
   try {
+    const { logAdminAction } = require("../services/adminAudit.service");
+
     const {
       title,
       description,
@@ -925,6 +928,45 @@ exports.adminCreateScreening = async (req, res) => {
       timeLimit,
     } = req.body;
 
+    // PATCH-64 GUARDRAIL: Title required
+    if (!title || title.trim().length < 3) {
+      return res.status(400).json({
+        message: "Screening title is required (minimum 3 characters)",
+      });
+    }
+
+    // PATCH-64 GUARDRAIL: Category required
+    if (!category) {
+      return res.status(400).json({
+        message: "Category is required for screening",
+      });
+    }
+
+    // PATCH-64 GUARDRAIL: Questions required - cannot save empty screening
+    if (!questions || !Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({
+        message: "Screening must have at least 1 question",
+        hint: "Add questions before saving the screening",
+      });
+    }
+
+    // PATCH-64 GUARDRAIL: Validate each question has required fields
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      if (!q.question || q.question.trim().length < 5) {
+        return res.status(400).json({
+          message: `Question ${i + 1} text is missing or too short`,
+        });
+      }
+      if (q.type !== "text" && q.type !== "file_upload") {
+        if (!q.options || q.options.length < 2) {
+          return res.status(400).json({
+            message: `Question ${i + 1} must have at least 2 options`,
+          });
+        }
+      }
+    }
+
     const screening = await Screening.create({
       title,
       description,
@@ -934,6 +976,18 @@ exports.adminCreateScreening = async (req, res) => {
       passingScore,
       timeLimit,
       createdBy: req.user.id,
+    });
+
+    // PATCH-64: Log admin action
+    await logAdminAction({
+      adminId: req.user?._id || req.user?.id,
+      adminEmail: req.user?.email,
+      action: "screening_create",
+      entityType: "screening",
+      entityId: String(screening._id),
+      previousState: null,
+      newState: { title, category, questionCount: questions.length },
+      reason: `Created screening: ${title}`,
     });
 
     res.status(201).json({ success: true, screening });
@@ -1136,41 +1190,89 @@ exports.adminGetProjects = async (req, res) => {
 /**
  * PUT /api/admin/workspace/project/:id/assign
  * Assign project to a worker
+ * PATCH-64: Enhanced with category matching and guardrails
  */
 exports.adminAssignProject = async (req, res) => {
   try {
+    const { logAdminAction } = require("../services/adminAudit.service");
     const { workerId } = req.body;
 
+    // Get project first to check category
+    const project = await Project.findById(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    // PATCH-64 GUARDRAIL: Check if project is already assigned
+    if (project.status === "assigned" && project.assignedTo) {
+      return res.status(400).json({
+        message: "Project is already assigned to another worker",
+        currentAssignee: project.assignedTo,
+        hint: "Unassign the current worker first",
+      });
+    }
+
     // Verify worker exists and is ready
-    const worker = await ApplyWork.findById(workerId);
+    const worker = await ApplyWork.findById(workerId).populate(
+      "position",
+      "category",
+    );
     if (!worker) {
       return res.status(404).json({ message: "Worker not found" });
     }
+
+    // PATCH-64 GUARDRAIL: Worker must be ready_to_work
     if (
       worker.workerStatus !== "ready_to_work" &&
       worker.workerStatus !== "assigned"
     ) {
-      return res.status(400).json({ message: "Worker is not ready to work" });
+      return res.status(400).json({
+        message: "Worker is not ready to work",
+        currentStatus: worker.workerStatus,
+        hint: "Worker must complete screening and be marked as ready_to_work",
+      });
     }
 
-    const project = await Project.findByIdAndUpdate(
-      req.params.id,
-      {
-        assignedTo: worker.user,
-        assignedAt: new Date(),
-        status: "assigned",
-      },
-      { new: true },
-    );
-
-    if (!project) {
-      return res.status(404).json({ message: "Project not found" });
+    // PATCH-64 GUARDRAIL: Category matching (warning, not blocking)
+    const workerCategory = worker.category || worker.position?.category;
+    if (
+      workerCategory &&
+      project.category &&
+      workerCategory !== project.category
+    ) {
+      console.warn(
+        `[AUDIT] Category mismatch: Worker (${workerCategory}) assigned to project (${project.category}) by ${req.user?.email}`,
+      );
     }
+
+    const previousStatus = project.status;
+
+    project.assignedTo = worker.user;
+    project.assignedAt = new Date();
+    project.status = "assigned";
+    await project.save();
 
     // Update worker status
     worker.workerStatus = "assigned";
     worker.currentProject = project._id;
     await worker.save();
+
+    // PATCH-64: Log admin action
+    await logAdminAction({
+      adminId: req.user?._id || req.user?.id,
+      adminEmail: req.user?.email,
+      action: "project_assign",
+      entityType: "project",
+      entityId: String(project._id),
+      previousState: { status: previousStatus, assignedTo: null },
+      newState: { status: "assigned", assignedTo: String(worker.user) },
+      reason: `Assigned to worker ${workerId}`,
+      metadata: {
+        workerId: String(workerId),
+        projectCategory: project.category,
+        workerCategory,
+      },
+    });
 
     res.json({ success: true, project });
   } catch (err) {

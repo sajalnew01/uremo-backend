@@ -267,9 +267,11 @@ exports.payWithWallet = async (req, res) => {
  * Admin: Adjust user wallet balance
  * POST /api/admin/wallet/adjust
  * Body: { userId, amount, type, description }
+ * PATCH-64: Enhanced with guardrails and audit logging
  */
 exports.adminAdjustBalance = async (req, res) => {
   try {
+    const { logAdminAction } = require("../services/adminAudit.service");
     const { userId, amount, type, description } = req.body;
 
     if (!userId || !amount || !type) {
@@ -287,18 +289,41 @@ exports.adminAdjustBalance = async (req, res) => {
       return res.status(400).json({ error: "Amount must be greater than 0" });
     }
 
+    // PATCH-64 GUARDRAIL: Require description/reason for all adjustments
+    if (!description || description.trim().length < 5) {
+      return res.status(400).json({
+        error: "Description is required (minimum 5 characters)",
+        hint: "Provide a reason for this wallet adjustment",
+      });
+    }
+
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Check if debit would result in negative balance
-    if (type === "debit" && user.walletBalance < numAmount) {
+    const previousBalance = user.walletBalance || 0;
+    const resultingBalance =
+      type === "credit"
+        ? previousBalance + numAmount
+        : previousBalance - numAmount;
+
+    // PATCH-64 GUARDRAIL: Check if debit would result in negative balance
+    if (type === "debit" && resultingBalance < 0) {
       return res.status(400).json({
-        error: "Insufficient balance for debit",
-        currentBalance: user.walletBalance,
+        error:
+          "Insufficient balance for debit - would result in negative balance",
+        currentBalance: previousBalance,
         requestedDebit: numAmount,
+        resultingBalance: resultingBalance,
       });
+    }
+
+    // PATCH-64 GUARDRAIL: Warn on large adjustments (> $1000)
+    if (numAmount > 1000) {
+      console.warn(
+        `[AUDIT] Large wallet adjustment: $${numAmount} ${type} for user ${userId} by admin ${req.user?.email}`,
+      );
     }
 
     // Apply adjustment
@@ -317,6 +342,19 @@ exports.adminAdjustBalance = async (req, res) => {
       source: "admin_adjustment",
       description: description || `Admin ${type} by ${req.user.email}`,
       balanceAfter: user.walletBalance,
+    });
+
+    // PATCH-64: Log admin action
+    await logAdminAction({
+      adminId: req.user?._id || req.user?.id,
+      adminEmail: req.user?.email,
+      action: type === "credit" ? "wallet_credit" : "wallet_debit",
+      entityType: "wallet",
+      entityId: String(userId),
+      previousState: { balance: previousBalance },
+      newState: { balance: user.walletBalance },
+      reason: description,
+      metadata: { amount: numAmount, type },
     });
 
     // PATCH_29: Notify user about wallet update

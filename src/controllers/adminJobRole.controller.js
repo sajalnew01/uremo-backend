@@ -445,9 +445,13 @@ exports.assignProject = async (req, res) => {
 /**
  * PUT /api/admin/workspace/job/:id/set-status
  * Manually set worker status (admin override)
+ * PATCH-64: Enhanced with state machine validation and audit logging
  */
 exports.setWorkerStatus = async (req, res) => {
   try {
+    const { canTransitionWorkerStatus } = require("../core/workerStateMachine");
+    const { logAdminAction } = require("../services/adminAudit.service");
+
     const { id } = req.params;
     const { applicantId, workerStatus, resetAttempts, adminNotes, payRate } =
       req.body;
@@ -487,6 +491,25 @@ exports.setWorkerStatus = async (req, res) => {
         .json({ ok: false, message: "Applicant not found" });
     }
 
+    const previousStatus = applicant.workerStatus || "fresh";
+
+    // PATCH-64 GUARDRAIL: Validate state machine transition
+    const transitionCheck = canTransitionWorkerStatus(
+      previousStatus,
+      workerStatus,
+    );
+
+    if (!transitionCheck.allowed && previousStatus !== workerStatus) {
+      return res.status(400).json({
+        ok: false,
+        message: `Invalid status transition: "${previousStatus}" → "${workerStatus}"`,
+        reason: transitionCheck.reason,
+        currentStatus: previousStatus,
+        requestedStatus: workerStatus,
+        hint: "Use valid state transitions only",
+      });
+    }
+
     applicant.workerStatus = workerStatus;
 
     if (resetAttempts) {
@@ -509,6 +532,19 @@ exports.setWorkerStatus = async (req, res) => {
     }
 
     await applicant.save();
+
+    // PATCH-64: Log admin action
+    await logAdminAction({
+      adminId: req.user?._id || req.user?.id,
+      adminEmail: req.user?.email,
+      action: "worker_status_change",
+      entityType: "worker",
+      entityId: String(applicantId),
+      previousState: { workerStatus: previousStatus },
+      newState: { workerStatus },
+      reason: adminNotes || `Status changed by admin`,
+      metadata: { positionId: id, resetAttempts, payRate },
+    });
 
     res.json({
       ok: true,
