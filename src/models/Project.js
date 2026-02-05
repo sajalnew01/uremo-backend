@@ -59,6 +59,11 @@ const projectSchema = new mongoose.Schema(
       ref: "User",
     },
     assignedAt: Date,
+    // PATCH_65.1: Link project to required screening test
+    screeningId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Screening",
+    },
     // Status tracking
     status: {
       type: String,

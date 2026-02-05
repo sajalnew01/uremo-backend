@@ -1129,6 +1129,9 @@ exports.adminCreateProject = async (req, res) => {
       payType,
       estimatedTasks,
       deadline,
+      screeningId,
+      earnings,
+      priority,
     } = req.body;
 
     const project = await Project.create({
@@ -1137,12 +1140,14 @@ exports.adminCreateProject = async (req, res) => {
       category,
       instructions,
       deliverables,
-      payRate,
+      payRate: payRate || earnings || 0,
       payType,
       estimatedTasks,
       deadline,
       status: "open",
       createdBy: req.user.id,
+      screeningId: screeningId || undefined,
+      priority: priority || "medium",
     });
 
     // PATCH_58: Notify ready workers about new project
@@ -1397,6 +1402,162 @@ exports.adminAssignTask = async (req, res) => {
   }
 };
 
+/**
+ * PATCH_65.1: GET /api/admin/workspace/project/:id
+ * Get single project by ID with full details
+ */
+exports.adminGetProjectById = async (req, res) => {
+  try {
+    const project = await Project.findById(req.params.id)
+      .populate("assignedTo", "name email workerStatus")
+      .populate("createdBy", "firstName lastName email")
+      .lean();
+
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    // Get worker profile if assigned
+    let workerProfile = null;
+    if (project.assignedTo) {
+      workerProfile = await ApplyWork.findOne({ user: project.assignedTo._id })
+        .populate("user", "firstName lastName email")
+        .populate("position", "name category")
+        .lean();
+    }
+
+    // Get proofs for this project
+    const ProofOfWork = require("../models/proof.model");
+    const proofs = await ProofOfWork.find({ projectId: req.params.id })
+      .populate("workerId", "firstName lastName email")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({
+      success: true,
+      project,
+      workerProfile,
+      proofs,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * PATCH_65.1: PUT /api/admin/workspace/project/:id
+ * Update project details
+ */
+exports.adminUpdateProject = async (req, res) => {
+  try {
+    const {
+      title,
+      description,
+      category,
+      instructions,
+      deliverables,
+      payRate,
+      payType,
+      estimatedTasks,
+      deadline,
+      status,
+      screeningId,
+    } = req.body;
+
+    const project = await Project.findById(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    // Update allowed fields
+    if (title) project.title = title;
+    if (description) project.description = description;
+    if (category) project.category = category;
+    if (instructions) project.instructions = instructions;
+    if (deliverables) project.deliverables = deliverables;
+    if (payRate !== undefined) project.payRate = payRate;
+    if (payType) project.payType = payType;
+    if (estimatedTasks !== undefined) project.estimatedTasks = estimatedTasks;
+    if (deadline) project.deadline = deadline;
+    if (status) project.status = status;
+    if (screeningId !== undefined) project.screeningId = screeningId;
+
+    project.updatedAt = new Date();
+    await project.save();
+
+    // Log admin action
+    try {
+      const { logAdminAction } = require("../services/adminAudit.service");
+      await logAdminAction(
+        req.user.id,
+        "PROJECT_UPDATED",
+        `Updated project: ${project.title}`,
+        { projectId: project._id, changes: req.body },
+      );
+    } catch (logErr) {
+      console.warn("[WORKSPACE] Audit log failed:", logErr.message);
+    }
+
+    res.json({
+      success: true,
+      message: "Project updated successfully",
+      project,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * PATCH_65.1: DELETE /api/admin/workspace/project/:id
+ * Delete a project (only if not assigned)
+ */
+exports.adminDeleteProject = async (req, res) => {
+  try {
+    const project = await Project.findById(req.params.id);
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    // GUARDRAIL: Cannot delete assigned or completed projects
+    if (project.status === "assigned" || project.status === "in_progress") {
+      return res.status(400).json({
+        message: "Cannot delete an active project",
+        hint: "Unassign the worker first or mark as cancelled",
+      });
+    }
+
+    if (project.status === "completed") {
+      return res.status(400).json({
+        message: "Cannot delete a completed project",
+        hint: "Completed projects are kept for records",
+      });
+    }
+
+    await Project.findByIdAndDelete(req.params.id);
+
+    // Log admin action
+    try {
+      const { logAdminAction } = require("../services/adminAudit.service");
+      await logAdminAction(
+        req.user.id,
+        "PROJECT_DELETED",
+        `Deleted project: ${project.title}`,
+        { projectId: project._id },
+      );
+    } catch (logErr) {
+      console.warn("[WORKSPACE] Audit log failed:", logErr.message);
+    }
+
+    res.json({
+      success: true,
+      message: "Project deleted successfully",
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   getWorkspaceProfile: exports.getWorkspaceProfile,
   applyToJob: exports.applyToJob,
@@ -1422,6 +1583,9 @@ module.exports = {
   adminDeleteScreening: exports.adminDeleteScreening,
   adminCreateProject: exports.adminCreateProject,
   adminGetProjects: exports.adminGetProjects,
+  adminGetProjectById: exports.adminGetProjectById, // PATCH_65.1
+  adminUpdateProject: exports.adminUpdateProject, // PATCH_65.1
+  adminDeleteProject: exports.adminDeleteProject, // PATCH_65.1
   adminAssignProject: exports.adminAssignProject,
   adminCreditEarnings: exports.adminCreditEarnings,
   adminAssignTask: exports.adminAssignTask,

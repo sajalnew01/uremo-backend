@@ -18,6 +18,9 @@ const {
   adminDeleteScreening,
   adminCreateProject,
   adminGetProjects,
+  adminGetProjectById, // PATCH_65.1
+  adminUpdateProject, // PATCH_65.1
+  adminDeleteProject, // PATCH_65.1
   adminAssignProject,
   adminCreditEarnings,
   adminAssignTask, // PATCH_61B: Assign tasks to workers
@@ -46,6 +49,9 @@ router.delete("/screenings/:id", adminDeleteScreening);
 // Projects management
 router.get("/projects", adminGetProjects);
 router.post("/projects", adminCreateProject);
+router.get("/project/:id", adminGetProjectById); // PATCH_65.1: View single project
+router.put("/project/:id", adminUpdateProject); // PATCH_65.1: Update project
+router.delete("/project/:id", adminDeleteProject); // PATCH_65.1: Delete project
 router.put("/project/:id/assign", adminAssignProject);
 router.put("/project/:id/credit", adminCreditEarnings);
 
