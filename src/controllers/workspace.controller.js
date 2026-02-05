@@ -1427,11 +1427,16 @@ exports.adminGetProjectById = async (req, res) => {
     }
 
     // Get proofs for this project
-    const ProofOfWork = require("../models/proof.model");
-    const proofs = await ProofOfWork.find({ projectId: req.params.id })
-      .populate("workerId", "firstName lastName email")
-      .sort({ createdAt: -1 })
-      .lean();
+    const ProofOfWork = require("../models/ProofOfWork");
+    let proofs = [];
+    try {
+      proofs = await ProofOfWork.find({ projectId: req.params.id })
+        .populate("workerId", "firstName lastName email name")
+        .sort({ createdAt: -1 })
+        .lean();
+    } catch (proofErr) {
+      console.warn("[WORKSPACE] Failed to fetch proofs:", proofErr.message);
+    }
 
     res.json({
       success: true,
