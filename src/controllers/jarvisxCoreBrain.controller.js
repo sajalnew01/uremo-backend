@@ -121,7 +121,8 @@ async function chat(req, res) {
     }
 
     // 3. Sanitize input
-    const sanitizedMessage = sanitizeInput(message);
+    const sanitizedInput = sanitizeInput(message);
+    const sanitizedMessage = sanitizedInput.text || "";
 
     // 4. Get or create session
     const session = await JarvisSession.getOrCreateSession(req);
@@ -152,10 +153,17 @@ async function chat(req, res) {
     });
 
     // 8. Process through Core Brain
-    const result = await CoreBrain.process(sanitizedMessage, context);
+    const result = await CoreBrain.process({
+      message: sanitizedMessage,
+      session,
+      context,
+      userId: context.userId,
+      role: session.role,
+    });
 
     // 9. Sanitize output before returning
-    const safeResponse = sanitizeOutput(result.response);
+    const replyText = result?.response?.message || "";
+    const safeResponse = sanitizeOutput(replyText);
 
     // 10. Add assistant message to history
     await session.addMessage("assistant", safeResponse, {
