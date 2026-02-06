@@ -247,10 +247,13 @@ exports.verifyPayment = async (req, res) => {
     }
 
     // PATCH-64 GUARDRAIL: Check for payment proof
+    // PATCH-68: Fixed to check all possible proof field names
     const hasProof =
       existingOrder.payment?.proof ||
+      existingOrder.payment?.proofUrl ||
       existingOrder.payment?.transactionId ||
-      existingOrder.payment?.screenshotUrl;
+      existingOrder.payment?.screenshotUrl ||
+      existingOrder.payment?.reference;
 
     if (!hasProof && !req.body.skipProofCheck) {
       return res.status(400).json({

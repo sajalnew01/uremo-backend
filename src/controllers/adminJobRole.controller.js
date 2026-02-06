@@ -663,10 +663,26 @@ exports.createJobProject = async (req, res) => {
         .json({ ok: false, message: "Project title is required" });
     }
 
+    // PATCH_68: Normalize category to valid Project enum values
+    const validCategories = [
+      "microjobs",
+      "writing",
+      "teaching",
+      "coding_math",
+      "outlier",
+      "data_entry",
+      "screener",
+      "other",
+    ];
+    const rawCategory = (job.category || "").toLowerCase().replace(/\s+/g, "_");
+    const category = validCategories.includes(rawCategory)
+      ? rawCategory
+      : "other";
+
     const project = await Project.create({
       title,
       description: description || "",
-      category: job.category,
+      category,
       instructions: instructions || "",
       payRate: Number(payRate) || 0,
       payType: payType || "per_task",

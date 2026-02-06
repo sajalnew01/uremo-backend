@@ -24,6 +24,8 @@ const projectSchema = new mongoose.Schema(
         "teaching",
         "coding_math",
         "outlier",
+        "data_entry",
+        "screener",
         "other",
       ],
     },
