@@ -1,6 +1,16 @@
 /**
  * PATCH_23: Wallet Transaction Model
+ * PATCH_80: Added status, provider, providerRef for payment gateway foundation
+ *
  * Tracks all wallet balance changes (credits and debits)
+ *
+ * STATE MACHINE (for topups):
+ *   initiated → pending → success (ONLY success updates balance)
+ *   initiated → pending → failed (NO balance change)
+ *   initiated → failed (timeout or user cancel)
+ *
+ * For internal operations (service_purchase, admin_adjustment, refund):
+ *   Created directly as 'success' since they are instant internal operations
  */
 const mongoose = require("mongoose");
 
@@ -33,6 +43,40 @@ const walletTransactionSchema = new mongoose.Schema(
       ],
       required: true,
     },
+    /**
+     * PATCH_80: Transaction Status
+     * - initiated: User requested topup, waiting for payment
+     * - pending: Payment in progress (gateway processing)
+     * - success: Payment verified and balance updated
+     * - failed: Payment failed or expired
+     *
+     * CRITICAL: Balance is ONLY updated when status transitions to 'success'
+     */
+    status: {
+      type: String,
+      enum: ["initiated", "pending", "success", "failed"],
+      default: "success", // Default for backward compatibility (existing debits)
+    },
+    /**
+     * PATCH_80: Payment Provider
+     * - manual: Admin verification (Phase 1)
+     * - stripe: Stripe integration (Future)
+     * - paystack: Paystack integration (Future)
+     * - flutterwave: Flutterwave integration (Future)
+     */
+    provider: {
+      type: String,
+      enum: ["manual", "stripe", "paystack", "flutterwave", "internal"],
+      default: "internal", // Internal for service purchases, admin adjustments
+    },
+    /**
+     * PATCH_80: External Provider Reference
+     * Stores payment gateway transaction ID for reconciliation
+     */
+    providerRef: {
+      type: String,
+      default: null,
+    },
     // Reference to related document (order ID, etc.)
     referenceId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -43,10 +87,17 @@ const walletTransactionSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    // Balance after this transaction
+    // Balance after this transaction (set when status becomes 'success')
     balanceAfter: {
       type: Number,
-      required: true,
+      default: null, // Null until transaction succeeds
+    },
+    /**
+     * PATCH_80: Failure reason (if status === 'failed')
+     */
+    failureReason: {
+      type: String,
+      default: null,
     },
   },
   { timestamps: true },
@@ -54,5 +105,27 @@ const walletTransactionSchema = new mongoose.Schema(
 
 // Index for fetching user transactions in order
 walletTransactionSchema.index({ user: 1, createdAt: -1 });
+
+// PATCH_80: Index for finding pending transactions (admin verification)
+walletTransactionSchema.index({ status: 1, createdAt: -1 });
+
+// PATCH_80: Index for provider reference lookups (webhook processing)
+walletTransactionSchema.index({ provider: 1, providerRef: 1 });
+
+/**
+ * PATCH_80: Static method to validate state transitions
+ * Enforces the transaction state machine
+ */
+walletTransactionSchema.statics.isValidTransition = function (from, to) {
+  const validTransitions = {
+    initiated: ["pending", "failed"],
+    pending: ["success", "failed"],
+    // Terminal states - no transitions allowed
+    success: [],
+    failed: [],
+  };
+
+  return validTransitions[from]?.includes(to) || false;
+};
 
 module.exports = mongoose.model("WalletTransaction", walletTransactionSchema);

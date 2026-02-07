@@ -1,5 +1,7 @@
 /**
  * PATCH_23: Wallet Routes (User)
+ * PATCH_80: Added pending topups and cancel routes
+ *
  * Endpoints for wallet balance, top-up, transactions, and payment
  */
 const express = require("express");
@@ -13,8 +15,14 @@ router.use(authMiddleware);
 // GET /api/wallet/balance - Get current wallet balance
 router.get("/balance", walletController.getBalance);
 
-// POST /api/wallet/topup - Add funds to wallet
+// POST /api/wallet/topup - Initiate wallet top-up (PATCH_80: NO instant credit)
 router.post("/topup", walletController.topUp);
+
+// GET /api/wallet/pending - Get user's pending topup requests (PATCH_80)
+router.get("/pending", walletController.getPendingTopups);
+
+// POST /api/wallet/cancel-topup - Cancel a pending topup request (PATCH_80)
+router.post("/cancel-topup", walletController.cancelTopup);
 
 // GET /api/wallet/transactions - Get transaction history
 router.get("/transactions", walletController.getTransactions);
