@@ -45,8 +45,10 @@ const walletTransactionSchema = new mongoose.Schema(
     },
     /**
      * PATCH_80: Transaction Status
+     * PATCH_82: Added 'paid_unverified' for PayPal payments awaiting admin approval
      * - initiated: User requested topup, waiting for payment
      * - pending: Payment in progress (gateway processing)
+     * - paid_unverified: Payment confirmed by gateway (PayPal) but awaiting admin verification
      * - success: Payment verified and balance updated
      * - failed: Payment failed or expired
      *
@@ -54,19 +56,28 @@ const walletTransactionSchema = new mongoose.Schema(
      */
     status: {
       type: String,
-      enum: ["initiated", "pending", "success", "failed"],
+      enum: ["initiated", "pending", "paid_unverified", "success", "failed"],
       default: "success", // Default for backward compatibility (existing debits)
     },
     /**
      * PATCH_80: Payment Provider
+     * PATCH_82: Added 'paypal' for international PayPal payments
      * - manual: Admin verification (Phase 1)
+     * - paypal: PayPal integration (PATCH_82)
      * - stripe: Stripe integration (Future)
      * - paystack: Paystack integration (Future)
      * - flutterwave: Flutterwave integration (Future)
      */
     provider: {
       type: String,
-      enum: ["manual", "stripe", "paystack", "flutterwave", "internal"],
+      enum: [
+        "manual",
+        "paypal",
+        "stripe",
+        "paystack",
+        "flutterwave",
+        "internal",
+      ],
       default: "internal", // Internal for service purchases, admin adjustments
     },
     /**
@@ -118,8 +129,10 @@ walletTransactionSchema.index({ provider: 1, providerRef: 1 });
  */
 walletTransactionSchema.statics.isValidTransition = function (from, to) {
   const validTransitions = {
-    initiated: ["pending", "failed"],
-    pending: ["success", "failed"],
+    initiated: ["pending", "paid_unverified", "failed"],
+    pending: ["paid_unverified", "success", "failed"],
+    // PATCH_82: PayPal payments go to paid_unverified, then admin verifies
+    paid_unverified: ["success", "failed"],
     // Terminal states - no transitions allowed
     success: [],
     failed: [],

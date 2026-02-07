@@ -28,10 +28,11 @@ exports.getBalance = async (req, res) => {
     }
 
     // PATCH_80: Also return pending topups count
+    // PATCH_82: Include paid_unverified for PayPal payments awaiting admin verification
     const pendingCount = await WalletTransaction.countDocuments({
       user: userId,
       source: "topup",
-      status: { $in: ["initiated", "pending"] },
+      status: { $in: ["initiated", "pending", "paid_unverified"] },
     });
 
     res.json({
@@ -132,6 +133,7 @@ exports.topUp = async (req, res) => {
 
 /**
  * PATCH_80: Get user's pending topup requests
+ * PATCH_82: Added paid_unverified status for PayPal payments
  * GET /api/wallet/pending
  */
 exports.getPendingTopups = async (req, res) => {
@@ -141,7 +143,7 @@ exports.getPendingTopups = async (req, res) => {
     const pendingTopups = await WalletTransaction.find({
       user: userId,
       source: "topup",
-      status: { $in: ["initiated", "pending"] },
+      status: { $in: ["initiated", "pending", "paid_unverified"] },
     })
       .sort({ createdAt: -1 })
       .lean();
@@ -225,6 +227,278 @@ exports.cancelTopup = async (req, res) => {
     console.error("cancelTopup error:", err);
     res.status(500).json({ error: "Failed to cancel top-up" });
   }
+};
+
+// ============================================================
+// PATCH_82: PayPal Wallet Top-Up (International, Safe Mode)
+// ============================================================
+const {
+  client: paypalClient,
+  paypal,
+  isConfigured: isPayPalConfigured,
+} = require("../config/paypal");
+
+/**
+ * PATCH_82: Create PayPal order for wallet top-up
+ * POST /api/wallet/topup/paypal/create
+ * Body: { amount }
+ *
+ * Creates a PayPal order and returns the approval URL.
+ * Transaction is stored with status='initiated', provider='paypal'.
+ * NO wallet credit happens here.
+ */
+exports.createPayPalTopup = async (req, res) => {
+  try {
+    // Check if PayPal is configured
+    if (!isPayPalConfigured()) {
+      return res.status(503).json({
+        error: "PayPal is not configured on this server",
+      });
+    }
+
+    const { amount } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: "Amount must be greater than 0" });
+    }
+
+    const numAmount = parseFloat(amount);
+    if (isNaN(numAmount) || numAmount < 1) {
+      return res.status(400).json({ error: "Minimum top-up amount is $1" });
+    }
+
+    const userId = req.user.id || req.user._id;
+
+    // Verify user exists
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // PATCH_81: Prevent duplicate rapid requests (within 10 seconds for same amount)
+    const tenSecondsAgo = new Date(Date.now() - 10000);
+    const recentDuplicate = await WalletTransaction.findOne({
+      user: userId,
+      source: "topup",
+      provider: "paypal",
+      amount: numAmount,
+      status: { $in: ["initiated", "pending"] },
+      createdAt: { $gte: tenSecondsAgo },
+    });
+
+    if (recentDuplicate) {
+      return res.status(409).json({
+        error: "Duplicate request - a similar PayPal topup was just submitted",
+        existingTransactionId: recentDuplicate._id,
+        retryAfter: 10000,
+      });
+    }
+
+    // Create PayPal order
+    const request = new paypal.orders.OrdersCreateRequest();
+    request.prefer("return=representation");
+    request.requestBody({
+      intent: "CAPTURE",
+      purchase_units: [
+        {
+          amount: {
+            currency_code: "USD",
+            value: numAmount.toFixed(2),
+          },
+          description: `UREMO Wallet Top-Up - $${numAmount.toFixed(2)}`,
+        },
+      ],
+      application_context: {
+        brand_name: "UREMO",
+        landing_page: "NO_PREFERENCE",
+        user_action: "PAY_NOW",
+        return_url: `${process.env.FRONTEND_URL || "https://uremo.online"}/wallet?paypal=success`,
+        cancel_url: `${process.env.FRONTEND_URL || "https://uremo.online"}/wallet?paypal=cancelled`,
+      },
+    });
+
+    const paypalOrder = await paypalClient.execute(request);
+
+    // Store transaction with PayPal order ID
+    const transaction = await WalletTransaction.create({
+      user: userId,
+      type: "credit",
+      amount: numAmount,
+      source: "topup",
+      status: "initiated", // CRITICAL: Not 'success' - no balance change yet
+      provider: "paypal",
+      providerRef: paypalOrder.result.id, // PayPal Order ID
+      description: "Wallet top-up via PayPal (pending verification)",
+      balanceAfter: null, // Will be set when admin verifies
+    });
+
+    // Get approval URL from PayPal response
+    const approvalLink = paypalOrder.result.links.find(
+      (link) => link.rel === "approve",
+    );
+
+    res.json({
+      success: true,
+      message: "PayPal order created. Redirect user to approve.",
+      transactionId: transaction._id,
+      paypalOrderId: paypalOrder.result.id,
+      approvalUrl: approvalLink?.href,
+      status: "initiated",
+      amount: numAmount,
+      currentBalance: user.walletBalance,
+    });
+  } catch (err) {
+    console.error("createPayPalTopup error:", err);
+    res.status(500).json({
+      error: "Failed to create PayPal order",
+      details: err.message,
+    });
+  }
+};
+
+/**
+ * PATCH_82: Confirm PayPal payment (after user approves on PayPal)
+ * POST /api/wallet/topup/paypal/confirm
+ * Body: { paypalOrderId }
+ *
+ * Captures the PayPal payment and marks transaction as 'paid_unverified'.
+ * STILL NO wallet credit - admin must verify.
+ */
+exports.confirmPayPalTopup = async (req, res) => {
+  try {
+    if (!isPayPalConfigured()) {
+      return res.status(503).json({
+        error: "PayPal is not configured on this server",
+      });
+    }
+
+    const { paypalOrderId } = req.body;
+
+    if (!paypalOrderId) {
+      return res.status(400).json({ error: "PayPal Order ID required" });
+    }
+
+    const userId = req.user.id || req.user._id;
+
+    // Find the transaction by PayPal order ID
+    const transaction = await WalletTransaction.findOne({
+      user: userId,
+      provider: "paypal",
+      providerRef: paypalOrderId,
+    });
+
+    if (!transaction) {
+      return res.status(404).json({ error: "Transaction not found" });
+    }
+
+    // Check if already processed
+    if (transaction.status === "paid_unverified") {
+      return res.status(200).json({
+        success: true,
+        message: "Payment already confirmed. Awaiting admin verification.",
+        alreadyConfirmed: true,
+        transactionId: transaction._id,
+        status: transaction.status,
+      });
+    }
+
+    if (transaction.status === "success") {
+      return res.status(200).json({
+        success: true,
+        message: "Transaction already completed.",
+        alreadyProcessed: true,
+        transactionId: transaction._id,
+      });
+    }
+
+    if (transaction.status === "failed") {
+      return res.status(400).json({
+        error: "Transaction was cancelled or failed",
+      });
+    }
+
+    // Capture the PayPal payment
+    const request = new paypal.orders.OrdersCaptureRequest(paypalOrderId);
+    request.requestBody({});
+
+    const capture = await paypalClient.execute(request);
+
+    if (capture.result.status !== "COMPLETED") {
+      // Payment not completed
+      await WalletTransaction.findByIdAndUpdate(transaction._id, {
+        status: "failed",
+        failureReason: `PayPal payment not completed: ${capture.result.status}`,
+      });
+      return res.status(400).json({
+        error: `PayPal payment not completed: ${capture.result.status}`,
+      });
+    }
+
+    // ATOMIC update to paid_unverified (prevents race with webhook)
+    const updatedTx = await WalletTransaction.findOneAndUpdate(
+      {
+        _id: transaction._id,
+        status: { $in: ["initiated", "pending"] },
+      },
+      {
+        $set: {
+          status: "paid_unverified",
+          description: `PayPal payment captured (ID: ${capture.result.id}). Awaiting admin verification.`,
+        },
+      },
+      { new: true },
+    );
+
+    if (!updatedTx) {
+      // Already processed by webhook or another request
+      const existing = await WalletTransaction.findById(transaction._id);
+      return res.status(200).json({
+        success: true,
+        message: "Payment already processed.",
+        transactionId: existing._id,
+        status: existing.status,
+        alreadyProcessed: true,
+      });
+    }
+
+    // CRITICAL: NO wallet balance change here
+    // Balance only updates when admin verifies
+
+    res.json({
+      success: true,
+      message: "PayPal payment confirmed. Awaiting admin verification.",
+      transactionId: updatedTx._id,
+      status: "paid_unverified",
+      amount: updatedTx.amount,
+      // DO NOT return updated balance - it hasn't changed
+    });
+  } catch (err) {
+    console.error("confirmPayPalTopup error:", err);
+
+    // Handle PayPal capture errors
+    if (err.statusCode === 422) {
+      return res.status(400).json({
+        error:
+          "PayPal order cannot be captured. It may be expired or cancelled.",
+      });
+    }
+
+    res.status(500).json({
+      error: "Failed to confirm PayPal payment",
+      details: err.message,
+    });
+  }
+};
+
+/**
+ * PATCH_82: Check if PayPal is available
+ * GET /api/wallet/topup/paypal/available
+ */
+exports.isPayPalAvailable = async (req, res) => {
+  res.json({
+    success: true,
+    available: isPayPalConfigured(),
+  });
 };
 
 /**
@@ -550,7 +824,7 @@ exports.adminGetPendingTopups = async (req, res) => {
     const [pendingTopups, total] = await Promise.all([
       WalletTransaction.find({
         source: "topup",
-        status: { $in: ["initiated", "pending"] },
+        status: { $in: ["initiated", "pending", "paid_unverified"] },
       })
         .populate("user", "name email")
         .sort({ createdAt: -1 })
@@ -559,7 +833,7 @@ exports.adminGetPendingTopups = async (req, res) => {
         .lean(),
       WalletTransaction.countDocuments({
         source: "topup",
-        status: { $in: ["initiated", "pending"] },
+        status: { $in: ["initiated", "pending", "paid_unverified"] },
       }),
     ]);
 
@@ -608,8 +882,9 @@ exports.adminVerifyTopup = async (req, res) => {
     }
 
     // PATCH_81: ATOMIC operation - update status ONLY if in allowed state
+    // PATCH_82: Added paid_unverified for PayPal payments
     // This prevents race conditions where two requests could both pass a status check
-    const allowedCurrentStatuses = ["initiated", "pending"];
+    const allowedCurrentStatuses = ["initiated", "pending", "paid_unverified"];
 
     let targetStatus;
     let updateFields = {};

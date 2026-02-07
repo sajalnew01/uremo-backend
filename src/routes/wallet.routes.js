@@ -1,6 +1,7 @@
 /**
  * PATCH_23: Wallet Routes (User)
  * PATCH_80: Added pending topups and cancel routes
+ * PATCH_82: Added PayPal top-up routes
  *
  * Endpoints for wallet balance, top-up, transactions, and payment
  */
@@ -23,6 +24,16 @@ router.get("/pending", walletController.getPendingTopups);
 
 // POST /api/wallet/cancel-topup - Cancel a pending topup request (PATCH_80)
 router.post("/cancel-topup", walletController.cancelTopup);
+
+// PATCH_82: PayPal Top-Up Routes
+// GET /api/wallet/topup/paypal/available - Check if PayPal is configured
+router.get("/topup/paypal/available", walletController.isPayPalAvailable);
+
+// POST /api/wallet/topup/paypal/create - Create PayPal order for top-up
+router.post("/topup/paypal/create", walletController.createPayPalTopup);
+
+// POST /api/wallet/topup/paypal/confirm - Confirm PayPal payment after user approves
+router.post("/topup/paypal/confirm", walletController.confirmPayPalTopup);
 
 // GET /api/wallet/transactions - Get transaction history
 router.get("/transactions", walletController.getTransactions);
