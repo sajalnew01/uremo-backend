@@ -47,6 +47,7 @@ exports.getBalance = async (req, res) => {
 
 /**
  * PATCH_80: Initiate wallet topup (NO INSTANT CREDIT)
+ * PATCH_81: Added duplicate request protection
  * POST /api/wallet/topup
  * Body: { amount }
  *
@@ -78,6 +79,24 @@ exports.topUp = async (req, res) => {
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
+    }
+
+    // PATCH_81: Prevent duplicate rapid requests (within 10 seconds for same amount)
+    const tenSecondsAgo = new Date(Date.now() - 10000);
+    const recentDuplicate = await WalletTransaction.findOne({
+      user: userId,
+      source: "topup",
+      amount: numAmount,
+      status: { $in: ["initiated", "pending"] },
+      createdAt: { $gte: tenSecondsAgo },
+    });
+
+    if (recentDuplicate) {
+      return res.status(409).json({
+        error: "Duplicate request - a similar topup was just submitted",
+        existingTransactionId: recentDuplicate._id,
+        retryAfter: 10000,
+      });
     }
 
     // PATCH_80: Create transaction with status='initiated' (NO balance change)
@@ -139,6 +158,7 @@ exports.getPendingTopups = async (req, res) => {
 
 /**
  * PATCH_80: Cancel a pending topup request
+ * PATCH_81: Made atomic to prevent race conditions
  * POST /api/wallet/cancel-topup
  * Body: { transactionId }
  */
@@ -151,22 +171,51 @@ exports.cancelTopup = async (req, res) => {
       return res.status(400).json({ error: "Transaction ID required" });
     }
 
-    const transaction = await WalletTransaction.findOne({
-      _id: transactionId,
-      user: userId,
-      source: "topup",
-      status: "initiated", // Only can cancel 'initiated', not 'pending' (in progress)
-    });
+    // PATCH_81: ATOMIC update - only cancel if status is still 'initiated'
+    const updatedTransaction = await WalletTransaction.findOneAndUpdate(
+      {
+        _id: transactionId,
+        user: userId,
+        source: "topup",
+        status: "initiated", // Only can cancel 'initiated', not 'pending' (in progress)
+      },
+      {
+        $set: {
+          status: "failed",
+          failureReason: "Cancelled by user",
+        },
+      },
+      { new: true },
+    );
 
-    if (!transaction) {
+    if (!updatedTransaction) {
+      // Check if it exists but was already processed
+      const existingTx = await WalletTransaction.findOne({
+        _id: transactionId,
+        user: userId,
+      });
+      if (!existingTx) {
+        return res.status(404).json({ error: "Transaction not found" });
+      }
+      if (existingTx.status === "pending") {
+        return res.status(400).json({
+          error: "Cannot cancel - payment is being processed",
+        });
+      }
+      if (existingTx.status === "success") {
+        return res.status(400).json({
+          error: "Cannot cancel - already completed",
+        });
+      }
+      if (existingTx.status === "failed") {
+        return res.status(400).json({
+          error: "Already cancelled or failed",
+        });
+      }
       return res.status(404).json({
         error: "Transaction not found or cannot be cancelled",
       });
     }
-
-    transaction.status = "failed";
-    transaction.failureReason = "Cancelled by user";
-    await transaction.save();
 
     res.json({
       success: true,
@@ -529,16 +578,17 @@ exports.adminGetPendingTopups = async (req, res) => {
 
 /**
  * PATCH_80: Admin - Verify a topup request
+ * PATCH_81: Added ATOMIC race condition protection
  * POST /api/admin/wallet/verify-topup
  * Body: { transactionId, action: 'approve' | 'reject', reason? }
  *
  * THIS IS THE ONLY WAY TO CREDIT WALLET FOR TOPUPS
- * State transitions:
- *   initiated -> pending (if admin marks as pending)
- *   initiated -> success (if admin approves)
- *   initiated -> failed (if admin rejects)
- *   pending -> success (if admin approves)
- *   pending -> failed (if admin rejects)
+ *
+ * SAFETY GUARANTEES (PATCH_81):
+ *   - Atomic status update prevents double-credit
+ *   - findOneAndUpdate with status condition = idempotent
+ *   - Balance only changes if status transition succeeds
+ *   - Second request gets "already processed" error
  */
 exports.adminVerifyTopup = async (req, res) => {
   try {
@@ -557,83 +607,109 @@ exports.adminVerifyTopup = async (req, res) => {
         .json({ error: "Action must be approve, reject, or pending" });
     }
 
-    // Find the transaction
-    const transaction = await WalletTransaction.findById(
-      transactionId,
-    ).populate("user", "name email walletBalance");
-    if (!transaction) {
-      return res.status(404).json({ error: "Transaction not found" });
-    }
+    // PATCH_81: ATOMIC operation - update status ONLY if in allowed state
+    // This prevents race conditions where two requests could both pass a status check
+    const allowedCurrentStatuses = ["initiated", "pending"];
 
-    // Verify it's a topup
-    if (transaction.source !== "topup") {
-      return res
-        .status(400)
-        .json({
-          error: "Only topup transactions can be verified via this endpoint",
-        });
-    }
+    let targetStatus;
+    let updateFields = {};
 
-    // Check current status
-    if (transaction.status === "success") {
-      return res
-        .status(400)
-        .json({ error: "Transaction already approved - no action needed" });
-    }
-    if (transaction.status === "failed") {
-      return res
-        .status(400)
-        .json({ error: "Transaction already failed/rejected" });
-    }
-
-    const previousStatus = transaction.status;
-    const user = await User.findById(transaction.user._id || transaction.user);
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    // Validate state transition
-    let newStatus;
     if (action === "approve") {
-      if (!WalletTransaction.isValidTransition(transaction.status, "success")) {
-        return res.status(400).json({
-          error: `Cannot transition from ${transaction.status} to success`,
-        });
-      }
-      newStatus = "success";
+      targetStatus = "success";
+      updateFields = {
+        status: "success",
+        description: "Wallet top-up (verified)",
+      };
     } else if (action === "reject") {
-      if (!WalletTransaction.isValidTransition(transaction.status, "failed")) {
-        return res.status(400).json({
-          error: `Cannot transition from ${transaction.status} to failed`,
-        });
-      }
-      newStatus = "failed";
+      targetStatus = "failed";
+      updateFields = {
+        status: "failed",
+        failureReason: reason || "Rejected by admin",
+      };
     } else if (action === "pending") {
-      if (!WalletTransaction.isValidTransition(transaction.status, "pending")) {
+      targetStatus = "pending";
+      updateFields = { status: "pending" };
+    }
+
+    // ATOMIC: Only update if status is still in allowed state
+    const updatedTransaction = await WalletTransaction.findOneAndUpdate(
+      {
+        _id: transactionId,
+        source: "topup",
+        status: { $in: allowedCurrentStatuses },
+      },
+      { $set: updateFields },
+      { new: true },
+    ).populate("user", "name email walletBalance");
+
+    // If null, transaction either doesn't exist or already processed
+    if (!updatedTransaction) {
+      // Check if it exists but was already processed
+      const existingTx = await WalletTransaction.findById(transactionId);
+      if (!existingTx) {
+        return res.status(404).json({ error: "Transaction not found" });
+      }
+      if (existingTx.source !== "topup") {
+        return res
+          .status(400)
+          .json({ error: "Only topup transactions can be verified" });
+      }
+      if (existingTx.status === "success") {
         return res.status(400).json({
-          error: `Cannot transition from ${transaction.status} to pending`,
+          error: "Transaction already approved - cannot process again",
+          alreadyProcessed: true,
         });
       }
-      newStatus = "pending";
+      if (existingTx.status === "failed") {
+        return res.status(400).json({
+          error: "Transaction already rejected/failed - cannot process again",
+          alreadyProcessed: true,
+        });
+      }
+      return res
+        .status(400)
+        .json({ error: "Transaction could not be updated" });
+    }
+
+    const previousStatus =
+      action === "approve" || action === "reject"
+        ? allowedCurrentStatuses.includes(updatedTransaction.status)
+          ? "initiated"
+          : updatedTransaction.status
+        : updatedTransaction.status;
+
+    const user = await User.findById(
+      updatedTransaction.user._id || updatedTransaction.user,
+    );
+    if (!user) {
+      // Rollback transaction status
+      await WalletTransaction.findByIdAndUpdate(transactionId, {
+        status: "initiated",
+      });
+      return res.status(404).json({ error: "User not found" });
     }
 
     // Process based on action
     if (action === "approve") {
-      // CRITICAL: This is the ONLY place topup balance changes
+      // CRITICAL: Credit wallet balance ONLY after atomic status update succeeded
       const updatedUser = await User.findByIdAndUpdate(
         user._id,
-        { $inc: { walletBalance: transaction.amount } },
+        { $inc: { walletBalance: updatedTransaction.amount } },
         { new: true },
       );
 
       if (!updatedUser) {
+        // Rollback transaction status
+        await WalletTransaction.findByIdAndUpdate(transactionId, {
+          status: "initiated",
+        });
         return res.status(500).json({ error: "Failed to update user balance" });
       }
 
-      transaction.status = "success";
-      transaction.balanceAfter = updatedUser.walletBalance;
-      transaction.description = "Wallet top-up (verified)";
-      await transaction.save();
+      // Update balanceAfter
+      await WalletTransaction.findByIdAndUpdate(transactionId, {
+        balanceAfter: updatedUser.walletBalance,
+      });
 
       // Log admin action
       await logAdminAction({
@@ -648,7 +724,10 @@ exports.adminVerifyTopup = async (req, res) => {
           balanceAfter: updatedUser.walletBalance,
         },
         reason: reason || "Topup verified and approved",
-        metadata: { amount: transaction.amount, userId: String(user._id) },
+        metadata: {
+          amount: updatedTransaction.amount,
+          userId: String(user._id),
+        },
       });
 
       // Notify user
@@ -656,7 +735,7 @@ exports.adminVerifyTopup = async (req, res) => {
         await sendNotification({
           userId: user._id,
           title: "Wallet Top-up Confirmed",
-          message: `Your top-up of $${transaction.amount.toFixed(2)} has been verified. New balance: $${updatedUser.walletBalance.toFixed(2)}`,
+          message: `Your top-up of $${updatedTransaction.amount.toFixed(2)} has been verified. New balance: $${updatedUser.walletBalance.toFixed(2)}`,
           type: "wallet",
         });
       } catch (notifErr) {
@@ -668,11 +747,11 @@ exports.adminVerifyTopup = async (req, res) => {
 
       res.json({
         success: true,
-        message: `Approved $${transaction.amount.toFixed(2)} topup for ${user.email}`,
+        message: `Approved $${updatedTransaction.amount.toFixed(2)} topup for ${user.email}`,
         transaction: {
-          _id: transaction._id,
+          _id: updatedTransaction._id,
           status: "success",
-          amount: transaction.amount,
+          amount: updatedTransaction.amount,
           balanceAfter: updatedUser.walletBalance,
         },
         user: {
@@ -683,10 +762,6 @@ exports.adminVerifyTopup = async (req, res) => {
         },
       });
     } else if (action === "reject") {
-      transaction.status = "failed";
-      transaction.failureReason = reason || "Rejected by admin";
-      await transaction.save();
-
       // Log admin action
       await logAdminAction({
         adminId: req.user?._id || req.user?.id,
@@ -697,7 +772,10 @@ exports.adminVerifyTopup = async (req, res) => {
         previousState: { status: previousStatus },
         newState: { status: "failed" },
         reason: reason || "Topup rejected",
-        metadata: { amount: transaction.amount, userId: String(user._id) },
+        metadata: {
+          amount: updatedTransaction.amount,
+          userId: String(user._id),
+        },
       });
 
       // Notify user
@@ -705,7 +783,7 @@ exports.adminVerifyTopup = async (req, res) => {
         await sendNotification({
           userId: user._id,
           title: "Wallet Top-up Failed",
-          message: `Your top-up request of $${transaction.amount.toFixed(2)} could not be processed. ${reason ? `Reason: ${reason}` : ""}`,
+          message: `Your top-up request of $${updatedTransaction.amount.toFixed(2)} could not be processed. ${reason ? `Reason: ${reason}` : ""}`,
           type: "wallet",
         });
       } catch (notifErr) {
@@ -719,23 +797,20 @@ exports.adminVerifyTopup = async (req, res) => {
         success: true,
         message: `Rejected topup request for ${user.email}`,
         transaction: {
-          _id: transaction._id,
+          _id: updatedTransaction._id,
           status: "failed",
-          amount: transaction.amount,
-          failureReason: transaction.failureReason,
+          amount: updatedTransaction.amount,
+          failureReason: reason || "Rejected by admin",
         },
       });
     } else if (action === "pending") {
-      transaction.status = "pending";
-      await transaction.save();
-
       res.json({
         success: true,
         message: `Marked topup as pending for ${user.email}`,
         transaction: {
-          _id: transaction._id,
+          _id: updatedTransaction._id,
           status: "pending",
-          amount: transaction.amount,
+          amount: updatedTransaction.amount,
         },
       });
     }
