@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 /**
  * PATCH_38: Project model for worker assignments
+ * PATCH_86: Added workPositionId - Projects MUST belong to a Job Role
  * Admin creates projects, assigns to ready workers, tracks completion and earnings
  */
 const projectSchema = new mongoose.Schema(
@@ -14,6 +15,13 @@ const projectSchema = new mongoose.Schema(
     description: {
       type: String,
       default: "",
+    },
+    // PATCH_86: Projects MUST belong to a Job Role
+    // This determines which workers are eligible (those who passed the job role's screening)
+    workPositionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "WorkPosition",
+      index: true,
     },
     category: {
       type: String,

@@ -1116,6 +1116,7 @@ exports.adminDeleteScreening = async (req, res) => {
 /**
  * POST /api/admin/workspace/projects
  * Create a new project
+ * PATCH_86: Projects MUST be linked to a Job Role
  */
 exports.adminCreateProject = async (req, res) => {
   try {
@@ -1132,12 +1133,26 @@ exports.adminCreateProject = async (req, res) => {
       screeningId,
       earnings,
       priority,
+      workPositionId, // PATCH_86: Job Role ID
     } = req.body;
+
+    // PATCH_86: Validate job role if provided
+    let jobRole = null;
+    if (workPositionId) {
+      const WorkPosition = require("../models/WorkPosition");
+      jobRole = await WorkPosition.findById(workPositionId);
+      if (!jobRole) {
+        return res.status(400).json({
+          message: "Invalid Job Role ID",
+          hint: "Select a valid job role for this project",
+        });
+      }
+    }
 
     const project = await Project.create({
       title,
       description,
-      category,
+      category: jobRole?.category || category, // Use job role's category if available
       instructions,
       deliverables,
       payRate: payRate || earnings || 0,
@@ -1146,7 +1161,8 @@ exports.adminCreateProject = async (req, res) => {
       deadline,
       status: "open",
       createdBy: req.user.id,
-      screeningId: screeningId || undefined,
+      screeningId: jobRole?.screeningId || screeningId || undefined, // Inherit from job role
+      workPositionId: workPositionId || undefined, // PATCH_86
       priority: priority || "medium",
     });
 
@@ -1172,17 +1188,20 @@ exports.adminCreateProject = async (req, res) => {
 /**
  * GET /api/admin/workspace/projects
  * Get all projects
+ * PATCH_86: Include job role info
  */
 exports.adminGetProjects = async (req, res) => {
   try {
-    const { status, category } = req.query;
+    const { status, category, workPositionId } = req.query;
 
     const filter = {};
     if (status) filter.status = status;
     if (category) filter.category = category;
+    if (workPositionId) filter.workPositionId = workPositionId; // PATCH_86
 
     const projects = await Project.find(filter)
-      .populate("assignedTo", "name email")
+      .populate("assignedTo", "name email firstName lastName")
+      .populate("workPositionId", "title category hasScreening") // PATCH_86
       .sort({ createdAt: -1 })
       .lean();
 
@@ -1196,14 +1215,18 @@ exports.adminGetProjects = async (req, res) => {
  * PUT /api/admin/workspace/project/:id/assign
  * Assign project to a worker
  * PATCH-64: Enhanced with category matching and guardrails
+ * PATCH_86: Enforce job role eligibility - worker must have passed screening
  */
 exports.adminAssignProject = async (req, res) => {
   try {
     const { logAdminAction } = require("../services/adminAudit.service");
     const { workerId } = req.body;
 
-    // Get project first to check category
-    const project = await Project.findById(req.params.id);
+    // Get project first to check category and job role
+    const project = await Project.findById(req.params.id).populate(
+      "workPositionId",
+      "screeningId hasScreening title",
+    );
     if (!project) {
       return res.status(404).json({ message: "Project not found" });
     }
@@ -1220,7 +1243,7 @@ exports.adminAssignProject = async (req, res) => {
     // Verify worker exists and is ready
     const worker = await ApplyWork.findById(workerId).populate(
       "position",
-      "category",
+      "category screeningId hasScreening _id title",
     );
     if (!worker) {
       return res.status(404).json({ message: "Worker not found" });
@@ -1236,6 +1259,54 @@ exports.adminAssignProject = async (req, res) => {
         currentStatus: worker.workerStatus,
         hint: "Worker must complete screening and be marked as ready_to_work",
       });
+    }
+
+    // PATCH_86: Enforce job role eligibility
+    if (project.workPositionId) {
+      const projectJobRoleId =
+        project.workPositionId._id?.toString() ||
+        project.workPositionId.toString();
+      const workerJobRoleId = worker.position?._id?.toString();
+
+      // Check worker is in the same job role
+      if (!workerJobRoleId || workerJobRoleId !== projectJobRoleId) {
+        return res.status(400).json({
+          message: "Worker is not eligible for this project",
+          reason: "Worker's job role does not match project's job role",
+          projectJobRole: project.workPositionId.title || projectJobRoleId,
+          workerJobRole: worker.position?.title || "None",
+          hint: "Only workers who applied for the same job role can be assigned",
+        });
+      }
+
+      // Check if job role requires screening and worker has passed it
+      const jobRole = project.workPositionId;
+      if (jobRole.hasScreening && jobRole.screeningId) {
+        const hasPassedScreening = worker.screeningsCompleted?.some(
+          (sc) =>
+            sc.screeningId?.toString() === jobRole.screeningId.toString(),
+        );
+
+        // Also check testsCompleted for legacy compatibility
+        const hasPassedTest = worker.testsCompleted?.some(
+          (tc) => tc.passed === true,
+        );
+
+        // If worker is ready_to_work, they must have passed (trust the status)
+        // Otherwise, require explicit proof
+        if (
+          !hasPassedScreening &&
+          !hasPassedTest &&
+          worker.workerStatus !== "ready_to_work"
+        ) {
+          return res.status(400).json({
+            message: "Worker has not passed required screening",
+            reason:
+              "This project requires workers who passed the job role's screening test",
+            hint: "Worker must complete and pass the screening test first",
+          });
+        }
+      }
     }
 
     // PATCH-64 GUARDRAIL: Category matching (warning, not blocking)
@@ -1563,6 +1634,86 @@ exports.adminDeleteProject = async (req, res) => {
   }
 };
 
+/**
+ * PATCH_86: GET /api/admin/workspace/project/:id/eligible-workers
+ * Get workers who are eligible to be assigned to this project
+ * Based on job role matching and screening completion
+ */
+exports.adminGetEligibleWorkers = async (req, res) => {
+  try {
+    const project = await Project.findById(req.params.id).populate(
+      "workPositionId",
+      "screeningId hasScreening title category",
+    );
+
+    if (!project) {
+      return res.status(404).json({ message: "Project not found" });
+    }
+
+    // Build worker filter
+    const workerFilter = {
+      workerStatus: { $in: ["ready_to_work", "assigned"] },
+    };
+
+    // If project has a job role, filter to workers with that job role
+    if (project.workPositionId) {
+      workerFilter.position = project.workPositionId._id;
+    }
+
+    // Get workers that match the filter
+    const workers = await ApplyWork.find(workerFilter)
+      .populate("user", "name email firstName lastName")
+      .populate("position", "title category")
+      .select(
+        "user position workerStatus screeningsCompleted testsCompleted totalEarnings",
+      )
+      .lean();
+
+    // Additional filter: If job role requires screening, only return workers who passed
+    let eligibleWorkers = workers;
+
+    if (project.workPositionId?.hasScreening && project.workPositionId?.screeningId) {
+      const requiredScreeningId = project.workPositionId.screeningId.toString();
+
+      eligibleWorkers = workers.filter((w) => {
+        // Check if worker passed the required screening
+        const hasPassedScreening = w.screeningsCompleted?.some(
+          (sc) => sc.screeningId?.toString() === requiredScreeningId,
+        );
+        const hasPassedTest = w.testsCompleted?.some((tc) => tc.passed === true);
+
+        // Workers with ready_to_work status are considered eligible
+        return hasPassedScreening || hasPassedTest || w.workerStatus === "ready_to_work";
+      });
+    }
+
+    res.json({
+      success: true,
+      project: {
+        _id: project._id,
+        title: project.title,
+        category: project.category,
+        workPositionId: project.workPositionId,
+      },
+      workers: eligibleWorkers.map((w) => ({
+        _id: w._id,
+        userId: w.user,
+        position: w.position,
+        workerStatus: w.workerStatus,
+        totalEarnings: w.totalEarnings || 0,
+      })),
+      eligibilityInfo: project.workPositionId
+        ? {
+            jobRole: project.workPositionId.title,
+            requiresScreening: project.workPositionId.hasScreening || false,
+          }
+        : { jobRole: null, requiresScreening: false },
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   getWorkspaceProfile: exports.getWorkspaceProfile,
   applyToJob: exports.applyToJob,
@@ -1592,6 +1743,7 @@ module.exports = {
   adminUpdateProject: exports.adminUpdateProject, // PATCH_65.1
   adminDeleteProject: exports.adminDeleteProject, // PATCH_65.1
   adminAssignProject: exports.adminAssignProject,
+  adminGetEligibleWorkers: exports.adminGetEligibleWorkers, // PATCH_86
   adminCreditEarnings: exports.adminCreditEarnings,
   adminAssignTask: exports.adminAssignTask,
 };
