@@ -1184,6 +1184,7 @@ exports.adminCreateProject = async (req, res) => {
       estimatedTasks,
       deadline,
       screeningId,
+      screeningIds, // PATCH_88: Multiple screenings
       earnings,
       priority,
       workPositionId, // PATCH_86: Job Role ID
@@ -1215,6 +1216,7 @@ exports.adminCreateProject = async (req, res) => {
       status: "open",
       createdBy: req.user.id,
       screeningId: jobRole?.screeningId || screeningId || undefined, // Inherit from job role
+      screeningIds: screeningIds || [], // PATCH_88: Multiple screenings
       workPositionId: workPositionId || undefined, // PATCH_86
       priority: priority || "medium",
     });
@@ -1255,6 +1257,8 @@ exports.adminGetProjects = async (req, res) => {
     const projects = await Project.find(filter)
       .populate("assignedTo", "name email firstName lastName")
       .populate("workPositionId", "title category hasScreening") // PATCH_86
+      .populate("screeningId", "title passingScore")
+      .populate("screeningIds", "title passingScore") // PATCH_88
       .sort({ createdAt: -1 })
       .lean();
 
@@ -1535,6 +1539,8 @@ exports.adminGetProjectById = async (req, res) => {
     const project = await Project.findById(req.params.id)
       .populate("assignedTo", "name email workerStatus")
       .populate("createdBy", "firstName lastName email")
+      .populate("screeningId", "title passingScore timeLimit")
+      .populate("screeningIds", "title passingScore timeLimit")
       .lean();
 
     if (!project) {
@@ -1591,6 +1597,7 @@ exports.adminUpdateProject = async (req, res) => {
       deadline,
       status,
       screeningId,
+      screeningIds, // PATCH_88: Multiple screenings
     } = req.body;
 
     const project = await Project.findById(req.params.id);
@@ -1610,6 +1617,7 @@ exports.adminUpdateProject = async (req, res) => {
     if (deadline) project.deadline = deadline;
     if (status) project.status = status;
     if (screeningId !== undefined) project.screeningId = screeningId;
+    if (screeningIds !== undefined) project.screeningIds = screeningIds; // PATCH_88
 
     project.updatedAt = new Date();
     await project.save();

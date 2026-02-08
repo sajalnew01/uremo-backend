@@ -630,9 +630,14 @@ exports.getJobProjects = async (req, res) => {
       return res.status(404).json({ ok: false, message: "Job role not found" });
     }
 
-    // Get projects in this category
-    const projects = await Project.find({ category: job.category })
+    // PATCH_88: Filter by workPositionId first, fallback to category
+    const filter = job._id
+      ? { $or: [{ workPositionId: job._id }, { category: job.category, workPositionId: { $exists: false } }] }
+      : { category: job.category };
+    const projects = await Project.find(filter)
       .populate("assignedTo", "name email")
+      .populate("screeningId", "title passingScore")
+      .populate("screeningIds", "title passingScore")
       .sort({ createdAt: -1 })
       .lean();
 
@@ -689,6 +694,8 @@ exports.createJobProject = async (req, res) => {
       deadline: deadline ? new Date(deadline) : undefined,
       status: "draft",
       createdBy: req.user.id,
+      workPositionId: id, // PATCH_88: Link project to job role
+      screeningId: job.screeningId || undefined, // Inherit job role screening
     });
 
     res.status(201).json({ ok: true, project, message: "Project created" });

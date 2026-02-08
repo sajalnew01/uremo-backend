@@ -74,6 +74,13 @@ const projectSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Screening",
     },
+    // PATCH_88: Multiple screening tests per project
+    screeningIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Screening",
+      },
+    ],
     // Status tracking
     status: {
       type: String,
