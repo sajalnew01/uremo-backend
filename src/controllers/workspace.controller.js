@@ -852,10 +852,63 @@ exports.adminGetWorkerById = async (req, res) => {
 /**
  * PUT /api/admin/workspace/worker/:id/status
  * Update worker status
+ * PATCH_87: State machine validation - only allow valid transitions
  */
 exports.adminUpdateWorkerStatus = async (req, res) => {
   try {
-    const { workerStatus, payRate, adminNotes } = req.body;
+    const { workerStatus, payRate, adminNotes, forceOverride } = req.body;
+
+    // PATCH_87: Define valid state transitions
+    const ALLOWED_TRANSITIONS = {
+      applied: ["screening_unlocked", "suspended"],
+      screening_unlocked: [
+        "training_viewed",
+        "test_submitted",
+        "ready_to_work",
+        "suspended",
+      ],
+      training_viewed: ["test_submitted", "ready_to_work", "suspended"],
+      test_submitted: [
+        "ready_to_work",
+        "screening_unlocked",
+        "failed",
+        "suspended",
+      ],
+      failed: ["screening_unlocked", "suspended"], // retry allowed
+      ready_to_work: ["assigned", "suspended"],
+      assigned: ["working", "ready_to_work", "suspended"],
+      working: ["ready_to_work", "suspended"],
+      suspended: ["ready_to_work", "screening_unlocked", "applied"],
+    };
+
+    // First, get the current worker state
+    const worker = await ApplyWork.findById(req.params.id);
+    if (!worker) {
+      return res.status(404).json({ message: "Worker not found" });
+    }
+
+    // PATCH_87: Validate state transition (unless forceOverride is set)
+    if (workerStatus && workerStatus !== worker.workerStatus) {
+      const currentStatus = worker.workerStatus || "applied";
+      const allowedNext = ALLOWED_TRANSITIONS[currentStatus] || [];
+
+      if (!allowedNext.includes(workerStatus) && !forceOverride) {
+        return res.status(400).json({
+          message: `Invalid transition: ${currentStatus} → ${workerStatus}. Allowed: ${allowedNext.join(", ")}`,
+          currentStatus,
+          requestedStatus: workerStatus,
+          allowedTransitions: allowedNext,
+          hint: "Use forceOverride=true to bypass (admin only)",
+        });
+      }
+
+      // Log if using force override
+      if (forceOverride && !allowedNext.includes(workerStatus)) {
+        console.log(
+          `[PATCH_87] ADMIN OVERRIDE: ${currentStatus} → ${workerStatus} by admin ${req.user.id}`,
+        );
+      }
+    }
 
     const update = {};
     if (workerStatus) update.workerStatus = workerStatus;
@@ -867,15 +920,15 @@ exports.adminUpdateWorkerStatus = async (req, res) => {
       update.approvedAt = new Date();
     }
 
-    const worker = await ApplyWork.findByIdAndUpdate(req.params.id, update, {
-      new: true,
-    }).populate("user", "name email");
+    const updatedWorker = await ApplyWork.findByIdAndUpdate(
+      req.params.id,
+      update,
+      {
+        new: true,
+      },
+    ).populate("user", "name email");
 
-    if (!worker) {
-      return res.status(404).json({ message: "Worker not found" });
-    }
-
-    res.json({ success: true, worker });
+    res.json({ success: true, worker: updatedWorker });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
