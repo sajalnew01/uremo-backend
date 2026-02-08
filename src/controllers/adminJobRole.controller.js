@@ -26,6 +26,7 @@ exports.getJobRole = async (req, res) => {
 
     const job = await WorkPosition.findById(id)
       .populate("screeningId", "title passingScore timeLimit")
+      .populate("screeningIds", "title passingScore timeLimit")
       .populate("serviceId", "title category")
       .lean();
 
@@ -134,16 +135,19 @@ exports.approveApplicant = async (req, res) => {
 
     // PATCH_57: Get the job position to check if it has screening
     const job = await WorkPosition.findById(id)
-      .select("title hasScreening screeningId")
+      .select("title hasScreening screeningId screeningIds")
       .lean();
 
     applicant.status = "approved";
     applicant.approvedBy = req.user.id;
     applicant.approvedAt = new Date();
 
-    // PATCH_57: Update workerStatus based on screening availability
-    // If position has screening test, unlock it; otherwise mark as ready_to_work
-    if (job?.hasScreening && job?.screeningId) {
+    // PATCH_89: Check both screeningId and screeningIds for screening requirement
+    const hasScreenings =
+      (job?.hasScreening && job?.screeningId) ||
+      (job?.screeningIds && job.screeningIds.length > 0);
+
+    if (hasScreenings) {
       applicant.workerStatus = "screening_unlocked";
     } else {
       // No screening required - worker is ready to work immediately
@@ -323,7 +327,7 @@ exports.setTraining = async (req, res) => {
 exports.setScreening = async (req, res) => {
   try {
     const { id } = req.params;
-    const { screeningId } = req.body;
+    const { screeningId, screeningIds } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ ok: false, message: "Invalid job ID" });
@@ -334,9 +338,25 @@ exports.setScreening = async (req, res) => {
       return res.status(404).json({ ok: false, message: "Job role not found" });
     }
 
-    let attachedScreeningId = null;
+    // PATCH_89: Support multiple screeningIds
+    const update = {};
 
-    if (screeningId) {
+    if (Array.isArray(screeningIds) && screeningIds.length > 0) {
+      // Validate all IDs
+      const validIds = screeningIds.filter((sid) =>
+        mongoose.Types.ObjectId.isValid(sid),
+      );
+      const existingScreenings = await Screening.find({
+        _id: { $in: validIds },
+      })
+        .select("_id")
+        .lean();
+      const existingIds = existingScreenings.map((s) => s._id.toString());
+
+      update.screeningIds = existingIds;
+      update.screeningId = existingIds[0] || null;
+      update.hasScreening = existingIds.length > 0;
+    } else if (screeningId) {
       if (!mongoose.Types.ObjectId.isValid(screeningId)) {
         return res
           .status(400)
@@ -352,24 +372,27 @@ exports.setScreening = async (req, res) => {
           .json({ ok: false, message: "Screening not found" });
       }
 
-      attachedScreeningId = screeningId;
+      update.screeningId = screeningId;
+      update.screeningIds = [screeningId];
+      update.hasScreening = true;
+    } else {
+      // Clear all screenings
+      update.screeningId = null;
+      update.screeningIds = [];
+      update.hasScreening = false;
     }
-
-    // Update job with screening reference
-    const update = {
-      hasScreening: Boolean(attachedScreeningId),
-      screeningId: attachedScreeningId || null,
-    };
 
     const updatedJob = await WorkPosition.findByIdAndUpdate(id, update, {
       new: true,
-    }).populate("screeningId", "title passingScore timeLimit questions");
+    })
+      .populate("screeningId", "title passingScore timeLimit questions")
+      .populate("screeningIds", "title passingScore timeLimit");
 
     res.json({
       ok: true,
-      message: attachedScreeningId
-        ? "Screening attached to job role"
-        : "Screening cleared from job role",
+      message: update.hasScreening
+        ? `${(update.screeningIds || []).length} screening(s) attached to job role`
+        : "Screenings cleared from job role",
       job: updatedJob,
     });
   } catch (err) {
@@ -632,7 +655,12 @@ exports.getJobProjects = async (req, res) => {
 
     // PATCH_88: Filter by workPositionId first, fallback to category
     const filter = job._id
-      ? { $or: [{ workPositionId: job._id }, { category: job.category, workPositionId: { $exists: false } }] }
+      ? {
+          $or: [
+            { workPositionId: job._id },
+            { category: job.category, workPositionId: { $exists: false } },
+          ],
+        }
       : { category: job.category };
     const projects = await Project.find(filter)
       .populate("assignedTo", "name email")

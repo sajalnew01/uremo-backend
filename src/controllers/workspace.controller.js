@@ -20,7 +20,7 @@ exports.getWorkspaceProfile = async (req, res) => {
     const applications = await ApplyWork.find({ user: req.user.id })
       .populate(
         "position",
-        "_id title category description trainingMaterials hasScreening screeningId",
+        "_id title category description trainingMaterials hasScreening screeningId screeningIds",
       )
       .populate("currentProject", "title status payRate payType")
       .sort({ createdAt: -1 })
@@ -38,13 +38,31 @@ exports.getWorkspaceProfile = async (req, res) => {
     const enrichedApplications = await Promise.all(
       applications.map(async (app) => {
         // Get screening for this position if exists
+        // PATCH_89: Support multiple screenings via screeningIds
         let screening = null;
-        if (app.position?.screeningId) {
+        let requiredScreenings = [];
+
+        if (
+          app.position?.screeningIds &&
+          app.position.screeningIds.length > 0
+        ) {
+          // Multi-screening: load all required screenings
+          requiredScreenings = await Screening.find({
+            _id: { $in: app.position.screeningIds },
+          })
+            .select(
+              "title description timeLimit passingScore trainingMaterials",
+            )
+            .lean();
+          // Keep backward compat — first screening as primary
+          screening = requiredScreenings[0] || null;
+        } else if (app.position?.screeningId) {
           screening = await Screening.findById(app.position.screeningId)
             .select(
               "title description timeLimit passingScore trainingMaterials",
             )
             .lean();
+          if (screening) requiredScreenings = [screening];
         } else if (app.position?.category) {
           // Fallback: find screening by category
           screening = await Screening.findOne({
@@ -55,6 +73,7 @@ exports.getWorkspaceProfile = async (req, res) => {
               "title description timeLimit passingScore trainingMaterials",
             )
             .lean();
+          if (screening) requiredScreenings = [screening];
         }
 
         // Get assigned projects for this application
@@ -93,6 +112,7 @@ exports.getWorkspaceProfile = async (req, res) => {
           pendingEarnings: app.pendingEarnings || 0,
           payRate: app.payRate || 0,
           screening,
+          requiredScreenings,
           trainingMaterials: app.position?.trainingMaterials || [],
           assignedProjects,
           completedProjects,
@@ -404,8 +424,32 @@ exports.submitScreening = async (req, res) => {
 
     // PATCH_43: Worker status flow based on pass/fail
     if (passed) {
-      // Passed - move to ready_to_work
-      profile.workerStatus = "ready_to_work";
+      // PATCH_89: Check if ALL required screenings are completed before marking ready_to_work
+      const jobRole = await WorkPosition.findById(profile.position)
+        .select("screeningIds screeningId hasScreening")
+        .lean();
+
+      const requiredIds = (jobRole?.screeningIds || []).map((id) =>
+        id.toString(),
+      );
+
+      if (requiredIds.length > 1) {
+        // Multiple screenings required — check all passed
+        const passedIds = (profile.screeningsCompleted || [])
+          .filter((sc) => sc.passed !== false)
+          .map((sc) => sc.screeningId?.toString());
+
+        const allPassed = requiredIds.every((rid) => passedIds.includes(rid));
+        if (allPassed) {
+          profile.workerStatus = "ready_to_work";
+        } else {
+          // More screenings remain — keep at screening_unlocked so user can take next
+          profile.workerStatus = "screening_unlocked";
+        }
+      } else {
+        // Single or no screening required — original behavior
+        profile.workerStatus = "ready_to_work";
+      }
     } else {
       // Failed
       if (profile.attemptCount < maxAttempts) {
@@ -1340,8 +1384,7 @@ exports.adminAssignProject = async (req, res) => {
       const jobRole = project.workPositionId;
       if (jobRole.hasScreening && jobRole.screeningId) {
         const hasPassedScreening = worker.screeningsCompleted?.some(
-          (sc) =>
-            sc.screeningId?.toString() === jobRole.screeningId.toString(),
+          (sc) => sc.screeningId?.toString() === jobRole.screeningId.toString(),
         );
 
         // Also check testsCompleted for legacy compatibility
@@ -1361,6 +1404,31 @@ exports.adminAssignProject = async (req, res) => {
             reason:
               "This project requires workers who passed the job role's screening test",
             hint: "Worker must complete and pass the screening test first",
+          });
+        }
+      }
+
+      // PATCH_89: Check project-level screeningIds
+      if (project.screeningIds && project.screeningIds.length > 0) {
+        const requiredProjectScreenings = project.screeningIds.map((sid) =>
+          sid.toString(),
+        );
+        const passedScreenings = (worker.screeningsCompleted || [])
+          .filter((sc) => sc.passed !== false)
+          .map((sc) => sc.screeningId?.toString());
+
+        const missingScreenings = requiredProjectScreenings.filter(
+          (rid) => !passedScreenings.includes(rid),
+        );
+
+        if (
+          missingScreenings.length > 0 &&
+          worker.workerStatus !== "ready_to_work"
+        ) {
+          return res.status(400).json({
+            message: "Worker has not passed all project-required screenings",
+            reason: `Missing ${missingScreenings.length} screening(s)`,
+            hint: "Worker must pass all screening tests linked to this project",
           });
         }
       }
@@ -1733,7 +1801,10 @@ exports.adminGetEligibleWorkers = async (req, res) => {
     // Additional filter: If job role requires screening, only return workers who passed
     let eligibleWorkers = workers;
 
-    if (project.workPositionId?.hasScreening && project.workPositionId?.screeningId) {
+    if (
+      project.workPositionId?.hasScreening &&
+      project.workPositionId?.screeningId
+    ) {
       const requiredScreeningId = project.workPositionId.screeningId.toString();
 
       eligibleWorkers = workers.filter((w) => {
@@ -1741,10 +1812,32 @@ exports.adminGetEligibleWorkers = async (req, res) => {
         const hasPassedScreening = w.screeningsCompleted?.some(
           (sc) => sc.screeningId?.toString() === requiredScreeningId,
         );
-        const hasPassedTest = w.testsCompleted?.some((tc) => tc.passed === true);
+        const hasPassedTest = w.testsCompleted?.some(
+          (tc) => tc.passed === true,
+        );
 
         // Workers with ready_to_work status are considered eligible
-        return hasPassedScreening || hasPassedTest || w.workerStatus === "ready_to_work";
+        return (
+          hasPassedScreening ||
+          hasPassedTest ||
+          w.workerStatus === "ready_to_work"
+        );
+      });
+    }
+
+    // PATCH_89: Also check project-level screeningIds
+    if (project.screeningIds && project.screeningIds.length > 0) {
+      const requiredProjectScreenings = project.screeningIds.map((sid) =>
+        sid.toString(),
+      );
+      eligibleWorkers = eligibleWorkers.filter((w) => {
+        if (w.workerStatus === "ready_to_work") return true; // Trust status
+        const passedIds = (w.screeningsCompleted || [])
+          .filter((sc) => sc.passed !== false)
+          .map((sc) => sc.screeningId?.toString());
+        return requiredProjectScreenings.every((rid) =>
+          passedIds.includes(rid),
+        );
       });
     }
 

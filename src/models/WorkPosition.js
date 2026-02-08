@@ -45,6 +45,13 @@ const workPositionSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Screening",
     },
+    // PATCH_89: Multiple screenings per job role
+    screeningIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Screening",
+      },
+    ],
     // PATCH_43: Training materials attached to job role
     trainingMaterials: [
       {
