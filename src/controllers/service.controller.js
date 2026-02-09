@@ -801,12 +801,12 @@ exports.getWorkspaceServices = async (req, res) => {
   }
 };
 
-// PATCH_38: Deal portal guard (banks_wallets + crypto_accounts only)
+// PATCH_75: Deal portal guard - filter by allowedActions.deal === true
 exports.getDealPortalServices = async (req, res) => {
   try {
     setNoCache(res);
 
-    // Fetch a superset then filter by effective category.
+    // Fetch active services
     const raw = await Service.find({ status: "active" })
       .select(
         "title slug description price currency imageUrl images category subcategory allowedActions updatedAt active status",
@@ -814,18 +814,19 @@ exports.getDealPortalServices = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
+    // Filter by allowedActions.deal === true (not just by category)
     const services = (raw || [])
-      .filter((s) => {
-        const effective = getEffectiveCategoryFromService(s);
-        return effective === "banks_wallets" || effective === "crypto_accounts";
-      })
       .map((s) => ({
         ...s,
         allowedActions:
           s.allowedActions && typeof s.allowedActions === "object"
             ? s.allowedActions
             : getAllowedActionsForService(s),
-      }));
+      }))
+      .filter((s) => {
+        // Only return services that explicitly allow deals
+        return s.allowedActions?.deal === true && s.active !== false;
+      });
 
     res.json({ ok: true, services });
   } catch (err) {
