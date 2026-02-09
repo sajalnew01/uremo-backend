@@ -701,8 +701,8 @@ exports.adminGetWorkers = async (req, res) => {
 
     const total = await ApplyWork.countDocuments(filter);
     const workers = await ApplyWork.find(filter)
-      .populate("user", "name email")
-      .populate("position", "title")
+      .populate("user", "name email firstName lastName")
+      .populate("position", "title category")
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(parseInt(limit))
@@ -720,8 +720,65 @@ exports.adminGetWorkers = async (req, res) => {
       workerStatus: { $in: ["assigned", "working"] },
     });
 
+    // PATCH_90: Transform workers to include proper userId structure with firstName/lastName
+    const transformedWorkers = workers.map((w) => {
+      // Handle user name - multiple strategies for robustness
+      let firstName = "";
+      let lastName = "";
+      let email = w.user?.email || "";
+      let fullName = "";
+
+      if (w.user) {
+        // Strategy 1: Use existing firstName/lastName if available
+        if (w.user.firstName || w.user.lastName) {
+          firstName = w.user.firstName || "";
+          lastName = w.user.lastName || "";
+          fullName = `${firstName} ${lastName}`.trim();
+        }
+        // Strategy 2: Split name field if available
+        else if (w.user.name && w.user.name.trim()) {
+          const nameParts = w.user.name.trim().split(" ");
+          firstName = nameParts[0] || "";
+          lastName = nameParts.slice(1).join(" ") || "";
+          fullName = w.user.name.trim();
+        }
+        // Strategy 3: Use email username as firstName
+        else if (email) {
+          firstName = email.split("@")[0];
+          fullName = firstName;
+        }
+      }
+
+      return {
+        ...w,
+        userId: w.user
+          ? {
+              _id: w.user._id,
+              firstName: firstName,
+              lastName: lastName,
+              email: email,
+              name: fullName || firstName || email || "Unknown", // Include consolidated name
+            }
+          : {
+              _id: null,
+              firstName: "Unknown",
+              lastName: "Worker",
+              email: "No email",
+              name: "Unknown Worker",
+            },
+        jobId: w.position
+          ? {
+              _id: w.position._id,
+              title: w.position.title,
+              category: w.position.category,
+            }
+          : null,
+        positionTitle: w.position?.title || w.positionTitle || "No Position",
+      };
+    });
+
     res.json({
-      workers,
+      workers: transformedWorkers,
       total,
       page: parseInt(page),
       pages: Math.ceil(total / limit),
