@@ -123,7 +123,7 @@ exports.getWorkspaceProfile = async (req, res) => {
     );
 
     // Calculate aggregate stats
-    const totalEarnings = enrichedApplications.reduce(
+    const workEarnings = enrichedApplications.reduce(
       (sum, a) => sum + (a.totalEarnings || 0),
       0,
     );
@@ -136,11 +136,20 @@ exports.getWorkspaceProfile = async (req, res) => {
       0,
     );
 
+    // PATCH_76: Include affiliate earnings from User model
+    const userDoc = await User.findById(req.user.id).select(
+      "totalAffiliateEarned affiliateBalance",
+    );
+    const affiliateEarnings = userDoc?.totalAffiliateEarned || 0;
+    const totalEarnings = workEarnings + affiliateEarnings;
+
     res.json({
       hasProfile: true,
       applications: enrichedApplications,
       stats: {
         totalEarnings,
+        workEarnings,
+        affiliateEarnings,
         pendingEarnings,
         projectsCompleted,
         jobsApplied: enrichedApplications.length,
