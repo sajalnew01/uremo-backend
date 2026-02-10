@@ -316,12 +316,24 @@ async function handleConnection(socket) {
     try {
       const senderRole = isAdmin ? "admin" : "user";
 
+      // PATCH_91: Validate and include attachments from socket payload
+      const attachments = Array.isArray(data?.attachments)
+        ? data.attachments.filter(
+            (att) =>
+              att &&
+              typeof att.url === "string" &&
+              typeof att.filename === "string" &&
+              typeof att.fileType === "string",
+          )
+        : [];
+
       const created = await OrderMessage.create({
         orderId,
         senderId: userId,
         userId: userId,
         senderRole,
         message: messageText,
+        attachments,
         status: "sent",
         createdAt: new Date(),
       });
@@ -463,6 +475,8 @@ function normalizeMessage(msg) {
     senderId: msg.senderId,
     senderRole: msg.senderRole,
     message: msg.message,
+    // PATCH_91: Include attachments in broadcast so both user and admin see them
+    attachments: msg.attachments || [],
     status: msg.status || "sent",
     createdAt: msg.createdAt,
     deliveredAt: msg.deliveredAt || null,
