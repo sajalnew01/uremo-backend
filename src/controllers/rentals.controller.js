@@ -111,7 +111,7 @@ exports.createRentalOrder = async (req, res) => {
     if (!allowed.rent) {
       return res
         .status(403)
-        .json({ ok: false, message: "Rent is not allowed for this service" });
+        .json({ ok: false, error: "RENT_NOT_ALLOWED", message: "Rentals are not available for this service" });
     }
 
     if (!service.isRental) {

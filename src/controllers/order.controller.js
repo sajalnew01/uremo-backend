@@ -46,7 +46,7 @@ exports.createOrder = async (req, res) => {
     if (!allowed.buy) {
       return res
         .status(403)
-        .json({ message: "Buying is not allowed for this service" });
+        .json({ ok: false, error: "BUY_NOT_ALLOWED", message: "Buying is not available for this service" });
     }
 
     const order = await Order.create({
@@ -119,7 +119,7 @@ exports.createDealOrder = async (req, res) => {
     if (!allowed.deal) {
       return res
         .status(403)
-        .json({ message: "Deal is not allowed for this service" });
+        .json({ ok: false, error: "DEAL_NOT_ALLOWED", message: "Deals are not available for this service" });
     }
 
     // Extra safety: forex must never be eligible
@@ -127,7 +127,7 @@ exports.createDealOrder = async (req, res) => {
     if (effectiveCategory === "forex_accounts") {
       return res
         .status(403)
-        .json({ message: "Deal is not allowed for forex services" });
+        .json({ ok: false, error: "DEAL_NOT_ALLOWED", message: "Deals are not available for forex services" });
     }
 
     const pct = Number(dealPercent);
