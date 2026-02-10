@@ -245,7 +245,8 @@ exports.getOrderById = async (req, res) => {
 
     const order = await Order.findById(id)
       .populate("serviceId", "title price")
-      .populate("payment.methodId");
+      .populate("payment.methodId")
+      .populate("rentalId", "rentalType duration price startDate endDate status daysRemaining accessDetails");
 
     if (!order) {
       return res.status(404).json({ message: "Order not found" });

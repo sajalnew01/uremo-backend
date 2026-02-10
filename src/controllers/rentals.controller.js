@@ -84,7 +84,7 @@ exports.createRentalOrder = async (req, res) => {
         .json({ ok: false, message: "Authentication required" });
     }
 
-    const { serviceId, planIndex } = req.body;
+    const { serviceId, planIndex, country } = req.body;
 
     if (!serviceId) {
       return res
@@ -111,7 +111,11 @@ exports.createRentalOrder = async (req, res) => {
     if (!allowed.rent) {
       return res
         .status(403)
-        .json({ ok: false, error: "RENT_NOT_ALLOWED", message: "Rentals are not available for this service" });
+        .json({
+          ok: false,
+          error: "RENT_NOT_ALLOWED",
+          message: "Rentals are not available for this service",
+        });
     }
 
     if (!service.isRental) {
@@ -168,6 +172,7 @@ exports.createRentalOrder = async (req, res) => {
       serviceId,
       status: "pending",
       orderType: "rental",
+      country: country || null,
       notes: `Rental: ${plan.duration} ${plan.unit} - ${service.title}`,
       statusLog: [{ text: "Rental order created", at: new Date() }],
     });
@@ -193,6 +198,10 @@ exports.createRentalOrder = async (req, res) => {
         },
       ],
     });
+
+    // PATCH_92: Store rentalId back on order for cross-reference
+    order.rentalId = rental._id;
+    await order.save();
 
     res.status(201).json({
       ok: true,

@@ -40,6 +40,19 @@ const orderSchema = new mongoose.Schema(
       max: 100,
     },
 
+    // PATCH_92: Link back to Rental record for rental orders
+    rentalId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Rental",
+      default: null,
+    },
+
+    // PATCH_92: Country for rental/deal orders
+    country: {
+      type: String,
+      default: null,
+    },
+
     // Draft orders (pending) can expire automatically (cleanup job can remove them later)
     expiresAt: {
       type: Date,
