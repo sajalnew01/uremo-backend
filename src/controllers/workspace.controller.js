@@ -1226,12 +1226,10 @@ exports.adminUpdateScreening = async (req, res) => {
       active,
     };
     // PATCH_90: Include hybrid rubric fields if provided
-    if (evaluationMode !== undefined)
-      updateData.evaluationMode = evaluationMode;
+    if (evaluationMode !== undefined) updateData.evaluationMode = evaluationMode;
     if (rubric !== undefined) updateData.rubric = rubric;
     if (passThreshold !== undefined) updateData.passThreshold = passThreshold;
-    if (autoValidationRules !== undefined)
-      updateData.autoValidationRules = autoValidationRules;
+    if (autoValidationRules !== undefined) updateData.autoValidationRules = autoValidationRules;
 
     const screening = await Screening.findByIdAndUpdate(
       req.params.id,
@@ -1295,6 +1293,8 @@ exports.adminDeleteScreening = async (req, res) => {
 };
 
 /**
+ * POST /api/admin/workspace/projects
+ * Create a new project
  * PATCH_90: GET /api/admin/workspace/screening-submissions
  * Get all pending screening submissions for admin review
  */
@@ -1317,9 +1317,7 @@ exports.adminGetScreeningSubmissions = async (req, res) => {
         if (sc.submissionStatus === filterStatus) {
           // Load screening details
           const screening = await Screening.findById(sc.screeningId)
-            .select(
-              "title category evaluationMode rubric passThreshold questions",
-            )
+            .select("title category evaluationMode rubric passThreshold questions")
             .lean();
 
           submissions.push({
@@ -1328,8 +1326,7 @@ exports.adminGetScreeningSubmissions = async (req, res) => {
             workerName: worker.user?.name || "Unknown",
             workerEmail: worker.user?.email || "",
             positionTitle: worker.position?.title || worker.positionTitle || "",
-            positionCategory:
-              worker.position?.category || worker.category || "",
+            positionCategory: worker.position?.category || worker.category || "",
             workerStatus: worker.workerStatus,
             screeningId: sc.screeningId,
             screeningTitle: screening?.title || "Unknown Screening",
@@ -1378,10 +1375,17 @@ exports.adminReviewScreeningSubmission = async (req, res) => {
     const { screeningId, action, adminScore, rubricBreakdown } = req.body;
     // action: "approve" | "reject"
 
+    // PATCH_90: Validate ObjectId format
+    const mongoose = require("mongoose");
+    if (!mongoose.Types.ObjectId.isValid(workerId)) {
+      return res.status(400).json({ message: "Invalid worker ID format" });
+    }
+    if (!screeningId || !mongoose.Types.ObjectId.isValid(screeningId)) {
+      return res.status(400).json({ message: "Invalid or missing screening ID" });
+    }
+
     if (!["approve", "reject"].includes(action)) {
-      return res
-        .status(400)
-        .json({ message: "Invalid action. Use 'approve' or 'reject'." });
+      return res.status(400).json({ message: "Invalid action. Use 'approve' or 'reject'." });
     }
 
     const profile = await ApplyWork.findById(workerId);
@@ -1418,10 +1422,7 @@ exports.adminReviewScreeningSubmission = async (req, res) => {
       submission.passed = true;
 
       // PATCH_90: Apply quality score impact
-      applyScreeningQualityImpact(
-        profile,
-        submission.autoScore || submission.score || 0,
-      );
+      applyScreeningQualityImpact(profile, submission.autoScore || submission.score || 0);
 
       // Check if ALL required screenings passed
       const jobRole = await WorkPosition.findById(profile.position)
@@ -1433,9 +1434,7 @@ exports.adminReviewScreeningSubmission = async (req, res) => {
       );
 
       const allPassedIds = (profile.screeningsCompleted || [])
-        .filter(
-          (sc) => sc.passed === true || sc.submissionStatus === "approved",
-        )
+        .filter((sc) => sc.passed === true || sc.submissionStatus === "approved")
         .map((sc) => sc.screeningId?.toString());
 
       if (requiredIds.length > 1) {
@@ -1504,8 +1503,6 @@ exports.adminReviewScreeningSubmission = async (req, res) => {
 };
 
 /**
- * POST /api/admin/workspace/projects
- * Create a new project
  * PATCH_86: Projects MUST be linked to a Job Role
  */
 exports.adminCreateProject = async (req, res) => {
@@ -2184,8 +2181,6 @@ module.exports = {
   adminUpdateScreening: exports.adminUpdateScreening,
   adminCloneScreening: exports.adminCloneScreening,
   adminDeleteScreening: exports.adminDeleteScreening,
-  adminGetScreeningSubmissions: exports.adminGetScreeningSubmissions, // PATCH_90
-  adminReviewScreeningSubmission: exports.adminReviewScreeningSubmission, // PATCH_90
   adminCreateProject: exports.adminCreateProject,
   adminGetProjects: exports.adminGetProjects,
   adminGetProjectById: exports.adminGetProjectById, // PATCH_65.1
@@ -2196,3 +2191,6 @@ module.exports = {
   adminCreditEarnings: exports.adminCreditEarnings,
   adminAssignTask: exports.adminAssignTask,
 };
+GetScreeningSubmissions: exports.adminGetScreeningSubmissions, // PATCH_90
+  adminReviewScreeningSubmission: exports.adminReviewScreeningSubmission, // PATCH_90
+  admin
