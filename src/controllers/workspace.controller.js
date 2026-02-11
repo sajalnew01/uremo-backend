@@ -2,12 +2,17 @@
  * PATCH_38/43: Workspace Controller
  * Handles worker status flow, screenings, projects, and earnings
  * PATCH_43: Multi-job support, new worker journey states
+ * PATCH_90: Hybrid rubric engine integration
  */
 const ApplyWork = require("../models/ApplyWork");
 const Screening = require("../models/Screening");
 const Project = require("../models/Project");
 const User = require("../models/User");
 const WorkPosition = require("../models/WorkPosition");
+const {
+  runAutoValidation,
+  applyScreeningQualityImpact,
+} = require("../utils/screeningEngine");
 
 /**
  * PATCH_43: GET /api/workspace/profile
@@ -311,8 +316,9 @@ exports.getScreening = async (req, res) => {
 };
 
 /**
- * PATCH_43: POST /api/workspace/screening/:id/submit
- * Submit screening answers with retry logic
+ * PATCH_43 + PATCH_90: POST /api/workspace/screening/:id/submit
+ * Submit screening answers with hybrid rubric engine
+ * Auto-validation layer → autoScore/autoPass → pending_review for hybrid/manual
  */
 exports.submitScreening = async (req, res) => {
   try {
@@ -324,16 +330,12 @@ exports.submitScreening = async (req, res) => {
     }
 
     // PATCH_43 + PATCH_57: Find the correct worker profile (for multi-job support)
-    // The positionId from frontend is actually the ApplyWork._id (the application ID)
     let profile;
     if (positionId) {
-      // First try to find by ApplyWork._id (the application record itself)
       profile = await ApplyWork.findOne({
         _id: positionId,
         user: req.user.id,
       });
-
-      // Fallback: try to find by position field (WorkPosition ID) for backwards compat
       if (!profile) {
         profile = await ApplyWork.findOne({
           user: req.user.id,
@@ -341,7 +343,6 @@ exports.submitScreening = async (req, res) => {
         });
       }
     } else {
-      // Fallback to first profile for backwards compat
       profile = await ApplyWork.findOne({ user: req.user.id });
     }
 
@@ -354,7 +355,6 @@ exports.submitScreening = async (req, res) => {
     }
 
     // PATCH_43 + PATCH_49: Check if worker is allowed to take screening
-    // Allow both "screening_unlocked" (legacy) and "training_viewed" (PATCH_49 flow)
     const allowedStatuses = ["screening_unlocked", "training_viewed"];
     if (!allowedStatuses.includes(profile.workerStatus)) {
       return res.status(400).json({
@@ -362,133 +362,127 @@ exports.submitScreening = async (req, res) => {
       });
     }
 
-    // Calculate score
-    let totalPoints = 0;
-    let earnedPoints = 0;
+    // PATCH_90: Run hybrid auto-validation engine
+    const {
+      autoScore,
+      autoPass,
+      validationFlags,
+      rubricBreakdown,
+      submissionStatus,
+    } = runAutoValidation(screening, answers);
 
-    const normalizeCorrectAnswers = (question) => {
-      if (
-        Array.isArray(question.correctAnswers) &&
-        question.correctAnswers.length
-      ) {
-        return question.correctAnswers.map(String);
-      }
-      if (
-        question.correctAnswer !== undefined &&
-        question.correctAnswer !== null
-      ) {
-        if (typeof question.correctAnswer === "number") {
-          const opt = question.options?.[question.correctAnswer];
-          return opt ? [String(opt)] : [];
-        }
-        return [String(question.correctAnswer)];
-      }
-      return [];
-    };
-
-    screening.questions.forEach((q, idx) => {
-      totalPoints += q.points || 1;
-
-      const questionType = q.type || "single";
-      const correctAnswers = normalizeCorrectAnswers(q);
-      const answer = answers[idx];
-
-      if (questionType === "single" || questionType === "multiple_choice") {
-        if (String(answer || "") === String(correctAnswers[0] || "")) {
-          earnedPoints += q.points || 1;
-        }
-      } else if (questionType === "multi") {
-        const given = Array.isArray(answer) ? answer.map(String) : [];
-        const expected = [...new Set(correctAnswers.map(String))].sort();
-        const actual = [...new Set(given.map(String))].sort();
-        if (
-          expected.length > 0 &&
-          expected.length === actual.length &&
-          expected.every((v, i) => v === actual[i])
-        ) {
-          earnedPoints += q.points || 1;
-        }
-      } else if (questionType === "text" || questionType === "file_upload") {
-        // Text/file answers need manual review - give partial credit
-        earnedPoints += (q.points || 1) * 0.5;
-      }
-    });
-
-    const score =
-      totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
-    const passed = score >= (screening.passingScore || 70);
+    // Use autoScore as the displayed score
+    const score = autoScore;
+    const evaluationMode = screening.evaluationMode || "hybrid";
 
     // PATCH_43: Update attempt count
     profile.attemptCount = (profile.attemptCount || 0) + 1;
     const maxAttempts = profile.maxAttempts || 2;
 
-    // Add to completed screenings
+    // Build screening completion record
     profile.screeningsCompleted = profile.screeningsCompleted || [];
-    profile.screeningsCompleted.push({
+    const completionRecord = {
       screeningId: screening._id,
       completedAt: new Date(),
       score,
-      passed,
-    });
+      passed: null, // will be set below
+      autoScore,
+      autoPass,
+      submissionStatus,
+      rubricBreakdown,
+      validationFlags,
+      adminReviewedBy: null,
+      adminReviewedAt: null,
+      adminScore: null,
+      answers: answers,
+    };
 
-    // PATCH_43: Worker status flow based on pass/fail
-    if (passed) {
-      // PATCH_89: Check if ALL required screenings are completed before marking ready_to_work
-      const jobRole = await WorkPosition.findById(profile.position)
-        .select("screeningIds screeningId hasScreening")
-        .lean();
+    // PATCH_90: Determine worker status based on evaluation mode
+    if (evaluationMode === "auto") {
+      // Pure auto: same as old behavior
+      completionRecord.passed = autoPass;
+      completionRecord.submissionStatus = autoPass ? "approved" : "auto_graded";
 
-      const requiredIds = (jobRole?.screeningIds || []).map((id) =>
-        id.toString(),
-      );
+      if (autoPass) {
+        // Check multi-screening requirement
+        const jobRole = await WorkPosition.findById(profile.position)
+          .select("screeningIds screeningId hasScreening")
+          .lean();
+        const requiredIds = (jobRole?.screeningIds || []).map((id) =>
+          id.toString(),
+        );
 
-      if (requiredIds.length > 1) {
-        // Multiple screenings required — check all passed
-        const passedIds = (profile.screeningsCompleted || [])
-          .filter((sc) => sc.passed !== false)
-          .map((sc) => sc.screeningId?.toString());
+        // Add current to completed list for checking
+        const allPassedIds = [
+          ...(profile.screeningsCompleted || [])
+            .filter((sc) => sc.passed !== false)
+            .map((sc) => sc.screeningId?.toString()),
+          screening._id.toString(),
+        ];
 
-        const allPassed = requiredIds.every((rid) => passedIds.includes(rid));
-        if (allPassed) {
-          profile.workerStatus = "ready_to_work";
+        if (requiredIds.length > 1) {
+          const allPassed = requiredIds.every((rid) =>
+            allPassedIds.includes(rid),
+          );
+          profile.workerStatus = allPassed
+            ? "ready_to_work"
+            : "screening_unlocked";
         } else {
-          // More screenings remain — keep at screening_unlocked so user can take next
-          profile.workerStatus = "screening_unlocked";
+          profile.workerStatus = "ready_to_work";
         }
+
+        // PATCH_90: Apply quality score impact on auto-pass
+        applyScreeningQualityImpact(profile, autoScore);
       } else {
-        // Single or no screening required — original behavior
-        profile.workerStatus = "ready_to_work";
+        if (profile.attemptCount < maxAttempts) {
+          profile.workerStatus = "screening_unlocked";
+        } else {
+          profile.workerStatus = "failed";
+        }
       }
     } else {
-      // Failed
-      if (profile.attemptCount < maxAttempts) {
-        // Can retry - keep as screening_unlocked
-        profile.workerStatus = "screening_unlocked";
-      } else {
-        // Used all attempts - set to failed
-        profile.workerStatus = "failed";
-      }
+      // hybrid or manual: DO NOT advance worker status
+      // Leave as test_submitted → admin must review
+      completionRecord.passed = null; // pending admin decision
+      completionRecord.submissionStatus = "pending_review";
+      profile.workerStatus = "test_submitted";
     }
 
+    profile.screeningsCompleted.push(completionRecord);
     await profile.save();
 
     // Build response message
     let message;
-    if (passed) {
-      message = "Congratulations! You passed and are now ready to work.";
-    } else if (profile.attemptCount < maxAttempts) {
-      message = `You scored ${score}%. You have ${maxAttempts - profile.attemptCount} attempt(s) remaining. Review the training materials and try again.`;
+    if (evaluationMode === "auto") {
+      if (autoPass) {
+        message = "Congratulations! You passed and are now ready to work.";
+      } else if (profile.attemptCount < maxAttempts) {
+        message = `You scored ${score}%. You have ${maxAttempts - profile.attemptCount} attempt(s) remaining.`;
+      } else {
+        message = `You scored ${score}%. You've used all ${maxAttempts} attempts.`;
+      }
     } else {
-      message = `You scored ${score}%. You've used all ${maxAttempts} attempts. Contact admin for re-evaluation.`;
+      // hybrid/manual
+      if (autoPass) {
+        message = `Auto criteria met (${score}%) — pending admin approval.`;
+      } else {
+        message = `Below rubric threshold (${score}%) — awaiting admin review.`;
+      }
     }
 
     res.json({
       success: true,
       score,
-      passed,
+      autoScore,
+      autoPass,
+      evaluationMode,
+      submissionStatus: completionRecord.submissionStatus,
+      passed: completionRecord.passed,
       attemptsUsed: profile.attemptCount,
       attemptsRemaining: Math.max(0, maxAttempts - profile.attemptCount),
       newStatus: profile.workerStatus,
+      validationFlags,
+      rubricBreakdown,
       message,
     });
   } catch (err) {
@@ -1089,6 +1083,11 @@ exports.adminCreateScreening = async (req, res) => {
       questions,
       passingScore,
       timeLimit,
+      // PATCH_90: Hybrid rubric fields
+      evaluationMode,
+      rubric,
+      passThreshold,
+      autoValidationRules,
     } = req.body;
 
     // PATCH-64 GUARDRAIL: Title required
@@ -1138,6 +1137,11 @@ exports.adminCreateScreening = async (req, res) => {
       questions: normalizeScreeningQuestions(questions),
       passingScore,
       timeLimit,
+      // PATCH_90: Hybrid rubric fields
+      evaluationMode: evaluationMode || "hybrid",
+      rubric: rubric || [],
+      passThreshold: passThreshold || passingScore || 70,
+      autoValidationRules: autoValidationRules || {},
       createdBy: req.user.id,
     });
 
@@ -1204,20 +1208,34 @@ exports.adminUpdateScreening = async (req, res) => {
       passingScore,
       timeLimit,
       active,
+      // PATCH_90: Hybrid rubric fields
+      evaluationMode,
+      rubric,
+      passThreshold,
+      autoValidationRules,
     } = req.body;
+
+    const updateData = {
+      title,
+      description,
+      category,
+      trainingMaterials,
+      questions: normalizeScreeningQuestions(questions),
+      passingScore,
+      timeLimit,
+      active,
+    };
+    // PATCH_90: Include hybrid rubric fields if provided
+    if (evaluationMode !== undefined)
+      updateData.evaluationMode = evaluationMode;
+    if (rubric !== undefined) updateData.rubric = rubric;
+    if (passThreshold !== undefined) updateData.passThreshold = passThreshold;
+    if (autoValidationRules !== undefined)
+      updateData.autoValidationRules = autoValidationRules;
 
     const screening = await Screening.findByIdAndUpdate(
       req.params.id,
-      {
-        title,
-        description,
-        category,
-        trainingMaterials,
-        questions: normalizeScreeningQuestions(questions),
-        passingScore,
-        timeLimit,
-        active,
-      },
+      updateData,
       { new: true },
     );
 
@@ -1271,6 +1289,215 @@ exports.adminDeleteScreening = async (req, res) => {
       return res.status(404).json({ message: "Screening not found" });
     }
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * PATCH_90: GET /api/admin/workspace/screening-submissions
+ * Get all pending screening submissions for admin review
+ */
+exports.adminGetScreeningSubmissions = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const filterStatus = status || "pending_review";
+
+    // Find all workers with screeningsCompleted entries matching the filter status
+    const workers = await ApplyWork.find({
+      "screeningsCompleted.submissionStatus": filterStatus,
+    })
+      .populate("user", "name email")
+      .populate("position", "title category")
+      .lean();
+
+    const submissions = [];
+    for (const worker of workers) {
+      for (const sc of worker.screeningsCompleted || []) {
+        if (sc.submissionStatus === filterStatus) {
+          // Load screening details
+          const screening = await Screening.findById(sc.screeningId)
+            .select(
+              "title category evaluationMode rubric passThreshold questions",
+            )
+            .lean();
+
+          submissions.push({
+            workerId: worker._id,
+            userId: worker.user?._id,
+            workerName: worker.user?.name || "Unknown",
+            workerEmail: worker.user?.email || "",
+            positionTitle: worker.position?.title || worker.positionTitle || "",
+            positionCategory:
+              worker.position?.category || worker.category || "",
+            workerStatus: worker.workerStatus,
+            screeningId: sc.screeningId,
+            screeningTitle: screening?.title || "Unknown Screening",
+            evaluationMode: screening?.evaluationMode || "hybrid",
+            completedAt: sc.completedAt,
+            score: sc.score,
+            autoScore: sc.autoScore,
+            autoPass: sc.autoPass,
+            submissionStatus: sc.submissionStatus,
+            rubricBreakdown: sc.rubricBreakdown || [],
+            validationFlags: sc.validationFlags || [],
+            adminScore: sc.adminScore,
+            answers: sc.answers,
+            screeningQuestions: (screening?.questions || []).map((q) => ({
+              question: q.question,
+              type: q.type,
+              options: q.options,
+              points: q.points,
+            })),
+            rubricTemplate: screening?.rubric || [],
+            passThreshold: screening?.passThreshold || 70,
+            _submissionIndex: (worker.screeningsCompleted || []).indexOf(sc),
+          });
+        }
+      }
+    }
+
+    // Sort by completedAt desc
+    submissions.sort(
+      (a, b) => new Date(b.completedAt) - new Date(a.completedAt),
+    );
+
+    res.json({ success: true, submissions, count: submissions.length });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * PATCH_90: POST /api/admin/workspace/screening-submissions/:workerId/review
+ * Admin reviews a screening submission (approve/reject)
+ */
+exports.adminReviewScreeningSubmission = async (req, res) => {
+  try {
+    const { workerId } = req.params;
+    const { screeningId, action, adminScore, rubricBreakdown } = req.body;
+    // action: "approve" | "reject"
+
+    if (!["approve", "reject"].includes(action)) {
+      return res
+        .status(400)
+        .json({ message: "Invalid action. Use 'approve' or 'reject'." });
+    }
+
+    const profile = await ApplyWork.findById(workerId);
+    if (!profile) {
+      return res.status(404).json({ message: "Worker not found" });
+    }
+
+    // Find the specific screening submission
+    const submission = (profile.screeningsCompleted || []).find(
+      (sc) =>
+        sc.screeningId?.toString() === screeningId &&
+        sc.submissionStatus === "pending_review",
+    );
+
+    if (!submission) {
+      return res.status(404).json({
+        message: "No pending screening submission found for this screening",
+      });
+    }
+
+    submission.adminReviewedBy = req.user.id;
+    submission.adminReviewedAt = new Date();
+
+    if (adminScore !== undefined && adminScore !== null) {
+      submission.adminScore = adminScore;
+    }
+
+    if (rubricBreakdown && Array.isArray(rubricBreakdown)) {
+      submission.rubricBreakdown = rubricBreakdown;
+    }
+
+    if (action === "approve") {
+      submission.submissionStatus = "approved";
+      submission.passed = true;
+
+      // PATCH_90: Apply quality score impact
+      applyScreeningQualityImpact(
+        profile,
+        submission.autoScore || submission.score || 0,
+      );
+
+      // Check if ALL required screenings passed
+      const jobRole = await WorkPosition.findById(profile.position)
+        .select("screeningIds screeningId hasScreening")
+        .lean();
+
+      const requiredIds = (jobRole?.screeningIds || []).map((id) =>
+        id.toString(),
+      );
+
+      const allPassedIds = (profile.screeningsCompleted || [])
+        .filter(
+          (sc) => sc.passed === true || sc.submissionStatus === "approved",
+        )
+        .map((sc) => sc.screeningId?.toString());
+
+      if (requiredIds.length > 1) {
+        const allPassed = requiredIds.every((rid) =>
+          allPassedIds.includes(rid),
+        );
+        profile.workerStatus = allPassed
+          ? "ready_to_work"
+          : "screening_unlocked";
+      } else {
+        profile.workerStatus = "ready_to_work";
+      }
+
+      if (profile.workerStatus === "ready_to_work") {
+        profile.approvedBy = req.user.id;
+        profile.approvedAt = new Date();
+      }
+    } else {
+      // reject
+      submission.submissionStatus = "rejected";
+      submission.passed = false;
+
+      const maxAttempts = profile.maxAttempts || 2;
+      if (profile.attemptCount < maxAttempts) {
+        profile.workerStatus = "screening_unlocked";
+      } else {
+        profile.workerStatus = "failed";
+      }
+    }
+
+    await profile.save();
+
+    // Audit log
+    try {
+      const { logAdminAction } = require("../services/adminAudit.service");
+      await logAdminAction({
+        adminId: req.user?._id || req.user?.id,
+        adminEmail: req.user?.email,
+        action: action === "approve" ? "worker_approve" : "worker_reject",
+        entityType: "worker",
+        entityId: String(profile._id),
+        previousState: { submissionStatus: "pending_review" },
+        newState: {
+          submissionStatus: submission.submissionStatus,
+          workerStatus: profile.workerStatus,
+          qualityScore: profile.qualityScore,
+          tier: profile.tier,
+        },
+        reason: `Screening submission ${action}d`,
+      });
+    } catch (auditErr) {
+      console.error("Audit log failed:", auditErr.message);
+    }
+
+    res.json({
+      success: true,
+      action,
+      workerStatus: profile.workerStatus,
+      qualityScore: profile.qualityScore,
+      tier: profile.tier,
+      submissionStatus: submission.submissionStatus,
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -1957,6 +2184,8 @@ module.exports = {
   adminUpdateScreening: exports.adminUpdateScreening,
   adminCloneScreening: exports.adminCloneScreening,
   adminDeleteScreening: exports.adminDeleteScreening,
+  adminGetScreeningSubmissions: exports.adminGetScreeningSubmissions, // PATCH_90
+  adminReviewScreeningSubmission: exports.adminReviewScreeningSubmission, // PATCH_90
   adminCreateProject: exports.adminCreateProject,
   adminGetProjects: exports.adminGetProjects,
   adminGetProjectById: exports.adminGetProjectById, // PATCH_65.1

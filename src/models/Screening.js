@@ -62,6 +62,30 @@ const screeningSchema = new mongoose.Schema(
       type: Number,
       default: 60, // Minutes
     },
+    // PATCH_90: Hybrid rubric engine
+    evaluationMode: {
+      type: String,
+      enum: ["manual", "auto", "hybrid"],
+      default: "hybrid",
+    },
+    rubric: [
+      {
+        criteria: { type: String },
+        weight: { type: Number, default: 1 },
+        maxScore: { type: Number, default: 10 },
+      },
+    ],
+    passThreshold: {
+      type: Number,
+      default: 70,
+    },
+    autoValidationRules: {
+      minWords: { type: Number, default: 0 },
+      maxWords: { type: Number, default: 0 },
+      requiredFields: [String],
+      bannedWords: [String],
+      requireJustification: { type: Boolean, default: false },
+    },
     active: {
       type: Boolean,
       default: true,

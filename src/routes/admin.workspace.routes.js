@@ -16,6 +16,8 @@ const {
   adminUpdateScreening,
   adminCloneScreening,
   adminDeleteScreening,
+  adminGetScreeningSubmissions, // PATCH_90
+  adminReviewScreeningSubmission, // PATCH_90
   adminCreateProject,
   adminGetProjects,
   adminGetProjectById, // PATCH_65.1
@@ -46,6 +48,13 @@ router.get("/screenings/:id", adminGetScreeningById);
 router.put("/screenings/:id", adminUpdateScreening);
 router.post("/screenings/:id/clone", adminCloneScreening);
 router.delete("/screenings/:id", adminDeleteScreening);
+
+// PATCH_90: Screening submissions review (hybrid/manual)
+router.get("/screening-submissions", adminGetScreeningSubmissions);
+router.post(
+  "/screening-submissions/:workerId/review",
+  adminReviewScreeningSubmission,
+);
 
 // Projects management
 router.get("/projects", adminGetProjects);

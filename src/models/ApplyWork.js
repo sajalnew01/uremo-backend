@@ -89,11 +89,40 @@ const applyWorkSchema = new mongoose.Schema(
       default: 2,
     },
     // Screening/Test tracking
+    // PATCH_90: Expanded with hybrid rubric fields
     screeningsCompleted: [
       {
         screeningId: { type: mongoose.Schema.Types.ObjectId, ref: "Screening" },
         completedAt: Date,
         score: Number,
+        passed: Boolean,
+        // PATCH_90: Hybrid rubric engine fields
+        autoScore: { type: Number, default: null },
+        autoPass: { type: Boolean, default: null },
+        submissionStatus: {
+          type: String,
+          enum: ["auto_graded", "pending_review", "approved", "rejected"],
+          default: "auto_graded",
+        },
+        rubricBreakdown: [
+          {
+            criteria: String,
+            weight: Number,
+            maxScore: Number,
+            awarded: { type: Number, default: 0 },
+          },
+        ],
+        validationFlags: [
+          {
+            rule: String,
+            passed: Boolean,
+            detail: String,
+          },
+        ],
+        adminReviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        adminReviewedAt: Date,
+        adminScore: { type: Number, default: null },
+        answers: { type: mongoose.Schema.Types.Mixed, default: null },
       },
     ],
     testsCompleted: [
@@ -155,6 +184,16 @@ const applyWorkSchema = new mongoose.Schema(
       ref: "User",
     },
     approvedAt: Date,
+    // PATCH_90: Worker tier system
+    qualityScore: {
+      type: Number,
+      default: 0,
+    },
+    tier: {
+      type: String,
+      enum: ["bronze", "silver", "gold", "elite"],
+      default: "bronze",
+    },
   },
   { timestamps: true },
 );
