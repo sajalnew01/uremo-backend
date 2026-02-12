@@ -1,5 +1,6 @@
 /**
  * PATCH_90: Hybrid Screening Rubric Engine
+ * PATCH_94: RLHF question type support (ranking, written, fact_check, coding, multimodal, red_team)
  * Auto-validation layer + tier recalculation
  */
 
@@ -15,8 +16,10 @@ function runAutoValidation(screening, answers) {
   const questions = screening.questions || [];
   const rubric = screening.rubric || [];
   const passThreshold = screening.passThreshold || screening.passingScore || 70;
+  const screeningType = screening.screeningType || "mcq";
+  const minJustificationWords = screening.minJustificationWords || 0;
 
-  // --- Step 1: Auto-grade MCQs ---
+  // --- Step 1: Auto-grade questions per type ---
   let totalPoints = 0;
   let earnedPoints = 0;
 
@@ -61,6 +64,140 @@ function runAutoValidation(screening, answers) {
       ) {
         earnedPoints += q.points || 1;
       }
+    } else if (questionType === "ranking") {
+      // PATCH_94: Ranking — answer must be an object { choice, justification }
+      const ans = typeof answer === "object" && answer !== null ? answer : {};
+      const hasChoice = ans.choice === "A" || ans.choice === "B";
+      const justificationWords = (ans.justification || "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean).length;
+      const minWords = q.minWords || minJustificationWords || 30;
+      if (hasChoice && justificationWords >= minWords) {
+        earnedPoints += (q.points || 1) * 0.5; // Partial: admin review needed
+      }
+      if (!hasChoice) {
+        validationFlags.push({
+          rule: "ranking_choice",
+          passed: false,
+          detail: `Q${idx + 1}: No ranking choice selected`,
+        });
+      }
+      if (justificationWords < minWords) {
+        validationFlags.push({
+          rule: "ranking_justification",
+          passed: false,
+          detail: `Q${idx + 1}: Justification ${justificationWords} words, need ${minWords}`,
+        });
+      } else {
+        validationFlags.push({
+          rule: "ranking_justification",
+          passed: true,
+          detail: `Q${idx + 1}: Justification ${justificationWords} words (≥${minWords})`,
+        });
+      }
+    } else if (questionType === "written") {
+      // PATCH_94: Written — answer is a string, validate word count
+      const text = typeof answer === "string" ? answer : "";
+      const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+      const minWords = q.minWords || rules.minWords || 30;
+      if (wordCount >= minWords) {
+        earnedPoints += (q.points || 1) * 0.5; // Partial credit, admin finals
+      }
+      validationFlags.push({
+        rule: "written_wordcount",
+        passed: wordCount >= minWords,
+        detail: `Q${idx + 1}: ${wordCount} words (min: ${minWords})`,
+      });
+    } else if (questionType === "fact_check") {
+      // PATCH_94: Fact check — answer is { verdict, sourceUrl, explanation }
+      const ans = typeof answer === "object" && answer !== null ? answer : {};
+      const hasVerdict = [
+        "true",
+        "false",
+        "misleading",
+        "unverifiable",
+      ].includes(ans.verdict);
+      const url = (ans.sourceUrl || "").toLowerCase();
+      const hasValidSource =
+        url &&
+        (url.includes(".gov") ||
+          url.includes(".edu") ||
+          url.includes("reuters") ||
+          url.includes("apnews") ||
+          url.includes("bbc") ||
+          url.includes("nytimes"));
+      const hasWikipedia = url.includes("wikipedia");
+      if (hasVerdict && hasValidSource && !hasWikipedia) {
+        earnedPoints += (q.points || 1) * 0.5;
+      }
+      if (hasWikipedia) {
+        validationFlags.push({
+          rule: "fact_check_source",
+          passed: false,
+          detail: `Q${idx + 1}: Wikipedia links not accepted`,
+        });
+      } else if (!hasValidSource && url) {
+        validationFlags.push({
+          rule: "fact_check_source",
+          passed: false,
+          detail: `Q${idx + 1}: Source must be .gov/.edu/news`,
+        });
+      } else if (hasValidSource) {
+        validationFlags.push({
+          rule: "fact_check_source",
+          passed: true,
+          detail: `Q${idx + 1}: Valid source provided`,
+        });
+      }
+    } else if (questionType === "coding") {
+      // PATCH_94: Coding — answer is a string (code), validate basic structure
+      const code = typeof answer === "string" ? answer : "";
+      const hasContent = code.trim().length >= 10;
+      if (hasContent) {
+        earnedPoints += (q.points || 1) * 0.5; // Always needs admin review
+      }
+      validationFlags.push({
+        rule: "coding_content",
+        passed: hasContent,
+        detail: hasContent
+          ? `Q${idx + 1}: Code submitted (${code.trim().length} chars)`
+          : `Q${idx + 1}: Code too short or empty`,
+      });
+    } else if (questionType === "red_team") {
+      // PATCH_94: Red team — answer is { prompt, expectedVulnerability, explanation }
+      const ans = typeof answer === "object" && answer !== null ? answer : {};
+      const hasPrompt = (ans.prompt || "").trim().length >= 10;
+      const hasExplanation =
+        (ans.explanation || "").trim().split(/\s+/).filter(Boolean).length >=
+        20;
+      if (hasPrompt && hasExplanation) {
+        earnedPoints += (q.points || 1) * 0.5;
+      }
+      validationFlags.push({
+        rule: "red_team_prompt",
+        passed: hasPrompt,
+        detail: hasPrompt
+          ? `Q${idx + 1}: Adversarial prompt provided`
+          : `Q${idx + 1}: Prompt too short`,
+      });
+    } else if (questionType === "multimodal") {
+      // PATCH_94: Multimodal — answer is { description, issues[], rating }
+      const ans = typeof answer === "object" && answer !== null ? answer : {};
+      const hasDescription = (ans.description || "").trim().length >= 10;
+      const hasRating =
+        typeof ans.rating === "number" && ans.rating >= 1 && ans.rating <= 5;
+      if (hasDescription && hasRating) {
+        earnedPoints += (q.points || 1) * 0.5;
+      }
+      validationFlags.push({
+        rule: "multimodal_eval",
+        passed: hasDescription && hasRating,
+        detail:
+          hasDescription && hasRating
+            ? `Q${idx + 1}: Image evaluation complete`
+            : `Q${idx + 1}: Missing description or rating`,
+      });
     } else if (questionType === "text" || questionType === "file_upload") {
       // Text/file_upload: partial credit for auto, full review by admin
       earnedPoints += (q.points || 1) * 0.5;
@@ -200,9 +337,17 @@ function runAutoValidation(screening, answers) {
     // All manual: always pending_review
     submissionStatus = "pending_review";
   } else if (evaluationMode === "hybrid") {
-    // Has any text/file questions? Needs review
+    // Has any text/file/RLHF questions? Needs review
     const hasManualQuestions = questions.some(
-      (q) => q.type === "text" || q.type === "file_upload",
+      (q) =>
+        q.type === "text" ||
+        q.type === "file_upload" ||
+        q.type === "ranking" ||
+        q.type === "written" ||
+        q.type === "fact_check" ||
+        q.type === "coding" ||
+        q.type === "red_team" ||
+        q.type === "multimodal",
     );
     if (hasManualQuestions) {
       submissionStatus = "pending_review";

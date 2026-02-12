@@ -1062,6 +1062,13 @@ const normalizeScreeningQuestions = (questions = []) => {
       correctAnswer: q.correctAnswer,
       correctAnswers,
       points: q.points || 1,
+      // PATCH_94: RLHF question fields
+      responseA: q.responseA || undefined,
+      responseB: q.responseB || undefined,
+      imageUrl: q.imageUrl || undefined,
+      codeLanguage: q.codeLanguage || undefined,
+      referenceUrls: q.referenceUrls || undefined,
+      minWords: q.minWords || undefined,
     };
   });
 };
@@ -1088,6 +1095,11 @@ exports.adminCreateScreening = async (req, res) => {
       rubric,
       passThreshold,
       autoValidationRules,
+      // PATCH_94: RLHF fields
+      screeningType,
+      minJustificationWords,
+      allowRanking,
+      allowMultiResponseComparison,
     } = req.body;
 
     // PATCH-64 GUARDRAIL: Title required
@@ -1120,7 +1132,18 @@ exports.adminCreateScreening = async (req, res) => {
           message: `Question ${i + 1} text is missing or too short`,
         });
       }
-      if (q.type !== "text" && q.type !== "file_upload") {
+      // PATCH_94: RLHF question types don't require options
+      const rlhfTypes = [
+        "text",
+        "file_upload",
+        "ranking",
+        "written",
+        "red_team",
+        "fact_check",
+        "coding",
+        "multimodal",
+      ];
+      if (!rlhfTypes.includes(q.type)) {
         if (!q.options || q.options.length < 2) {
           return res.status(400).json({
             message: `Question ${i + 1} must have at least 2 options`,
@@ -1142,6 +1165,11 @@ exports.adminCreateScreening = async (req, res) => {
       rubric: rubric || [],
       passThreshold: passThreshold || passingScore || 70,
       autoValidationRules: autoValidationRules || {},
+      // PATCH_94: RLHF fields
+      screeningType: screeningType || "mcq",
+      minJustificationWords: minJustificationWords || 0,
+      allowRanking: allowRanking || false,
+      allowMultiResponseComparison: allowMultiResponseComparison || false,
       createdBy: req.user.id,
     });
 
@@ -1213,6 +1241,11 @@ exports.adminUpdateScreening = async (req, res) => {
       rubric,
       passThreshold,
       autoValidationRules,
+      // PATCH_94: RLHF fields
+      screeningType,
+      minJustificationWords,
+      allowRanking,
+      allowMultiResponseComparison,
     } = req.body;
 
     const updateData = {
@@ -1232,6 +1265,13 @@ exports.adminUpdateScreening = async (req, res) => {
     if (passThreshold !== undefined) updateData.passThreshold = passThreshold;
     if (autoValidationRules !== undefined)
       updateData.autoValidationRules = autoValidationRules;
+    // PATCH_94: RLHF fields
+    if (screeningType !== undefined) updateData.screeningType = screeningType;
+    if (minJustificationWords !== undefined)
+      updateData.minJustificationWords = minJustificationWords;
+    if (allowRanking !== undefined) updateData.allowRanking = allowRanking;
+    if (allowMultiResponseComparison !== undefined)
+      updateData.allowMultiResponseComparison = allowMultiResponseComparison;
 
     const screening = await Screening.findByIdAndUpdate(
       req.params.id,
@@ -1269,6 +1309,12 @@ exports.adminCloneScreening = async (req, res) => {
       passingScore: screening.passingScore,
       timeLimit: screening.timeLimit,
       active: screening.active,
+      // PATCH_94: Carry RLHF fields on clone
+      screeningType: screening.screeningType || "mcq",
+      minJustificationWords: screening.minJustificationWords || 0,
+      allowRanking: screening.allowRanking || false,
+      allowMultiResponseComparison:
+        screening.allowMultiResponseComparison || false,
       createdBy: req.user.id,
     });
 

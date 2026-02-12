@@ -27,6 +27,24 @@ const screeningSchema = new mongoose.Schema(
         "other",
       ],
     },
+    // PATCH_94: RLHF screening type (non-breaking — defaults to "mcq")
+    screeningType: {
+      type: String,
+      enum: [
+        "mcq",
+        "written",
+        "ranking",
+        "red_team",
+        "fact_check",
+        "coding",
+        "multimodal",
+      ],
+      default: "mcq",
+    },
+    // PATCH_94: RLHF-specific optional fields
+    minJustificationWords: { type: Number, default: 0 },
+    allowRanking: { type: Boolean, default: false },
+    allowMultiResponseComparison: { type: Boolean, default: false },
     // Training materials (links, PDFs, videos)
     trainingMaterials: [
       {
@@ -40,18 +58,37 @@ const screeningSchema = new mongoose.Schema(
     questions: [
       {
         question: String,
-        // PATCH_52A: single/multi choice support (keep legacy enums for compatibility)
+        // PATCH_52A + PATCH_94: extended question types
         type: {
           type: String,
-          enum: ["single", "multi", "multiple_choice", "text", "file_upload"],
+          enum: [
+            "single",
+            "multi",
+            "multiple_choice",
+            "text",
+            "file_upload",
+            "ranking",
+            "written",
+            "red_team",
+            "fact_check",
+            "coding",
+            "multimodal",
+          ],
           default: "single",
         },
-        options: [String], // For multiple choice
+        options: [String], // For multiple choice / ranking comparisons
         // Legacy single-answer field (kept for backward compatibility)
         correctAnswer: String,
         // PATCH_52A: multi-answer support
         correctAnswers: { type: [String], default: [] },
         points: { type: Number, default: 1 },
+        // PATCH_94: RLHF-specific question fields
+        responseA: String, // For ranking: first response to compare
+        responseB: String, // For ranking: second response to compare
+        imageUrl: String, // For multimodal: image to evaluate
+        codeLanguage: String, // For coding: expected language (js, python, etc.)
+        referenceUrls: [String], // For fact_check: acceptable source domains
+        minWords: { type: Number, default: 0 }, // Per-question min word count
       },
     ],
     passingScore: {
