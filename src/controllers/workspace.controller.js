@@ -1226,10 +1226,12 @@ exports.adminUpdateScreening = async (req, res) => {
       active,
     };
     // PATCH_90: Include hybrid rubric fields if provided
-    if (evaluationMode !== undefined) updateData.evaluationMode = evaluationMode;
+    if (evaluationMode !== undefined)
+      updateData.evaluationMode = evaluationMode;
     if (rubric !== undefined) updateData.rubric = rubric;
     if (passThreshold !== undefined) updateData.passThreshold = passThreshold;
-    if (autoValidationRules !== undefined) updateData.autoValidationRules = autoValidationRules;
+    if (autoValidationRules !== undefined)
+      updateData.autoValidationRules = autoValidationRules;
 
     const screening = await Screening.findByIdAndUpdate(
       req.params.id,
@@ -1317,7 +1319,9 @@ exports.adminGetScreeningSubmissions = async (req, res) => {
         if (sc.submissionStatus === filterStatus) {
           // Load screening details
           const screening = await Screening.findById(sc.screeningId)
-            .select("title category evaluationMode rubric passThreshold questions")
+            .select(
+              "title category evaluationMode rubric passThreshold questions",
+            )
             .lean();
 
           submissions.push({
@@ -1326,7 +1330,8 @@ exports.adminGetScreeningSubmissions = async (req, res) => {
             workerName: worker.user?.name || "Unknown",
             workerEmail: worker.user?.email || "",
             positionTitle: worker.position?.title || worker.positionTitle || "",
-            positionCategory: worker.position?.category || worker.category || "",
+            positionCategory:
+              worker.position?.category || worker.category || "",
             workerStatus: worker.workerStatus,
             screeningId: sc.screeningId,
             screeningTitle: screening?.title || "Unknown Screening",
@@ -1381,11 +1386,15 @@ exports.adminReviewScreeningSubmission = async (req, res) => {
       return res.status(400).json({ message: "Invalid worker ID format" });
     }
     if (!screeningId || !mongoose.Types.ObjectId.isValid(screeningId)) {
-      return res.status(400).json({ message: "Invalid or missing screening ID" });
+      return res
+        .status(400)
+        .json({ message: "Invalid or missing screening ID" });
     }
 
     if (!["approve", "reject"].includes(action)) {
-      return res.status(400).json({ message: "Invalid action. Use 'approve' or 'reject'." });
+      return res
+        .status(400)
+        .json({ message: "Invalid action. Use 'approve' or 'reject'." });
     }
 
     const profile = await ApplyWork.findById(workerId);
@@ -1422,7 +1431,10 @@ exports.adminReviewScreeningSubmission = async (req, res) => {
       submission.passed = true;
 
       // PATCH_90: Apply quality score impact
-      applyScreeningQualityImpact(profile, submission.autoScore || submission.score || 0);
+      applyScreeningQualityImpact(
+        profile,
+        submission.autoScore || submission.score || 0,
+      );
 
       // Check if ALL required screenings passed
       const jobRole = await WorkPosition.findById(profile.position)
@@ -1434,7 +1446,9 @@ exports.adminReviewScreeningSubmission = async (req, res) => {
       );
 
       const allPassedIds = (profile.screeningsCompleted || [])
-        .filter((sc) => sc.passed === true || sc.submissionStatus === "approved")
+        .filter(
+          (sc) => sc.passed === true || sc.submissionStatus === "approved",
+        )
         .map((sc) => sc.screeningId?.toString());
 
       if (requiredIds.length > 1) {
@@ -2060,14 +2074,27 @@ exports.adminDeleteProject = async (req, res) => {
  */
 exports.adminGetEligibleWorkers = async (req, res) => {
   try {
+    // PATCH_92: No-cache headers to prevent stale eligible worker lists
+    res.set(
+      "Cache-Control",
+      "no-store, no-cache, must-revalidate, proxy-revalidate",
+    );
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
+
     const project = await Project.findById(req.params.id).populate(
       "workPositionId",
-      "screeningId hasScreening title category",
+      "screeningId screeningIds hasScreening title category",
     );
 
     if (!project) {
       return res.status(404).json({ message: "Project not found" });
     }
+
+    // PATCH_92: Debug log for eligibility filtering
+    console.log(
+      `[EligibleWorkers] Project: ${project.title} (${project._id}), JobRole: ${project.workPositionId?.title}, hasScreening: ${project.workPositionId?.hasScreening}`,
+    );
 
     // Build worker filter
     const workerFilter = {
@@ -2087,6 +2114,11 @@ exports.adminGetEligibleWorkers = async (req, res) => {
         "user position workerStatus screeningsCompleted testsCompleted totalEarnings",
       )
       .lean();
+
+    // PATCH_92: Debug log worker count and statuses
+    console.log(
+      `[EligibleWorkers] Found ${workers.length} workers matching filter. Statuses: ${workers.map((w) => `${w.user?.email || w._id}=${w.workerStatus}`).join(", ")}`,
+    );
 
     // Additional filter: If job role requires screening, only return workers who passed
     let eligibleWorkers = workers;
@@ -2130,6 +2162,11 @@ exports.adminGetEligibleWorkers = async (req, res) => {
         );
       });
     }
+
+    // PATCH_92: Debug log final eligible count
+    console.log(
+      `[EligibleWorkers] After filtering: ${eligibleWorkers.length} eligible workers`,
+    );
 
     res.json({
       success: true,
