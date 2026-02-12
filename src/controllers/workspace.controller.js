@@ -2190,7 +2190,6 @@ module.exports = {
   adminGetEligibleWorkers: exports.adminGetEligibleWorkers, // PATCH_86
   adminCreditEarnings: exports.adminCreditEarnings,
   adminAssignTask: exports.adminAssignTask,
-};
-GetScreeningSubmissions: exports.adminGetScreeningSubmissions, // PATCH_90
+  adminGetScreeningSubmissions: exports.adminGetScreeningSubmissions, // PATCH_90
   adminReviewScreeningSubmission: exports.adminReviewScreeningSubmission, // PATCH_90
-  admin
+};
