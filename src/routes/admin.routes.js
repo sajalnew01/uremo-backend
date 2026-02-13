@@ -83,6 +83,7 @@ router.get("/email-campaigns", auth, admin, listEmailCampaigns);
 
 // PATCH_18: Full Admin CMS for services
 router.get("/services", auth, admin, listServices);
+router.get("/services/list", auth, admin, listServices); // PATCH_98: Explicit /list before /:id
 router.get("/services/:id", auth, admin, getService);
 router.post("/services", auth, admin, createService);
 router.put("/services/:id", auth, admin, updateService);
