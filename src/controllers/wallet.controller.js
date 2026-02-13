@@ -744,13 +744,13 @@ exports.adminAdjustBalance = async (req, res) => {
       );
     }
 
-    // Apply adjustment
-    if (type === "credit") {
-      user.walletBalance += numAmount;
-    } else {
-      user.walletBalance -= numAmount;
-    }
-    await user.save();
+    // PATCH_96: Atomic balance adjustment using $inc — prevents race conditions
+    const incAmount = type === "credit" ? numAmount : -numAmount;
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $inc: { walletBalance: incAmount } },
+      { new: true }
+    );
 
     // Create transaction record (PATCH_80: Admin adjustments are instant)
     await WalletTransaction.create({
@@ -758,10 +758,10 @@ exports.adminAdjustBalance = async (req, res) => {
       type,
       amount: numAmount,
       source: "admin_adjustment",
-      status: "success", // PATCH_80: Admin adjustment is instant
-      provider: "manual", // PATCH_80: Admin manual operation
+      status: "success",
+      provider: "manual",
       description: description || `Admin ${type} by ${req.user.email}`,
-      balanceAfter: user.walletBalance,
+      balanceAfter: updatedUser.walletBalance,
     });
 
     // PATCH-64: Log admin action
@@ -772,7 +772,7 @@ exports.adminAdjustBalance = async (req, res) => {
       entityType: "wallet",
       entityId: String(userId),
       previousState: { balance: previousBalance },
-      newState: { balance: user.walletBalance },
+      newState: { balance: updatedUser.walletBalance },
       reason: description,
       metadata: { amount: numAmount, type },
     });
@@ -783,7 +783,7 @@ exports.adminAdjustBalance = async (req, res) => {
       await sendNotification({
         userId: userId,
         title: "Wallet Update",
-        message: `Your wallet has been ${action} $${numAmount.toFixed(2)}. New balance: $${user.walletBalance.toFixed(2)}`,
+        message: `Your wallet has been ${action} $${numAmount.toFixed(2)}. New balance: $${updatedUser.walletBalance.toFixed(2)}`,
         type: "wallet",
       });
     } catch (notifErr) {
@@ -797,10 +797,10 @@ exports.adminAdjustBalance = async (req, res) => {
       success: true,
       message: `Successfully ${type}ed $${numAmount.toFixed(2)} ${type === "credit" ? "to" : "from"} user wallet`,
       user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        walletBalance: user.walletBalance,
+        _id: updatedUser._id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        walletBalance: updatedUser.walletBalance,
       },
     });
   } catch (err) {

@@ -282,6 +282,10 @@ exports.workerGetProjectTasks = async (req, res) => {
     if (project.projectType !== "rlhf_dataset") {
       return res.status(400).json({ message: "This is not an RLHF project" });
     }
+    // PATCH_96: Ownership check — only assigned worker can access tasks
+    if (project.assignedTo?.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "You are not assigned to this project" });
+    }
 
     const dataset = await Dataset.findById(project.datasetId).lean();
     if (!dataset) return res.status(404).json({ message: "Dataset not found" });
@@ -337,6 +341,10 @@ exports.workerSubmitTask = async (req, res) => {
     if (!project) return res.status(404).json({ message: "Project not found" });
     if (project.projectType !== "rlhf_dataset") {
       return res.status(400).json({ message: "Not an RLHF project" });
+    }
+    // PATCH_96: Ownership check — only assigned worker can submit
+    if (project.assignedTo?.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "You are not assigned to this project" });
     }
 
     const task = await DatasetTask.findById(taskId).lean();
@@ -446,19 +454,24 @@ exports.adminReviewSubmission = async (req, res) => {
         .json({ message: "Action must be 'approved' or 'rejected'" });
     }
 
-    const submission = await RlhfSubmission.findById(req.params.submissionId);
-    if (!submission)
-      return res.status(404).json({ message: "Submission not found" });
-    if (submission.reviewStatus !== "pending_review") {
-      return res
-        .status(400)
-        .json({ message: `Submission already ${submission.reviewStatus}` });
-    }
+    // PATCH_96: Atomic status guard — prevents double-review race condition
+    const updateFields = {
+      reviewStatus: action,
+      reviewedBy: req.user._id,
+      reviewedAt: new Date(),
+    };
+    if (finalScore !== undefined) updateFields.finalScore = finalScore;
 
-    submission.reviewStatus = action;
-    submission.reviewedBy = req.user._id;
-    submission.reviewedAt = new Date();
-    if (finalScore !== undefined) submission.finalScore = finalScore;
+    const submission = await RlhfSubmission.findOneAndUpdate(
+      { _id: req.params.submissionId, reviewStatus: "pending_review" },
+      { $set: updateFields },
+      { new: true }
+    );
+    if (!submission) {
+      const existing = await RlhfSubmission.findById(req.params.submissionId);
+      if (!existing) return res.status(404).json({ message: "Submission not found" });
+      return res.status(400).json({ message: `Submission already ${existing.reviewStatus}` });
+    }
 
     // Credit reward on approval (idempotent — check rewardCredited flag)
     if (action === "approved" && !submission.rewardCredited) {
@@ -466,22 +479,21 @@ exports.adminReviewSubmission = async (req, res) => {
       const rewardAmount = rewardOverride || project?.rewardPerTask || 0;
 
       if (rewardAmount > 0) {
-        // Credit wallet
+        // PATCH_96: Atomic wallet credit
         await User.findByIdAndUpdate(submission.workerId, {
           $inc: { walletBalance: rewardAmount },
         });
-
-        // Update ApplyWork earnings
         await ApplyWork.findOneAndUpdate(
           { user: submission.workerId },
           { $inc: { totalEarnings: rewardAmount } },
         );
 
-        submission.rewardCredited = true;
-        submission.rewardAmount = rewardAmount;
+        // Mark reward as credited atomically
+        await RlhfSubmission.findByIdAndUpdate(submission._id, {
+          $set: { rewardCredited: true, rewardAmount },
+        });
       }
 
-      // Update worker RLHF metrics
       await updateWorkerRlhfMetrics(submission.workerId);
     }
 
@@ -489,8 +501,8 @@ exports.adminReviewSubmission = async (req, res) => {
       await updateWorkerRlhfMetrics(submission.workerId);
     }
 
-    await submission.save();
-    res.json({ success: true, submission });
+    const result = await RlhfSubmission.findById(submission._id);
+    res.json({ success: true, submission: result });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
