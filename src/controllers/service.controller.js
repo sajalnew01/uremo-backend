@@ -696,6 +696,10 @@ exports.getServiceById = async (req, res) => {
   try {
     setNoCache(res);
     const { id } = req.params;
+    // PATCH_96: Validate ObjectId format to prevent CastError 500
+    if (!id || !/^[a-f\d]{24}$/i.test(id)) {
+      return res.status(400).json({ message: "Invalid service ID" });
+    }
     const service = await Service.findById(id).lean();
 
     if (!service) {
@@ -753,6 +757,10 @@ exports.getAllServices = async (req, res) => {
 exports.getServiceActions = async (req, res) => {
   try {
     const { id } = req.params;
+    // PATCH_96: Validate ObjectId format
+    if (!id || !/^[a-f\d]{24}$/i.test(id)) {
+      return res.status(400).json({ message: "Invalid service ID" });
+    }
     const service = await Service.findById(id)
       .select("category subcategory allowedActions")
       .lean();
