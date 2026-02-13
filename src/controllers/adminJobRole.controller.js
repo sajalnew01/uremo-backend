@@ -595,6 +595,8 @@ exports.getAllJobRoles = async (req, res) => {
     const total = await WorkPosition.countDocuments(filter);
     const jobs = await WorkPosition.find(filter)
       .populate("serviceId", "title category")
+      .populate("screeningId", "title screeningType")
+      .populate("screeningIds", "title screeningType passThreshold")
       .sort({ active: -1, sortOrder: 1, createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(parseInt(limit))
