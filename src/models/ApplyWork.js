@@ -194,6 +194,11 @@ const applyWorkSchema = new mongoose.Schema(
       enum: ["bronze", "silver", "gold", "elite"],
       default: "bronze",
     },
+    // PATCH_95: RLHF Worker Quality Metrics
+    rlhfScore: { type: Number, default: 0 },
+    totalAnnotations: { type: Number, default: 0 },
+    approvalRate: { type: Number, default: 0 },
+    justificationQualityScore: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

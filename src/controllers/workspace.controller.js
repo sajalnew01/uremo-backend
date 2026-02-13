@@ -517,7 +517,12 @@ exports.getProject = async (req, res) => {
     const project = await Project.findOne({
       _id: req.params.id,
       assignedTo: req.user.id,
-    }).lean();
+    })
+      .populate(
+        "datasetId",
+        "name datasetType difficultyLevel minJustificationWords minWordCount allowMultiResponseComparison isActive",
+      ) // PATCH_95
+      .lean();
 
     if (!project) {
       return res.status(404).json({ message: "Project not found" });
@@ -1582,6 +1587,9 @@ exports.adminCreateProject = async (req, res) => {
       earnings,
       priority,
       workPositionId, // PATCH_86: Job Role ID
+      projectType, // PATCH_95: standard | rlhf_dataset
+      datasetId, // PATCH_95: linked dataset
+      rewardPerTask, // PATCH_95: per-task reward
     } = req.body;
 
     // PATCH_86: Validate job role if provided
@@ -1613,6 +1621,9 @@ exports.adminCreateProject = async (req, res) => {
       screeningIds: screeningIds || [], // PATCH_88: Multiple screenings
       workPositionId: workPositionId || undefined, // PATCH_86
       priority: priority || "medium",
+      projectType: projectType || "standard", // PATCH_95
+      datasetId: projectType === "rlhf_dataset" ? datasetId : undefined, // PATCH_95
+      rewardPerTask: rewardPerTask || 0, // PATCH_95
     });
 
     // PATCH_58: Notify ready workers about new project
@@ -1653,6 +1664,7 @@ exports.adminGetProjects = async (req, res) => {
       .populate("workPositionId", "title category hasScreening") // PATCH_86
       .populate("screeningId", "title passingScore")
       .populate("screeningIds", "title passingScore") // PATCH_88
+      .populate("datasetId", "name datasetType") // PATCH_95
       .sort({ createdAt: -1 })
       .lean();
 
@@ -1959,6 +1971,10 @@ exports.adminGetProjectById = async (req, res) => {
       .populate("createdBy", "firstName lastName email")
       .populate("screeningId", "title passingScore timeLimit")
       .populate("screeningIds", "title passingScore timeLimit")
+      .populate(
+        "datasetId",
+        "name datasetType difficultyLevel minJustificationWords minWordCount allowMultiResponseComparison isActive",
+      ) // PATCH_95
       .lean();
 
     if (!project) {
@@ -2016,6 +2032,9 @@ exports.adminUpdateProject = async (req, res) => {
       status,
       screeningId,
       screeningIds, // PATCH_88: Multiple screenings
+      projectType, // PATCH_95
+      datasetId, // PATCH_95
+      rewardPerTask, // PATCH_95
     } = req.body;
 
     const project = await Project.findById(req.params.id);
@@ -2036,6 +2055,10 @@ exports.adminUpdateProject = async (req, res) => {
     if (status) project.status = status;
     if (screeningId !== undefined) project.screeningId = screeningId;
     if (screeningIds !== undefined) project.screeningIds = screeningIds; // PATCH_88
+    // PATCH_95: RLHF fields
+    if (projectType !== undefined) project.projectType = projectType;
+    if (datasetId !== undefined) project.datasetId = datasetId || null;
+    if (rewardPerTask !== undefined) project.rewardPerTask = rewardPerTask;
 
     project.updatedAt = new Date();
     await project.save();

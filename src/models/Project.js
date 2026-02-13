@@ -115,6 +115,21 @@ const projectSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+    // PATCH_95: RLHF Dataset Engine
+    projectType: {
+      type: String,
+      enum: ["standard", "rlhf_dataset"],
+      default: "standard",
+    },
+    datasetId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Dataset",
+      default: null,
+    },
+    rewardPerTask: {
+      type: Number,
+      default: 0,
+    },
   },
   { timestamps: true },
 );

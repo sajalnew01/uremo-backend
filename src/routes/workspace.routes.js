@@ -31,6 +31,12 @@ const {
   getMyProofs,
 } = require("../controllers/proof.controller");
 
+// PATCH_95: RLHF task execution
+const {
+  workerGetProjectTasks,
+  workerSubmitTask,
+} = require("../controllers/dataset.controller");
+
 // All routes require authentication
 router.use(auth);
 
@@ -58,6 +64,10 @@ router.post("/project/:id/submit", submitProject);
 router.get("/my-proofs", getMyProofs);
 router.get("/project/:id/proof", getProjectProof);
 router.post("/project/:id/proof", submitProof);
+
+// PATCH_95: RLHF task execution
+router.get("/project/:id/rlhf-tasks", workerGetProjectTasks);
+router.post("/project/:id/rlhf-submit", workerSubmitTask);
 
 // Earnings
 router.get("/earnings", getEarnings);
