@@ -151,6 +151,10 @@ exports.createService = async (req, res) => {
       currency,
       deliveryType,
       countryPricing, // PATCH_20: Country-based pricing
+      isRental,
+      rentalPlans,
+      rentalDescription,
+      maxActiveRentals,
       jobRoleTemplate, // PATCH_59: Job role template for auto-created WorkPositions
       searchKeywords, // PATCH_59: Search keywords
     } = req.body || {};
@@ -296,6 +300,10 @@ exports.createService = async (req, res) => {
       price: numericPrice,
       currency: String(currency || "USD").trim(),
       deliveryType: String(deliveryType || "manual").trim(),
+      isRental: isRental === true,
+      rentalPlans: Array.isArray(rentalPlans) ? rentalPlans : [],
+      rentalDescription: String(rentalDescription || "").trim(),
+      maxActiveRentals: parseNumber(maxActiveRentals) || 0,
       tags: Array.isArray(tags) ? tags.filter(Boolean) : [],
       features: Array.isArray(features) ? features.filter(Boolean) : [],
       createdBy: req.user?._id || req.user?.id || null,
@@ -414,6 +422,10 @@ exports.updateService = async (req, res) => {
       active,
       currency,
       deliveryType,
+      isRental,
+      rentalPlans,
+      rentalDescription,
+      maxActiveRentals,
     } = req.body || {};
 
     // Update fields if provided
@@ -432,6 +444,19 @@ exports.updateService = async (req, res) => {
     if (currency !== undefined) service.currency = String(currency).trim();
     if (deliveryType !== undefined)
       service.deliveryType = String(deliveryType).trim();
+    if (isRental !== undefined) service.isRental = isRental === true;
+    if (rentalPlans !== undefined) {
+      service.rentalPlans = Array.isArray(rentalPlans) ? rentalPlans : [];
+    }
+    if (rentalDescription !== undefined) {
+      service.rentalDescription = String(rentalDescription || "").trim();
+    }
+    if (maxActiveRentals !== undefined) {
+      const parsedMaxActiveRentals = parseNumber(maxActiveRentals);
+      if (parsedMaxActiveRentals !== null) {
+        service.maxActiveRentals = parsedMaxActiveRentals;
+      }
+    }
 
     // PATCH_18/20: Category/Subcategory/ListingType normalized
     if (category !== undefined) {
