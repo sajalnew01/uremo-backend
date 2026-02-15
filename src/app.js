@@ -234,8 +234,6 @@ app.use("/api/faqs", faqRoutes);
 app.use("/api/public", publicRoutes);
 // PATCH_95: Admin Dataset & RLHF routes
 app.use("/api/admin/datasets", adminDatasetRoutes);
-// PATCH_95: Admin Dataset & RLHF routes
-app.use("/api/admin/datasets", adminDatasetRoutes);
 // PATCH_53: User preferences and admin campaigns routes
 const userPreferencesRoutes = require("./routes/user.preferences.routes");
 const adminCampaignRoutes = require("./routes/admin.campaign.routes");

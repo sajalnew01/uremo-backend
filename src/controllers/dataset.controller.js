@@ -277,7 +277,7 @@ exports.adminDeleteTask = async (req, res) => {
 
 exports.workerGetProjectTasks = async (req, res) => {
   try {
-    const project = await Project.findById(req.params.projectId).lean();
+    const project = await Project.findById(req.params.id).lean();
     if (!project) return res.status(404).json({ message: "Project not found" });
     if (project.projectType !== "rlhf_dataset") {
       return res.status(400).json({ message: "This is not an RLHF project" });
@@ -337,7 +337,7 @@ exports.workerSubmitTask = async (req, res) => {
       return res.status(400).json({ message: "answerPayload is required" });
     }
 
-    const project = await Project.findById(req.params.projectId).lean();
+    const project = await Project.findById(req.params.id).lean();
     if (!project) return res.status(404).json({ message: "Project not found" });
     if (project.projectType !== "rlhf_dataset") {
       return res.status(400).json({ message: "Not an RLHF project" });
