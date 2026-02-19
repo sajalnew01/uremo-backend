@@ -454,7 +454,7 @@ serviceSchema.post("save", async function (doc) {
   }
 });
 
-// PATCH_38: Ensure allowedActions stays in sync for findOneAndUpdate/findByIdAndUpdate
+// PATCH_38/108: Ensure allowedActions stays in sync for findOneAndUpdate/findByIdAndUpdate
 serviceSchema.pre("findOneAndUpdate", async function () {
   const update = this.getUpdate() || {};
 
@@ -462,43 +462,64 @@ serviceSchema.pre("findOneAndUpdate", async function () {
   const $set =
     update.$set && typeof update.$set === "object" ? update.$set : {};
 
-  // Prevent manual edits
+  // Prevent manual overrides of allowedActions
   delete update.allowedActions;
   delete $set.allowedActions;
 
-  // Load current document to compute effective category/subcategory
-  // PATCH_108: Include ALL fields needed by data-integrity gates
+  // PATCH_108: Only recompute allowedActions when action-relevant fields change.
+  // Fields that affect allowedActions: category, subcategory, price, isRental, rentalPlans
+  // If none of these are in the update, skip recomputation to avoid corruption.
+  const actionFields = [
+    "category",
+    "subcategory",
+    "price",
+    "isRental",
+    "rentalPlans",
+  ];
+  const hasActionFieldInSet = actionFields.some((f) => $set[f] !== undefined);
+  const hasActionFieldInUpdate = actionFields.some(
+    (f) => update[f] !== undefined,
+  );
+
+  if (!hasActionFieldInSet && !hasActionFieldInUpdate) {
+    // No action-relevant fields changed — skip recomputation, preserve existing values
+    this.setUpdate(update);
+    return;
+  }
+
+  // Load current document to merge with updates for complete context
   const current = await this.model.findOne(this.getQuery()).lean();
+  if (!current) {
+    this.setUpdate(update);
+    return;
+  }
+
   const nextCategory =
     (typeof $set.category === "string" ? $set.category : undefined) ||
     (typeof update.category === "string" ? update.category : undefined) ||
-    current?.category;
+    current.category;
   const nextSubcategory =
     (typeof $set.subcategory === "string" ? $set.subcategory : undefined) ||
     (typeof update.subcategory === "string" ? update.subcategory : undefined) ||
-    current?.subcategory;
-
-  // PATCH_108: Merge current document data with any $set updates so
-  // getAllowedActionsForService has full context for data-integrity gates
-  // (price, isRental, rentalPlans are required for buy/rent/deal gates)
+    current.subcategory;
   const nextPrice =
     $set.price !== undefined
       ? $set.price
       : update.price !== undefined
         ? update.price
-        : current?.price;
+        : current.price;
   const nextIsRental =
     $set.isRental !== undefined
       ? $set.isRental
       : update.isRental !== undefined
         ? update.isRental
-        : current?.isRental;
+        : current.isRental;
   const nextRentalPlans =
     $set.rentalPlans !== undefined
       ? $set.rentalPlans
       : update.rentalPlans !== undefined
         ? update.rentalPlans
-        : current?.rentalPlans;
+        : current.rentalPlans;
 
   const computed = getAllowedActionsForService({
     category: nextCategory,
