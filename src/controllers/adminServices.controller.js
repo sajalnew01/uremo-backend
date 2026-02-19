@@ -2,6 +2,11 @@ const Service = require("../models/Service");
 // PATCH_43: Auto job role creation
 const WorkPosition = require("../models/WorkPosition");
 const { getAllowedActionsForService } = require("../config/categoryActions");
+// PATCH_106: Hard validation rules
+const {
+  validateServiceActions,
+  autoCleanupInconsistencies,
+} = require("../utils/serviceValidation");
 
 // PATCH_20: No-cache headers for admin CMS endpoints
 function setNoCache(res) {
@@ -280,14 +285,15 @@ exports.createService = async (req, res) => {
       }
     }
 
-    const service = await Service.create({
+    // PATCH_106: Pre-compute allowedActions and validate before saving
+    const servicePayload = {
       title: safeTitle,
       slug,
       category: resolvedCategory,
-      subcategory: resolvedSubcategory, // PATCH_20: Set subcategory
+      subcategory: resolvedSubcategory,
       listingType: resolvedListingType,
       countries: resolvedCountries,
-      countryPricing: resolvedCountryPricing, // PATCH_20: Country pricing
+      countryPricing: resolvedCountryPricing,
       platform: String(platform || "").trim(),
       subject: String(subject || "").trim(),
       projectName: String(projectName || "").trim(),
@@ -307,9 +313,23 @@ exports.createService = async (req, res) => {
       tags: Array.isArray(tags) ? tags.filter(Boolean) : [],
       features: Array.isArray(features) ? features.filter(Boolean) : [],
       createdBy: req.user?._id || req.user?.id || null,
-      jobRoleTemplate: resolvedJobRoleTemplate, // PATCH_59
-      searchKeywords: resolvedSearchKeywords, // PATCH_59
-    });
+      jobRoleTemplate: resolvedJobRoleTemplate,
+      searchKeywords: resolvedSearchKeywords,
+    };
+
+    // Compute allowedActions from category rules
+    const computedActions = getAllowedActionsForService(servicePayload);
+    servicePayload.allowedActions = computedActions;
+
+    const { valid, errors: actionErrors } =
+      await validateServiceActions(servicePayload);
+    if (!valid) {
+      return res
+        .status(400)
+        .json({ ok: false, message: actionErrors[0], errors: actionErrors });
+    }
+
+    const service = await Service.create(servicePayload);
 
     console.log("[ADMIN_SERVICES] Service created:", service._id);
 
@@ -532,6 +552,28 @@ exports.updateService = async (req, res) => {
       service.features = Array.isArray(features)
         ? features.filter(Boolean)
         : [];
+
+    // PATCH_106: Auto-cleanup inconsistencies before validation
+    autoCleanupInconsistencies(service);
+
+    // PATCH_106: Validate before saving
+    const computedActions = getAllowedActionsForService(service);
+    const serviceForValidation = {
+      ...service.toObject(),
+      allowedActions: computedActions,
+    };
+    const { valid, errors: actionErrors } = await validateServiceActions(
+      serviceForValidation,
+      {
+        isUpdate: true,
+        existingService: service.toObject(),
+      },
+    );
+    if (!valid) {
+      return res
+        .status(400)
+        .json({ ok: false, message: actionErrors[0], errors: actionErrors });
+    }
 
     await service.save();
 

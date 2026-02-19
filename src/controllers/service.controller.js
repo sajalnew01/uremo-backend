@@ -11,6 +11,12 @@ const {
   getEffectiveCategoryFromService,
 } = require("../config/categoryActions");
 
+// PATCH_106: Hard validation rules for service actions
+const {
+  validateServiceActions,
+  autoCleanupInconsistencies,
+} = require("../utils/serviceValidation");
+
 function setNoCache(res) {
   res.set(
     "Cache-Control",
@@ -209,6 +215,18 @@ exports.createService = async (req, res) => {
     if (payRate !== undefined) servicePayload.payRate = Number(payRate);
     if (typeof instantDelivery === "boolean")
       servicePayload.instantDelivery = instantDelivery;
+
+    // PATCH_106: Pre-compute allowedActions and validate before saving
+    const computedActions = getAllowedActionsForService(servicePayload);
+    servicePayload.allowedActions = computedActions;
+
+    const { valid, errors: validationErrors } =
+      await validateServiceActions(servicePayload);
+    if (!valid) {
+      return res
+        .status(400)
+        .json({ message: validationErrors[0], errors: validationErrors });
+    }
 
     const service = await Service.create(servicePayload);
 
@@ -937,6 +955,33 @@ exports.updateService = async (req, res) => {
       ["draft", "active", "archived"].includes(status)
     ) {
       payload.status = status;
+    }
+
+    // PATCH_106: Auto-cleanup inconsistencies before saving
+    // Fetch existing service to merge with payload for validation
+    const existingService = await Service.findById(id).lean();
+    if (!existingService) {
+      return res.status(404).json({ message: "Service not found" });
+    }
+
+    const merged = { ...existingService, ...payload };
+    const computedActions = getAllowedActionsForService(merged);
+    merged.allowedActions = computedActions;
+
+    // PATCH_106: Rule 5 — auto-cleanup before validation
+    autoCleanupInconsistencies(merged);
+
+    const { valid, errors: validationErrors } = await validateServiceActions(
+      merged,
+      {
+        isUpdate: true,
+        existingService,
+      },
+    );
+    if (!valid) {
+      return res
+        .status(400)
+        .json({ message: validationErrors[0], errors: validationErrors });
     }
 
     const service = await Service.findByIdAndUpdate(id, payload, {
