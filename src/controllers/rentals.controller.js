@@ -217,6 +217,9 @@ exports.createRentalOrder = async (req, res) => {
           unit: plan.unit,
           price: plan.price,
         },
+        price: plan.price,
+        duration: plan.duration,
+        rentalType: plan.unit,
         startDate: rental.startDate,
         endDate: rental.endDate,
         status: rental.status,
@@ -224,6 +227,7 @@ exports.createRentalOrder = async (req, res) => {
       order: {
         _id: order._id,
         status: order.status,
+        orderType: order.orderType,
       },
     });
   } catch (err) {
@@ -409,6 +413,9 @@ exports.activateRental = async (req, res) => {
       $inc: { currentActiveRentals: 1 },
     });
 
+    // PATCH_108: Fetch full rental document for complete response
+    const fullRental = await Rental.findById(id).lean();
+
     res.json({
       ok: true,
       message: "Rental activated successfully",
@@ -417,6 +424,9 @@ exports.activateRental = async (req, res) => {
         status: activatedRental.status,
         startDate: activatedRental.startDate,
         endDate: activatedRental.endDate,
+        activatedAt: fullRental?.activatedAt || startDate,
+        statusLog: fullRental?.statusLog || [],
+        timeline: fullRental?.timeline || [],
       },
     });
   } catch (err) {
