@@ -467,6 +467,7 @@ serviceSchema.pre("findOneAndUpdate", async function () {
   delete $set.allowedActions;
 
   // Load current document to compute effective category/subcategory
+  // PATCH_108: Include ALL fields needed by data-integrity gates
   const current = await this.model.findOne(this.getQuery()).lean();
   const nextCategory =
     (typeof $set.category === "string" ? $set.category : undefined) ||
@@ -477,9 +478,34 @@ serviceSchema.pre("findOneAndUpdate", async function () {
     (typeof update.subcategory === "string" ? update.subcategory : undefined) ||
     current?.subcategory;
 
+  // PATCH_108: Merge current document data with any $set updates so
+  // getAllowedActionsForService has full context for data-integrity gates
+  // (price, isRental, rentalPlans are required for buy/rent/deal gates)
+  const nextPrice =
+    $set.price !== undefined
+      ? $set.price
+      : update.price !== undefined
+        ? update.price
+        : current?.price;
+  const nextIsRental =
+    $set.isRental !== undefined
+      ? $set.isRental
+      : update.isRental !== undefined
+        ? update.isRental
+        : current?.isRental;
+  const nextRentalPlans =
+    $set.rentalPlans !== undefined
+      ? $set.rentalPlans
+      : update.rentalPlans !== undefined
+        ? update.rentalPlans
+        : current?.rentalPlans;
+
   const computed = getAllowedActionsForService({
     category: nextCategory,
     subcategory: nextSubcategory,
+    price: nextPrice,
+    isRental: nextIsRental,
+    rentalPlans: nextRentalPlans,
   });
 
   update.$set = { ...$set, allowedActions: computed };
