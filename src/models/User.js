@@ -39,10 +39,30 @@ const userSchema = new mongoose.Schema(
     },
 
     // PATCH_23: Internal Wallet Balance
+    // PATCH_110: Wallet as Single Source of Truth
     walletBalance: {
       type: Number,
       default: 0,
       min: 0,
+    },
+    withdrawable: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    pendingWithdrawals: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    lifetimeEarnings: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    lastWalletUpdate: {
+      type: Date,
+      default: null,
     },
 
     // PATCH_34: Onboarding wizard fields

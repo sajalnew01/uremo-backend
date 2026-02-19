@@ -41,4 +41,11 @@ router.get("/transactions", walletController.getTransactions);
 // POST /api/wallet/pay - Pay for order using wallet
 router.post("/pay", walletController.payWithWallet);
 
+// PATCH_110: Withdrawal endpoints
+// POST /api/wallet/withdraw - Request a withdrawal
+router.post("/withdraw", walletController.requestWithdrawal);
+
+// GET /api/wallet/withdrawals - Get user's withdrawal requests
+router.get("/withdrawals", walletController.getMyWithdrawals);
+
 module.exports = router;

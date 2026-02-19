@@ -22,7 +22,9 @@ const FlowEngine = require("../core/flowEngine");
 exports.getBalance = async (req, res) => {
   try {
     const userId = req.user.id || req.user._id;
-    const user = await User.findById(userId).select("walletBalance");
+    const user = await User.findById(userId).select(
+      "walletBalance withdrawable pendingWithdrawals lifetimeEarnings lastWalletUpdate",
+    );
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -38,6 +40,10 @@ exports.getBalance = async (req, res) => {
     res.json({
       success: true,
       balance: user.walletBalance || 0,
+      withdrawable: user.withdrawable || 0,
+      pendingWithdrawals: user.pendingWithdrawals || 0,
+      lifetimeEarnings: user.lifetimeEarnings || 0,
+      lastWalletUpdate: user.lastWalletUpdate,
       pendingTopups: pendingCount,
     });
   } catch (err) {
@@ -110,6 +116,7 @@ exports.topUp = async (req, res) => {
       provider: "manual", // Phase 1: Manual verification by admin
       providerRef: null,
       description: "Wallet top-up (pending verification)",
+      balanceBefore: user.walletBalance || 0,
       balanceAfter: null, // Will be set when verified
     });
 
@@ -329,6 +336,7 @@ exports.createPayPalTopup = async (req, res) => {
       provider: "paypal",
       providerRef: paypalOrder.result.id, // PayPal Order ID
       description: "Wallet top-up via PayPal (pending verification)",
+      balanceBefore: user.walletBalance || 0,
       balanceAfter: null, // Will be set when admin verifies
     });
 
@@ -614,6 +622,7 @@ exports.payWithWallet = async (req, res) => {
     // Create debit transaction (PATCH_80: Internal operations are instant - status='success')
     const source =
       order.serviceType === "rental" ? "rental_purchase" : "service_purchase";
+    const balanceBefore = (updateResult.walletBalance || 0) + orderAmount; // before was current + what we just deducted
     await WalletTransaction.create({
       user: userId,
       type: "debit",
@@ -623,7 +632,13 @@ exports.payWithWallet = async (req, res) => {
       provider: "internal", // PATCH_80: Internal system operation
       referenceId: order._id,
       description: `Payment for order #${order._id.toString().slice(-6)}`,
+      balanceBefore,
       balanceAfter: updateResult.walletBalance,
+    });
+
+    // PATCH_110: Update lastWalletUpdate
+    await User.findByIdAndUpdate(userId, {
+      $set: { lastWalletUpdate: new Date() },
     });
 
     // PATCH_31: Use FlowEngine for status transition
@@ -749,7 +764,7 @@ exports.adminAdjustBalance = async (req, res) => {
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       { $inc: { walletBalance: incAmount } },
-      { new: true }
+      { new: true },
     );
 
     // Create transaction record (PATCH_80: Admin adjustments are instant)
@@ -761,7 +776,13 @@ exports.adminAdjustBalance = async (req, res) => {
       status: "success",
       provider: "manual",
       description: description || `Admin ${type} by ${req.user.email}`,
+      balanceBefore: previousBalance,
       balanceAfter: updatedUser.walletBalance,
+    });
+
+    // PATCH_110: Update lastWalletUpdate
+    await User.findByIdAndUpdate(userId, {
+      $set: { lastWalletUpdate: new Date() },
     });
 
     // PATCH-64: Log admin action
@@ -967,9 +988,13 @@ exports.adminVerifyTopup = async (req, res) => {
     // Process based on action
     if (action === "approve") {
       // CRITICAL: Credit wallet balance ONLY after atomic status update succeeded
+      const balanceBefore = user.walletBalance || 0;
       const updatedUser = await User.findByIdAndUpdate(
         user._id,
-        { $inc: { walletBalance: updatedTransaction.amount } },
+        {
+          $inc: { walletBalance: updatedTransaction.amount },
+          $set: { lastWalletUpdate: new Date() },
+        },
         { new: true },
       );
 
@@ -981,8 +1006,9 @@ exports.adminVerifyTopup = async (req, res) => {
         return res.status(500).json({ error: "Failed to update user balance" });
       }
 
-      // Update balanceAfter
+      // Update balanceBefore + balanceAfter
       await WalletTransaction.findByIdAndUpdate(transactionId, {
+        balanceBefore,
         balanceAfter: updatedUser.walletBalance,
       });
 
@@ -1374,6 +1400,8 @@ exports.processRefund = async (userId, amount, orderId, description = "") => {
       throw new Error("User not found for refund");
     }
 
+    const previousBalance = user.walletBalance;
+
     // PATCH_80: Refunds are internal instant operations
     await WalletTransaction.create({
       user: userId,
@@ -1385,12 +1413,458 @@ exports.processRefund = async (userId, amount, orderId, description = "") => {
       referenceId: orderId,
       description:
         description || `Refund for order #${orderId.toString().slice(-6)}`,
+      balanceBefore: previousBalance - numAmount, // was lower before $inc
       balanceAfter: user.walletBalance,
+    });
+
+    // PATCH_110: Update lastWalletUpdate
+    await User.findByIdAndUpdate(userId, {
+      $set: { lastWalletUpdate: new Date() },
     });
 
     return { success: true, newBalance: user.walletBalance };
   } catch (err) {
     console.error("processRefund error:", err);
     throw err;
+  }
+};
+
+// ============================================================
+// PATCH_110: WITHDRAWAL SYSTEM (MANUAL MODE)
+// ============================================================
+const WithdrawalRequest = require("../models/WithdrawalRequest");
+
+/**
+ * PATCH_110: User requests a withdrawal
+ * POST /api/wallet/withdraw
+ * Body: { amount }
+ *
+ * Rules:
+ *   - wallet.withdrawable >= amount
+ *   - amount >= 10 (minimum withdrawal)
+ *   - Creates Transaction(type=withdrawal_request, status=pending)
+ *   - $inc wallet.pendingWithdrawals (+amount)
+ *   - $inc wallet.withdrawable (-amount)
+ */
+exports.requestWithdrawal = async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const userId = req.user.id || req.user._id;
+
+    if (!amount || isNaN(parseFloat(amount))) {
+      return res.status(400).json({ error: "Valid amount required" });
+    }
+
+    const numAmount = parseFloat(amount);
+    if (numAmount < 10) {
+      return res.status(400).json({ error: "Minimum withdrawal is $10" });
+    }
+
+    // Atomic: only decrement withdrawable if sufficient
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: userId, withdrawable: { $gte: numAmount } },
+      {
+        $inc: { withdrawable: -numAmount, pendingWithdrawals: numAmount },
+        $set: { lastWalletUpdate: new Date() },
+      },
+      { new: true },
+    );
+
+    if (!updatedUser) {
+      const user = await User.findById(userId).select("withdrawable");
+      return res.status(400).json({
+        error: "Insufficient withdrawable balance",
+        available: user?.withdrawable || 0,
+        requested: numAmount,
+      });
+    }
+
+    const balanceBefore = updatedUser.walletBalance; // balance didn't change
+
+    // Create pending transaction
+    const tx = await WalletTransaction.create({
+      user: userId,
+      type: "debit",
+      amount: numAmount,
+      source: "withdrawal_request",
+      status: "pending",
+      provider: "internal",
+      description: `Withdrawal request for $${numAmount.toFixed(2)}`,
+      balanceBefore,
+      balanceAfter: null, // Not finalized yet
+    });
+
+    // Create WithdrawalRequest record
+    const withdrawal = await WithdrawalRequest.create({
+      userId,
+      amount: numAmount,
+      status: "pending",
+      transactionId: tx._id,
+    });
+
+    res.json({
+      success: true,
+      message: `Withdrawal request of $${numAmount.toFixed(2)} submitted`,
+      withdrawal: {
+        _id: withdrawal._id,
+        amount: numAmount,
+        status: "pending",
+      },
+      withdrawable: updatedUser.withdrawable,
+      pendingWithdrawals: updatedUser.pendingWithdrawals,
+    });
+  } catch (err) {
+    console.error("requestWithdrawal error:", err);
+    res.status(500).json({ error: "Failed to submit withdrawal request" });
+  }
+};
+
+/**
+ * PATCH_110: Get user's withdrawal requests
+ * GET /api/wallet/withdrawals
+ */
+exports.getMyWithdrawals = async (req, res) => {
+  try {
+    const userId = req.user.id || req.user._id;
+    const withdrawals = await WithdrawalRequest.find({ userId })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+
+    res.json({ success: true, withdrawals });
+  } catch (err) {
+    console.error("getMyWithdrawals error:", err);
+    res.status(500).json({ error: "Failed to get withdrawals" });
+  }
+};
+
+/**
+ * PATCH_110: Admin — list all withdrawal requests
+ * GET /api/admin/wallet/withdrawals
+ */
+exports.adminGetWithdrawals = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const filter = {};
+    if (
+      status &&
+      ["pending", "approved", "rejected", "paid"].includes(status)
+    ) {
+      filter.status = status;
+    }
+
+    const withdrawals = await WithdrawalRequest.find(filter)
+      .populate(
+        "userId",
+        "name email walletBalance withdrawable pendingWithdrawals",
+      )
+      .populate("reviewedBy", "name email")
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    res.json({ success: true, withdrawals });
+  } catch (err) {
+    console.error("adminGetWithdrawals error:", err);
+    res.status(500).json({ error: "Failed to get withdrawals" });
+  }
+};
+
+/**
+ * PATCH_110: Admin — approve withdrawal (no balance change yet)
+ * PUT /api/admin/wallet/withdrawals/:id/approve
+ */
+exports.adminApproveWithdrawal = async (req, res) => {
+  try {
+    const { adminNote } = req.body;
+    const adminId = req.user._id || req.user.id;
+
+    const withdrawal = await WithdrawalRequest.findOneAndUpdate(
+      { _id: req.params.id, status: "pending" },
+      {
+        $set: {
+          status: "approved",
+          reviewedAt: new Date(),
+          reviewedBy: adminId,
+          adminNote: adminNote || "Approved by admin",
+        },
+      },
+      { new: true },
+    );
+
+    if (!withdrawal) {
+      return res
+        .status(404)
+        .json({ error: "Withdrawal not found or not pending" });
+    }
+
+    res.json({ success: true, message: "Withdrawal approved", withdrawal });
+  } catch (err) {
+    console.error("adminApproveWithdrawal error:", err);
+    res.status(500).json({ error: "Failed to approve withdrawal" });
+  }
+};
+
+/**
+ * PATCH_110: Admin — mark withdrawal as paid
+ * PUT /api/admin/wallet/withdrawals/:id/pay
+ *
+ * Deducts from wallet.balance and wallet.pendingWithdrawals
+ * Creates completion transaction
+ */
+exports.adminMarkWithdrawalPaid = async (req, res) => {
+  try {
+    const adminId = req.user._id || req.user.id;
+
+    // Atomic: only process if status is approved
+    const withdrawal = await WithdrawalRequest.findOneAndUpdate(
+      { _id: req.params.id, status: "approved" },
+      { $set: { status: "paid", reviewedAt: new Date(), reviewedBy: adminId } },
+      { new: true },
+    );
+
+    if (!withdrawal) {
+      return res
+        .status(404)
+        .json({ error: "Withdrawal not found or not approved" });
+    }
+
+    // Atomic: deduct from balance and pendingWithdrawals
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: withdrawal.userId, walletBalance: { $gte: withdrawal.amount } },
+      {
+        $inc: {
+          walletBalance: -withdrawal.amount,
+          pendingWithdrawals: -withdrawal.amount,
+        },
+        $set: { lastWalletUpdate: new Date() },
+      },
+      { new: true },
+    );
+
+    if (!updatedUser) {
+      // Rollback withdrawal status
+      await WithdrawalRequest.findByIdAndUpdate(withdrawal._id, {
+        status: "approved",
+      });
+      return res
+        .status(400)
+        .json({ error: "Insufficient balance for withdrawal payout" });
+    }
+
+    const balanceBefore = (updatedUser.walletBalance || 0) + withdrawal.amount;
+
+    // Create completion transaction
+    const tx = await WalletTransaction.create({
+      user: withdrawal.userId,
+      type: "debit",
+      amount: withdrawal.amount,
+      source: "withdrawal_completed",
+      status: "success",
+      provider: "manual",
+      referenceId: withdrawal._id,
+      description: `Withdrawal #${withdrawal._id.toString().slice(-6)} paid out`,
+      balanceBefore,
+      balanceAfter: updatedUser.walletBalance,
+    });
+
+    // Store completion transaction on withdrawal
+    await WithdrawalRequest.findByIdAndUpdate(withdrawal._id, {
+      completionTransactionId: tx._id,
+    });
+
+    // Notify user
+    try {
+      await sendNotification({
+        userId: withdrawal.userId,
+        title: "Withdrawal Paid",
+        message: `Your withdrawal of $${withdrawal.amount.toFixed(2)} has been processed.`,
+        type: "wallet",
+      });
+    } catch (notifErr) {
+      console.error("[notification] withdrawal paid failed:", notifErr.message);
+    }
+
+    res.json({
+      success: true,
+      message: `Withdrawal of $${withdrawal.amount.toFixed(2)} marked as paid`,
+      withdrawal,
+      newBalance: updatedUser.walletBalance,
+    });
+  } catch (err) {
+    console.error("adminMarkWithdrawalPaid error:", err);
+    res.status(500).json({ error: "Failed to mark withdrawal as paid" });
+  }
+};
+
+/**
+ * PATCH_110: Admin — reject withdrawal (refund withdrawable)
+ * PUT /api/admin/wallet/withdrawals/:id/reject
+ */
+exports.adminRejectWithdrawal = async (req, res) => {
+  try {
+    const { adminNote } = req.body;
+    const adminId = req.user._id || req.user.id;
+
+    const withdrawal = await WithdrawalRequest.findOneAndUpdate(
+      { _id: req.params.id, status: { $in: ["pending", "approved"] } },
+      {
+        $set: {
+          status: "rejected",
+          reviewedAt: new Date(),
+          reviewedBy: adminId,
+          adminNote: adminNote || "Rejected by admin",
+        },
+      },
+      { new: true },
+    );
+
+    if (!withdrawal) {
+      return res
+        .status(404)
+        .json({ error: "Withdrawal not found or already processed" });
+    }
+
+    // Refund: restore withdrawable, reduce pendingWithdrawals
+    await User.findByIdAndUpdate(withdrawal.userId, {
+      $inc: {
+        withdrawable: withdrawal.amount,
+        pendingWithdrawals: -withdrawal.amount,
+      },
+      $set: { lastWalletUpdate: new Date() },
+    });
+
+    // Mark the original pending transaction as failed
+    if (withdrawal.transactionId) {
+      await WalletTransaction.findByIdAndUpdate(withdrawal.transactionId, {
+        status: "failed",
+        failureReason: adminNote || "Withdrawal rejected by admin",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Withdrawal rejected and funds restored",
+      withdrawal,
+    });
+  } catch (err) {
+    console.error("adminRejectWithdrawal error:", err);
+    res.status(500).json({ error: "Failed to reject withdrawal" });
+  }
+};
+
+// ============================================================
+// PATCH_110: FINANCE DASHBOARD — LEDGER-DERIVED METRICS
+// ============================================================
+
+/**
+ * PATCH_110: Admin — Get comprehensive finance metrics
+ * GET /api/admin/wallet/finance
+ *
+ * All values derived from WalletTransaction ledger.
+ */
+exports.adminGetFinanceMetrics = async (req, res) => {
+  try {
+    const [
+      totalLiabilities,
+      pendingWithdrawals,
+      lifetimeEarningsPaid,
+      purchaseRevenue,
+      rentalRevenue,
+      topupTotal,
+      withdrawalTotal,
+      refundTotal,
+      txCounts,
+    ] = await Promise.all([
+      // 1. Sum of all user wallet balances (liabilities)
+      User.aggregate([
+        { $group: { _id: null, total: { $sum: "$walletBalance" } } },
+      ]),
+      // 2. Pending withdrawals
+      User.aggregate([
+        { $group: { _id: null, total: { $sum: "$pendingWithdrawals" } } },
+      ]),
+      // 3. Total earnings credited (from earning transactions)
+      WalletTransaction.aggregate([
+        { $match: { source: "earning", status: "success" } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      // 4. Purchase revenue (service_purchase debits)
+      WalletTransaction.aggregate([
+        { $match: { source: "service_purchase", status: "success" } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      // 5. Rental revenue
+      WalletTransaction.aggregate([
+        {
+          $match: {
+            source: { $in: ["rental_purchase", "rental_payment"] },
+            status: "success",
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      // 6. PayPal + manual topup total
+      WalletTransaction.aggregate([
+        { $match: { source: "topup", status: "success" } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      // 7. Withdrawal completions
+      WalletTransaction.aggregate([
+        { $match: { source: "withdrawal_completed", status: "success" } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      // 8. Refund total
+      WalletTransaction.aggregate([
+        { $match: { source: "refund", status: "success" } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      // 9. Transaction counts by source
+      WalletTransaction.aggregate([
+        { $match: { status: "success" } },
+        {
+          $group: {
+            _id: "$source",
+            count: { $sum: 1 },
+            total: { $sum: "$amount" },
+          },
+        },
+      ]),
+    ]);
+
+    const purchaseRev = purchaseRevenue[0]?.total || 0;
+    const rentalRev = rentalRevenue[0]?.total || 0;
+    const earningsPaid = lifetimeEarningsPaid[0]?.total || 0;
+    const withdrawals = withdrawalTotal[0]?.total || 0;
+    const refunds = refundTotal[0]?.total || 0;
+
+    // Platform net revenue = purchases + rentals - earnings - withdrawals - refunds
+    const platformRevenue =
+      purchaseRev + rentalRev - earningsPaid - withdrawals - refunds;
+
+    // Build transaction breakdown from aggregation
+    const transactionBreakdown = {};
+    txCounts.forEach((t) => {
+      transactionBreakdown[t._id] = { count: t.count, total: t.total };
+    });
+
+    res.json({
+      ok: true,
+      finance: {
+        totalWalletLiabilities: totalLiabilities[0]?.total || 0,
+        pendingWithdrawals: pendingWithdrawals[0]?.total || 0,
+        lifetimeEarningsPaid: earningsPaid,
+        purchaseRevenue: purchaseRev,
+        rentalRevenue: rentalRev,
+        topupTotal: topupTotal[0]?.total || 0,
+        withdrawalTotal: withdrawals,
+        refundTotal: refunds,
+        platformRevenue,
+        transactionBreakdown,
+      },
+    });
+  } catch (err) {
+    console.error("adminGetFinanceMetrics error:", err);
+    res.status(500).json({ error: "Failed to get finance metrics" });
   }
 };

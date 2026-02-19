@@ -664,7 +664,9 @@ exports.requestWithdrawal = async (req, res) => {
     // PATCH_96: Validate amount is a positive number
     const withdrawAmount = parseFloat(amount);
     if (!withdrawAmount || isNaN(withdrawAmount) || withdrawAmount <= 0) {
-      return res.status(400).json({ message: "Valid positive amount required" });
+      return res
+        .status(400)
+        .json({ message: "Valid positive amount required" });
     }
     if (withdrawAmount < 1) {
       return res.status(400).json({ message: "Minimum withdrawal is $1.00" });
@@ -674,11 +676,12 @@ exports.requestWithdrawal = async (req, res) => {
     const profile = await ApplyWork.findOneAndUpdate(
       { user: req.user.id, totalEarnings: { $gte: withdrawAmount } },
       { $inc: { totalEarnings: -withdrawAmount } },
-      { new: true }
+      { new: true },
     );
     if (!profile) {
       const existing = await ApplyWork.findOne({ user: req.user.id });
-      if (!existing) return res.status(400).json({ message: "No worker profile found" });
+      if (!existing)
+        return res.status(400).json({ message: "No worker profile found" });
       return res.status(400).json({ message: "Insufficient earnings balance" });
     }
 
@@ -1858,41 +1861,103 @@ exports.adminCreditEarnings = async (req, res) => {
     const { amount, rating } = req.body;
 
     if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
-      return res.status(400).json({ message: "Valid positive amount required" });
+      return res
+        .status(400)
+        .json({ message: "Valid positive amount required" });
     }
     const creditAmount = parseFloat(amount);
 
     // PATCH_96: Atomic idempotency guard — only credit if not already credited
     const project = await Project.findOneAndUpdate(
-      { _id: req.params.id, status: "completed", earningsCredited: { $in: [null, undefined, 0] } },
-      { $set: { earningsCredited: creditAmount, creditedAt: new Date(), ...(rating ? { adminRating: rating } : {}) } },
-      { new: true }
+      {
+        _id: req.params.id,
+        status: "completed",
+        earningsCredited: { $in: [null, undefined, 0] },
+      },
+      {
+        $set: {
+          earningsCredited: creditAmount,
+          creditedAt: new Date(),
+          ...(rating ? { adminRating: rating } : {}),
+        },
+      },
+      { new: true },
     );
     if (!project) {
       // Check why it failed
       const existing = await Project.findById(req.params.id);
-      if (!existing) return res.status(404).json({ message: "Project not found" });
-      if (existing.status !== "completed") return res.status(400).json({ message: "Project must be completed first" });
-      if (existing.earningsCredited > 0) return res.status(400).json({ message: "Earnings already credited for this project", alreadyCredited: existing.earningsCredited });
+      if (!existing)
+        return res.status(404).json({ message: "Project not found" });
+      if (existing.status !== "completed")
+        return res
+          .status(400)
+          .json({ message: "Project must be completed first" });
+      if (existing.earningsCredited > 0)
+        return res
+          .status(400)
+          .json({
+            message: "Earnings already credited for this project",
+            alreadyCredited: existing.earningsCredited,
+          });
       return res.status(400).json({ message: "Cannot credit earnings" });
     }
 
     // PATCH_96: Atomic worker earnings update
     const updateOps = {
       $inc: { totalEarnings: creditAmount },
-      $push: { projectsCompleted: { projectId: project._id, completedAt: project.completedAt, rating, earnings: creditAmount } },
+      $push: {
+        projectsCompleted: {
+          projectId: project._id,
+          completedAt: project.completedAt,
+          rating,
+          earnings: creditAmount,
+        },
+      },
     };
     const worker = await ApplyWork.findOne({ user: project.assignedTo });
     if (worker) {
       if (worker.currentProject?.toString() === project._id.toString()) {
-        updateOps.$set = { currentProject: null, workerStatus: "ready_to_work" };
+        updateOps.$set = {
+          currentProject: null,
+          workerStatus: "ready_to_work",
+        };
       }
       await ApplyWork.findOneAndUpdate({ user: project.assignedTo }, updateOps);
     }
 
     // PATCH_96: Atomic wallet credit using $inc
-    await User.findByIdAndUpdate(project.assignedTo, {
-      $inc: { walletBalance: creditAmount },
+    // PATCH_110: Also credit withdrawable, lifetimeEarnings, and create Transaction
+    const userBefore = await User.findById(project.assignedTo).select(
+      "walletBalance",
+    );
+    const balanceBefore = userBefore?.walletBalance || 0;
+
+    const updatedUser = await User.findByIdAndUpdate(
+      project.assignedTo,
+      {
+        $inc: {
+          walletBalance: creditAmount,
+          withdrawable: creditAmount,
+          lifetimeEarnings: creditAmount,
+        },
+        $set: { lastWalletUpdate: new Date() },
+      },
+      { new: true },
+    );
+
+    // PATCH_110: Create earning transaction for ledger
+    const WalletTransaction = require("../models/WalletTransaction");
+    await WalletTransaction.create({
+      user: project.assignedTo,
+      type: "credit",
+      amount: creditAmount,
+      source: "earning",
+      status: "success",
+      provider: "internal",
+      referenceId: project._id,
+      description: `Earnings for project: ${project.title || project._id.toString().slice(-6)}`,
+      balanceBefore,
+      balanceAfter: updatedUser?.walletBalance || balanceBefore + creditAmount,
     });
 
     res.json({

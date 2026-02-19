@@ -35,4 +35,21 @@ router.get("/user/:userId", walletController.adminGetUserWallet);
 // POST /api/admin/wallet/adjust - Adjust user balance
 router.post("/adjust", walletController.adminAdjustBalance);
 
+// PATCH_110: Withdrawal management
+// GET /api/admin/wallet/withdrawals - List all withdrawal requests
+router.get("/withdrawals", walletController.adminGetWithdrawals);
+
+// PUT /api/admin/wallet/withdrawals/:id/approve - Approve withdrawal
+router.put("/withdrawals/:id/approve", walletController.adminApproveWithdrawal);
+
+// PUT /api/admin/wallet/withdrawals/:id/pay - Mark withdrawal as paid
+router.put("/withdrawals/:id/pay", walletController.adminMarkWithdrawalPaid);
+
+// PUT /api/admin/wallet/withdrawals/:id/reject - Reject withdrawal
+router.put("/withdrawals/:id/reject", walletController.adminRejectWithdrawal);
+
+// PATCH_110: Finance dashboard
+// GET /api/admin/wallet/finance - Get finance metrics derived from ledger
+router.get("/finance", walletController.adminGetFinanceMetrics);
+
 module.exports = router;

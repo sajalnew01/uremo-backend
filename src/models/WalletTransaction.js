@@ -40,6 +40,10 @@ const walletTransactionSchema = new mongoose.Schema(
         "rental_purchase",
         "admin_adjustment",
         "refund",
+        "earning",
+        "withdrawal_request",
+        "withdrawal_completed",
+        "rental_payment",
       ],
       required: true,
     },
@@ -97,6 +101,11 @@ const walletTransactionSchema = new mongoose.Schema(
     description: {
       type: String,
       default: "",
+    },
+    // PATCH_110: Balance snapshot BEFORE this transaction
+    balanceBefore: {
+      type: Number,
+      default: null,
     },
     // Balance after this transaction (set when status becomes 'success')
     balanceAfter: {
