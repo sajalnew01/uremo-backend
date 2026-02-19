@@ -581,7 +581,8 @@ exports.payWithWallet = async (req, res) => {
       return res.status(403).json({ error: "Not authorized" });
     }
 
-    if (order.paymentStatus === "paid") {
+    // PATCH_112: Triple-guard against double-pay
+    if (order.paymentStatus === "paid" || order.paidAt || order.status !== "pending") {
       return res.status(400).json({ error: "Order already paid" });
     }
 
@@ -649,6 +650,11 @@ exports.payWithWallet = async (req, res) => {
         reason: "Payment completed via wallet",
         paymentMethod: "wallet",
         data: { walletBalance: updateResult.walletBalance },
+      });
+
+      // PATCH_112: Persist paymentStatus/paymentMethod after FlowEngine success
+      await Order.findByIdAndUpdate(order._id, {
+        $set: { paymentStatus: "paid", paymentMethod: "wallet" },
       });
     } catch (flowErr) {
       // If FlowEngine fails, fall back to direct update for critical payment flow

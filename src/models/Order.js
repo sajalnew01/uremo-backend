@@ -32,6 +32,19 @@ const orderSchema = new mongoose.Schema(
       index: true,
     },
 
+    // PATCH_112: Payment tracking fields (critical for double-pay prevention)
+    paymentStatus: {
+      type: String,
+      enum: ["unpaid", "paid", "refunded"],
+      default: "unpaid",
+      index: true,
+    },
+    paymentMethod: {
+      type: String,
+      enum: ["wallet", "paypal", "manual", "stripe"],
+      default: null,
+    },
+
     // PATCH_38: Deal metadata
     dealPercent: {
       type: Number,
