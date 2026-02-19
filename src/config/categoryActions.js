@@ -54,13 +54,19 @@ function getEffectiveCategoryFromService(service) {
 function getAllowedActionsForService(service) {
   const effective = getEffectiveCategoryFromService(service);
   const actions = CATEGORY_ACTIONS[effective] || CATEGORY_ACTIONS.general;
-  // Return a fresh object for Mongoose subdocument assignment
-  return {
-    buy: Boolean(actions.buy),
-    apply: Boolean(actions.apply),
-    rent: Boolean(actions.rent),
-    deal: Boolean(actions.deal),
-  };
+
+  // PATCH_107: Data-integrity gate — category says what's POSSIBLE,
+  // but the service must have valid data to actually enable the action.
+  const buy = Boolean(actions.buy) && (service.price > 0 || false);
+  const apply = Boolean(actions.apply); // linkedJobId checked at controller level / post-save
+  const rent =
+    Boolean(actions.rent) &&
+    service.isRental === true &&
+    Array.isArray(service.rentalPlans) &&
+    service.rentalPlans.length > 0;
+  const deal = Boolean(actions.deal) && (service.price > 0 || false);
+
+  return { buy, apply, rent, deal };
 }
 
 module.exports = {
