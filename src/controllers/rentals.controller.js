@@ -98,6 +98,14 @@ exports.createRentalOrder = async (req, res) => {
         .json({ ok: false, message: "planIndex is required" });
     }
 
+    // PATCH_111: Validate planIndex is a non-negative integer to prevent prototype pollution
+    const idx = parseInt(planIndex, 10);
+    if (isNaN(idx) || idx < 0 || String(idx) !== String(planIndex)) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "planIndex must be a valid non-negative integer" });
+    }
+
     // Fetch the service
     const service = await Service.findById(serviceId);
     if (!service) {
@@ -123,13 +131,13 @@ exports.createRentalOrder = async (req, res) => {
       });
     }
 
-    if (!service.rentalPlans || !service.rentalPlans[planIndex]) {
+    if (!service.rentalPlans || !service.rentalPlans[idx]) {
       return res
         .status(400)
         .json({ ok: false, message: "Invalid rental plan selected" });
     }
 
-    const plan = service.rentalPlans[planIndex];
+    const plan = service.rentalPlans[idx];
 
     // Check max active rentals limit
     if (
@@ -726,9 +734,21 @@ exports.getRentalMetrics = async (req, res) => {
  * Called periodically to mark expired rentals
  * GET /api/cron/expire-rentals
  * PATCH_109: Enhanced with timeline entries + notifications
+ * PATCH_111: Added CRON_SECRET authentication
  */
 exports.expireRentalsJob = async (req, res) => {
   try {
+    // PATCH_111: Require CRON_SECRET — prevent unauthorized public access
+    const secret = String(req.query?.secret || "");
+    const expected =
+      process.env.CRON_SECRET || process.env.CRON_EXPIRE_RENTALS_SECRET || "";
+    if (!expected) {
+      return res.status(404).json({ message: "Route not found" });
+    }
+    if (!secret || secret !== expected) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
     const now = new Date();
 
     // Find all active rentals that have passed their end date
@@ -841,13 +861,27 @@ exports.renewRental = async (req, res) => {
         .json({ ok: false, message: "Service not available for renewal" });
     }
 
-    if (planIndex === undefined || !service.rentalPlans[planIndex]) {
+    if (planIndex === undefined || planIndex === null) {
       return res
         .status(400)
         .json({ ok: false, message: "Invalid rental plan" });
     }
 
-    const plan = service.rentalPlans[planIndex];
+    // PATCH_111: Validate planIndex is a non-negative integer
+    const ridx = parseInt(planIndex, 10);
+    if (isNaN(ridx) || ridx < 0 || String(ridx) !== String(planIndex)) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "planIndex must be a valid non-negative integer" });
+    }
+
+    if (!service.rentalPlans[ridx]) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Invalid rental plan" });
+    }
+
+    const plan = service.rentalPlans[ridx];
 
     // Calculate new dates
     const startDate =
