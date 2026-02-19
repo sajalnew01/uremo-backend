@@ -1278,3 +1278,97 @@ exports.getMarketplaceFilters = async (req, res) => {
     res.status(500).json({ ok: false, message: err.message });
   }
 };
+
+// ============================================================
+// PATCH_107: Repair Legacy Service Data (admin-only endpoint)
+// ============================================================
+exports.repairLegacyServices = async (req, res) => {
+  try {
+    const allServices = await Service.find({});
+    const stats = {
+      totalServices: allServices.length,
+      repairedBuy: 0,
+      repairedRent: 0,
+      repairedApply: 0,
+      repairedDeal: 0,
+      totalModified: 0,
+    };
+    const repairLog = { buy: [], rent: [], apply: [], deal: [] };
+
+    for (const service of allServices) {
+      let modified = false;
+      const id = service._id.toString();
+      const title = service.title || "(untitled)";
+
+      if (!service.allowedActions) {
+        service.allowedActions = {
+          buy: false,
+          apply: false,
+          rent: false,
+          deal: false,
+        };
+        modified = true;
+      }
+
+      // buy=true & price≤0 → set buy=false
+      if (
+        service.allowedActions.buy === true &&
+        (!service.price || service.price <= 0)
+      ) {
+        service.allowedActions.buy = false;
+        stats.repairedBuy++;
+        repairLog.buy.push({ id, title, price: service.price });
+        modified = true;
+      }
+
+      // rent=true & (isRental!==true OR rentalPlans empty) → set rent=false, isRental=false
+      if (service.allowedActions.rent === true) {
+        const hasValidRental =
+          service.isRental === true &&
+          Array.isArray(service.rentalPlans) &&
+          service.rentalPlans.length > 0;
+        if (!hasValidRental) {
+          service.allowedActions.rent = false;
+          service.isRental = false;
+          stats.repairedRent++;
+          repairLog.rent.push({
+            id,
+            title,
+            rentalPlansCount: (service.rentalPlans || []).length,
+          });
+          modified = true;
+        }
+      }
+
+      // apply=true & linkedJobId==null → set apply=false
+      if (service.allowedActions.apply === true && !service.linkedJobId) {
+        service.allowedActions.apply = false;
+        stats.repairedApply++;
+        repairLog.apply.push({ id, title });
+        modified = true;
+      }
+
+      // deal=true & price≤0 → set deal=false
+      if (
+        service.allowedActions.deal === true &&
+        (!service.price || service.price <= 0)
+      ) {
+        service.allowedActions.deal = false;
+        stats.repairedDeal++;
+        repairLog.deal.push({ id, title, price: service.price });
+        modified = true;
+      }
+
+      if (modified) {
+        await service.save({ validateBeforeSave: false });
+        stats.totalModified++;
+      }
+    }
+
+    console.log("[PATCH_107] Repair complete:", JSON.stringify(stats));
+    res.json({ ok: true, stats, repairLog });
+  } catch (err) {
+    console.error("[REPAIR_ERROR]", err.message);
+    res.status(500).json({ ok: false, message: err.message });
+  }
+};

@@ -24,6 +24,7 @@ const {
   listEmailCampaigns,
 } = require("../controllers/admin.emailCampaign.controller");
 const { userExists } = require("../controllers/admin.debug.controller");
+const { repairLegacyServices } = require("../controllers/service.controller");
 // PATCH_18: Use adminServices controller for full CMS support
 const {
   listServices,
@@ -120,5 +121,8 @@ router.post("/reset/wallets", auth, admin, resetAllWallets);
 router.post("/reset/affiliate", auth, admin, resetAllAffiliateData);
 // POST /api/admin/reset/all-test-data - Reset all test data (wallets + affiliate)
 router.post("/reset/all-test-data", auth, admin, resetAllTestData);
+
+// PATCH_107: Repair legacy service data (admin-only)
+router.post("/services/repair-legacy", auth, admin, repairLegacyServices);
 
 module.exports = router;
