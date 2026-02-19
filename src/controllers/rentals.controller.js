@@ -276,11 +276,17 @@ exports.getUserRentals = async (req, res) => {
         Math.ceil(diffMs / (1000 * 60 * 60 * 24)),
       );
 
+      // PATCH_109: Frontend-computed expiry override
+      const computedStatus =
+        r.status === "active" && now > end ? "expired" : r.status;
+
       return {
         ...r,
         daysRemaining,
         isActive: r.status === "active" && now < end,
         isExpiringSoon: r.status === "active" && daysRemaining <= 3,
+        computedStatus,
+        activatedAt: r.activatedAt || null,
       };
     });
 
@@ -588,9 +594,138 @@ exports.updateRentalAccess = async (req, res) => {
 };
 
 /**
+ * PATCH_109: ADMIN RENTAL REVENUE INTELLIGENCE
+ * GET /api/admin/rentals/metrics
+ * Returns aggregated rental metrics using efficient pipelines
+ */
+exports.getRentalMetrics = async (req, res) => {
+  try {
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    // Run all aggregations in parallel for speed
+    const [
+      statusCounts,
+      expiringIn7Days,
+      recentExpired,
+      recentRevenue,
+      lifetimeRevenue,
+      mostRented,
+    ] = await Promise.all([
+      // 1. Count by status
+      Rental.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
+
+      // 2. Expiring in 7 days (active + endDate within 7 days)
+      Rental.countDocuments({
+        status: "active",
+        endDate: { $gte: now, $lte: sevenDaysFromNow },
+      }),
+
+      // 3. Expired in last 30 days
+      Rental.countDocuments({
+        status: "expired",
+        expiredAt: { $gte: thirtyDaysAgo },
+      }).then((count) => {
+        // Also count active ones that are logically expired
+        if (count === 0) {
+          return Rental.countDocuments({
+            status: "expired",
+            endDate: { $gte: thirtyDaysAgo },
+          });
+        }
+        return count;
+      }),
+
+      // 4. Revenue last 30 days (from activated rentals)
+      Rental.aggregate([
+        {
+          $match: {
+            status: { $in: ["active", "expired", "renewed"] },
+            activatedAt: { $gte: thirtyDaysAgo },
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$price" } } },
+      ]),
+
+      // 5. Lifetime revenue (all non-pending/cancelled)
+      Rental.aggregate([
+        {
+          $match: {
+            status: { $in: ["active", "expired", "renewed"] },
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$price" } } },
+      ]),
+
+      // 6. Most rented service (top by count)
+      Rental.aggregate([
+        {
+          $match: {
+            status: { $in: ["active", "expired", "renewed"] },
+          },
+        },
+        { $group: { _id: "$service", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 1 },
+        {
+          $lookup: {
+            from: "services",
+            localField: "_id",
+            foreignField: "_id",
+            as: "serviceDoc",
+          },
+        },
+        { $unwind: { path: "$serviceDoc", preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            serviceId: "$_id",
+            title: "$serviceDoc.title",
+            count: 1,
+          },
+        },
+      ]),
+    ]);
+
+    // Parse status counts
+    const countsByStatus = {};
+    statusCounts.forEach((s) => {
+      countsByStatus[s._id] = s.count;
+    });
+
+    const topService = mostRented[0] || null;
+
+    res.json({
+      ok: true,
+      metrics: {
+        activeRentals: countsByStatus["active"] || 0,
+        pendingRentals: countsByStatus["pending"] || 0,
+        expiringIn7Days,
+        expiredLast30Days: recentExpired,
+        revenueLast30Days: recentRevenue[0]?.total || 0,
+        lifetimeRevenue: lifetimeRevenue[0]?.total || 0,
+        mostRentedService: topService
+          ? {
+              serviceId: topService.serviceId,
+              title: topService.title || "Unknown",
+              rentalCount: topService.count,
+            }
+          : null,
+      },
+    });
+  } catch (err) {
+    console.error("[RENTAL_METRICS_ERROR]", err.message);
+    res
+      .status(500)
+      .json({ ok: false, message: "Failed to fetch rental metrics" });
+  }
+};
+
+/**
  * CRON JOB: EXPIRE RENTALS
  * Called periodically to mark expired rentals
  * GET /api/cron/expire-rentals
+ * PATCH_109: Enhanced with timeline entries + notifications
  */
 exports.expireRentalsJob = async (req, res) => {
   try {
@@ -600,7 +735,7 @@ exports.expireRentalsJob = async (req, res) => {
     const expiredRentals = await Rental.find({
       status: "active",
       endDate: { $lt: now },
-    });
+    }).populate("service", "title");
 
     if (expiredRentals.length === 0) {
       return res.json({
@@ -614,20 +749,46 @@ exports.expireRentalsJob = async (req, res) => {
     const serviceDecrements = {};
     for (const rental of expiredRentals) {
       rental.status = "expired";
+      rental.expiredAt = now;
       rental.statusLog.push({
         status: "expired",
         at: now,
         by: "system",
         note: "Rental period ended",
       });
+      // PATCH_109: Push to timeline
+      rental.timeline.push({
+        event: "expired",
+        from: "active",
+        at: now,
+        actor: "system",
+        reason: "Rental period ended — auto-expired by system",
+        meta: { endDate: rental.endDate },
+      });
       await rental.save();
 
       // Track service decrements
-      const sid = rental.service.toString();
+      const sid = rental.service?._id?.toString() || rental.service?.toString();
       serviceDecrements[sid] = (serviceDecrements[sid] || 0) + 1;
+
+      // PATCH_109: Send notification to user
+      try {
+        const serviceTitle = rental.service?.title || "a service";
+        await sendNotification({
+          userId: rental.user.toString(),
+          title: "Rental Access Expired",
+          message: `Your rental access for "${serviceTitle}" has expired. Renew to continue access.`,
+          type: "rental",
+          resourceType: "rental",
+          resourceId: rental._id,
+          sendEmailCopy: true,
+        });
+      } catch (notifErr) {
+        console.error("[EXPIRE_RENTALS_NOTIF_ERROR]", notifErr.message);
+      }
     }
 
-    // Decrement active rental counts
+    // Decrement active rental counts — use direct update to avoid hook corruption
     for (const [serviceId, count] of Object.entries(serviceDecrements)) {
       await Service.findByIdAndUpdate(serviceId, {
         $inc: { currentActiveRentals: -count },

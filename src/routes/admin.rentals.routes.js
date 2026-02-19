@@ -1,5 +1,6 @@
 /**
  * PATCH_22: Admin Rental Routes
+ * PATCH_109: Added metrics endpoint
  */
 
 const express = require("express");
@@ -10,9 +11,13 @@ const {
   activateRental,
   cancelRental,
   updateRentalAccess,
+  getRentalMetrics,
 } = require("../controllers/rentals.controller");
 
 const router = express.Router();
+
+// PATCH_109: Rental revenue intelligence metrics (must be before /:id routes)
+router.get("/metrics", auth, admin, getRentalMetrics);
 
 // Get all rentals (admin)
 router.get("/", auth, admin, getAdminRentals);
