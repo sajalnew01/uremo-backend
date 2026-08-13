@@ -13,3 +13,6 @@ build/
 
 # Next.js (if ever used here)
 .next/
+.env
+node_modules/
+.env
